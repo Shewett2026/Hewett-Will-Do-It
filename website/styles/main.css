@@ -2230,14 +2230,22 @@ ul {
     opacity: 0.88;
   }
 
-  /* Badge sized up for stronger mobile presence; stays centered over the
-     candidate photo area (similar spatial relationship to desktop). */
+  /* Badge shifted right of center: candidate (left) points toward badge (right).
+     left: auto clears the desktop left: 50%; right: 0.75rem anchors it 12px
+     from the viewport edge. transform drops the X component since we're no
+     longer centering from a left anchor. Size increased to 65vw so it reads
+     as a bold focal point in its own clear right-side zone.
+     At 390px → 254px wide, right edge 12px from edge, left edge at ~124px.
+     At 428px → 278px wide, right edge 12px from edge, left edge at ~138px.
+     Badge bottom edge stays ~40px above the philosophy panel. */
   .hero-badge-container {
-    width: clamp(220px, 57vw, 300px);
+    left: auto;
+    right: 0.75rem;
     top: 38%;
-    transform: translate(-50%, -50%);
+    transform: translateY(-50%);
+    width: clamp(250px, 65vw, 320px);
   }
-  .hero-badge-logo { width: clamp(220px, 57vw, 300px); }
+  .hero-badge-logo { width: clamp(250px, 65vw, 320px); }
 
   .hero-top-banner { padding: 1.25rem 1rem 1rem; }
   .hero-top-banner .hero-name    { font-size: 2rem; }
