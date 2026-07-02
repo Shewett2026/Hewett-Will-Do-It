@@ -1,4 +1,4 @@
-/* =====================================================
+﻿/* =====================================================
    Hewett Will Do It 2026 — main.js
    ===================================================== */
 
@@ -361,8 +361,8 @@
 
   var footerLogo = document.querySelector('.footer-brand img');
   if (footerLogo) {
-    var footerLogoDefault = '../Brand_assets/Logo/HEWETT (12).png';
-    var footerLogoHover   = '../Brand_assets/Logo/HEWETT (14).png';
+    var footerLogoDefault = 'assets/logos/wordmark.png';
+    var footerLogoHover   = 'assets/logos/badge-shield.png';
     footerLogo.addEventListener('mouseenter', function () {
       footerLogo.src = footerLogoHover;
     });
