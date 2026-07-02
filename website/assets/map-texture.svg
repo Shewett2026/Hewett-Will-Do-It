@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600">
+  <!-- Ward boundary curves — organic, suggesting Bakersfield political geography -->
+  <path d="M0,285 C80,268 170,308 270,292 C370,276 470,305 600,290"
+        stroke="#F5F0E8" stroke-width="0.8" stroke-opacity="0.04" fill="none"/>
+  <path d="M0,155 C110,140 210,175 320,162 C430,149 520,170 600,158"
+        stroke="#F5F0E8" stroke-width="0.8" stroke-opacity="0.04" fill="none"/>
+  <path d="M0,430 C90,415 200,450 310,438 C420,426 515,448 600,435"
+        stroke="#F5F0E8" stroke-width="0.8" stroke-opacity="0.04" fill="none"/>
+  <path d="M195,0 C210,90 188,195 200,295 C212,395 196,495 205,600"
+        stroke="#F5F0E8" stroke-width="0.8" stroke-opacity="0.04" fill="none"/>
+  <path d="M435,0 C452,110 428,215 442,315 C456,415 438,510 448,600"
+        stroke="#F5F0E8" stroke-width="0.8" stroke-opacity="0.04" fill="none"/>
+  <!-- Diagonal — suggests Chester Ave / Panorama Drive corridor -->
+  <path d="M0,520 L140,400 L310,320 L480,260 L600,230"
+        stroke="#F5F0E8" stroke-width="0.4" stroke-opacity="0.04" fill="none"/>
+  <!-- Street grid — horizontal major corridors -->
+  <line x1="0" y1="80"  x2="600" y2="80"  stroke="#F5F0E8" stroke-width="0.4" stroke-opacity="0.04"/>
+  <line x1="0" y1="185" x2="600" y2="185" stroke="#F5F0E8" stroke-width="0.4" stroke-opacity="0.04"/>
+  <line x1="0" y1="300" x2="600" y2="300" stroke="#F5F0E8" stroke-width="0.4" stroke-opacity="0.04"/>
+  <line x1="0" y1="415" x2="600" y2="415" stroke="#F5F0E8" stroke-width="0.4" stroke-opacity="0.04"/>
+  <line x1="0" y1="520" x2="600" y2="520" stroke="#F5F0E8" stroke-width="0.4" stroke-opacity="0.04"/>
+  <!-- Street grid — vertical major corridors -->
+  <line x1="90"  y1="0" x2="90"  y2="600" stroke="#F5F0E8" stroke-width="0.4" stroke-opacity="0.04"/>
+  <line x1="210" y1="0" x2="210" y2="600" stroke="#F5F0E8" stroke-width="0.4" stroke-opacity="0.04"/>
+  <line x1="315" y1="0" x2="315" y2="600" stroke="#F5F0E8" stroke-width="0.4" stroke-opacity="0.04"/>
+  <line x1="425" y1="0" x2="425" y2="600" stroke="#F5F0E8" stroke-width="0.4" stroke-opacity="0.04"/>
+  <line x1="530" y1="0" x2="530" y2="600" stroke="#F5F0E8" stroke-width="0.4" stroke-opacity="0.04"/>
+</svg>

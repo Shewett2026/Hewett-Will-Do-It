@@ -141,3 +141,16 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Campaign website — project-specific
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+Brand_assets/*.mp4
+Brand_assets/*.MP4
+Brand_assets/*.heic
+Brand_assets/*.HEIC
+*.tmp
+*.temp
+.gitignore.local-backup

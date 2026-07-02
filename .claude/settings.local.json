@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(\\(Get-Content \"c:\\\\Users\\\\smhew\\\\Desktop\\\\Hewett Will Do It\\\\website\\\\scripts\\\\main.js\" | Measure-Object -Line\\).Lines)"
+    ]
+  }
+}
