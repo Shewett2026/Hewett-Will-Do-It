@@ -580,6 +580,14 @@ ul {
   }
 }
 
+/* Carousel phone (480px) — single full-width card so content isn't cramped */
+@media (max-width: 480px) {
+  .carousel-slide {
+    flex: 0 0 100%;
+    min-width: 100%;
+  }
+}
+
 /* Mobile */
 @media (max-width: 640px) {
   .nav-toggle {
@@ -2072,6 +2080,12 @@ ul {
   transform-origin: 50% calc(100% + 1.75rem); /* pivot at post base = hero floor */
 }
 
+/* Pulsing tap indicator — mobile carousel only, not used on desktop */
+@keyframes mobile-tap-pulse {
+  0%, 100% { transform: scale(1);   opacity: 0.75; }
+  50%       { transform: scale(1.6); opacity: 0.2;  }
+}
+
 /* Philosophy panel — right side of hero, desktop/tablet */
 .hero-philosophy {
   position: absolute;
@@ -2195,26 +2209,69 @@ ul {
 }
 
 @media (max-width: 768px) {
-  .hero--video { height: 60vh; min-height: 420px; }
+  /* ── Hero layout ──────────────────────────────────────────────────────────
+     Taller min-height to fit philosophy panel at the bottom of the hero.
+     All four mobile fixes are scoped to this block. Desktop unaffected.
+  ───────────────────────────────────────────────────────────────────────── */
+  .hero--video { height: 75vh; min-height: 620px; }
 
-  .candidate-swap { display: none; }
+  /* FIX 1: Candidate photo — restore on mobile at 38% hero height,
+     anchored bottom-left where it's always been, just proportionally smaller.
+     badge z-index (6) stays above candidate (5) so badge is never covered. */
+  .candidate-swap {
+    display: block;
+    height: 38%;
+    opacity: 0.88;
+  }
 
+  /* Badge shifted up slightly (38% instead of 45%) to create clean vertical
+     breathing room between badge, CTA buttons, and philosophy panel below. */
   .hero-badge-container {
     width: clamp(190px, 48vw, 280px);
-    top: 45%;
+    top: 38%;
     transform: translate(-50%, -50%);
   }
   .hero-badge-logo { width: clamp(190px, 48vw, 280px); }
 
   .hero-top-banner { padding: 1.25rem 1rem 1rem; }
-
   .hero-top-banner .hero-name    { font-size: 2rem; }
   .hero-top-banner .hero-tagline { font-size: 1.2rem; }
 
-  .hero-philosophy { display: none; }
+  /* FIX 2: Campaign pillars panel — full-width strip anchored to hero bottom.
+     Repositioned from absolute right-side panel to full-width bottom strip.
+     Descriptions hidden (no hover on touch); gold titles remain visible and
+     readable as compact campaign bullet points. */
+  .hero-philosophy {
+    display: flex;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    transform: none;
+    width: 100%;
+    border-left: none;
+    border-top: 3px solid var(--gold);
+    border-radius: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 
+  .hero-philosophy::before {
+    font-size: 0.68rem;
+    padding: 0.55rem 1rem 0.45rem;
+  }
+
+  .hero-philosophy .philosophy-banner { padding: 0.45rem 1rem; }
+  .hero-philosophy .phil-title        { font-size: 0.74rem; letter-spacing: 0.08em; }
+  /* Descriptions and chevrons hidden on mobile — no hover available on touch */
+  .hero-philosophy .phil-desc,
+  .hero-philosophy .phil-chevron      { display: none; }
+
+  /* CTA buttons raised above the ~160px philosophy panel */
   .hero-cta-bottom {
-    bottom: 1rem;
+    bottom: 225px;
     gap: 0.6rem;
   }
 
@@ -2226,8 +2283,61 @@ ul {
   }
 
   .highway-btn::after { height: 1rem; }
+  .highway-btn.shake  { transform-origin: 50% calc(100% + 1rem); }
 
-  .highway-btn.shake { transform-origin: 50% calc(100% + 1rem); }
+  /* ── Credential block ─────────────────────────────────────────────────────
+     FIX 3: Each sector becomes a distinct card — subtle border + background
+     separates them visually. Already stacked 1-col by the 960px rule above;
+     this adds card treatment and tighter spacing for mobile readability.
+  ───────────────────────────────────────────────────────────────────────── */
+  .cred-cols { gap: 1.25rem; }
+
+  .cred-col {
+    background: rgba(255, 255, 255, 0.055);
+    border: 1px solid rgba(201, 136, 58, 0.22);
+    border-radius: 10px;
+    padding: 1.75rem 1.25rem;
+  }
+
+  .cred-education {
+    background: rgba(255, 255, 255, 0.055);
+    border: 1px solid rgba(201, 136, 58, 0.22);
+    border-radius: 10px;
+    padding: 1.75rem 1.25rem;
+  }
+
+  .cred-org  { font-size: 1.05rem; line-height: 1.35; }
+  .cred-role { font-size: 0.85rem; }
+  .cred-list li { margin-bottom: 1.5rem; }
+
+  /* ── Carousel cards ───────────────────────────────────────────────────────
+     FIX 4a: Reduce header padding and gap so the "Tap to read" label doesn't
+     clip at 2-card (50% width) mobile layout. At ≤480px a separate rule
+     switches to single-card so there's plenty of room at all phone sizes.
+  ───────────────────────────────────────────────────────────────────────── */
+  .ac-header {
+    padding: 1rem;
+    gap: 0.55rem;
+  }
+
+  .ac-title { font-size: 0.95rem; }
+
+  /* FIX 4b: Pulsing tap indicator — mobile-only prompt so touch users know
+     the card is interactive. Only visible before a card is opened.
+     Desktop never sees this because it's scoped inside this media query. */
+  .ac-cta-label::before {
+    content: '';
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background-color: var(--gold);
+    margin-right: 0.3rem;
+    animation: mobile-tap-pulse 1.8s ease-in-out infinite;
+    vertical-align: middle;
+  }
+
+  .ac-item.is-open .ac-cta-label::before { display: none; }
 }
 
 /* =====================================================
