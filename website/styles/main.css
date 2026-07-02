@@ -1463,6 +1463,9 @@ ul {
   margin-top: 0.1rem;
 }
 
+/* Sector scroll dots — mobile only, hidden by default */
+.cred-sector-dots { display: none; }
+
 /* =====================================================
    Carousel
    ===================================================== */
@@ -2215,24 +2218,26 @@ ul {
   ───────────────────────────────────────────────────────────────────────── */
   .hero--video { height: 75vh; min-height: 620px; }
 
-  /* FIX 1: Candidate photo — restore on mobile at 38% hero height,
-     anchored bottom-left where it's always been, just proportionally smaller.
-     badge z-index (6) stays above candidate (5) so badge is never covered. */
+  /* Candidate photo: lifted above the philosophy panel via bottom offset so
+     the two elements occupy clean, non-overlapping vertical zones.
+     bottom: 185px clears the ~181px panel; height 56% fills the space above.
+     Badge (z-index 6) layers on top of candidate (z-index 5) as on desktop. */
   .candidate-swap {
     display: block;
-    height: 52%;
+    bottom: 185px;
+    height: 56%;
     min-width: 60px;
     opacity: 0.88;
   }
 
-  /* Badge shifted up slightly (38% instead of 45%) to create clean vertical
-     breathing room between badge, CTA buttons, and philosophy panel below. */
+  /* Badge sized up for stronger mobile presence; stays centered over the
+     candidate photo area (similar spatial relationship to desktop). */
   .hero-badge-container {
-    width: clamp(190px, 48vw, 280px);
+    width: clamp(220px, 57vw, 300px);
     top: 38%;
     transform: translate(-50%, -50%);
   }
-  .hero-badge-logo { width: clamp(190px, 48vw, 280px); }
+  .hero-badge-logo { width: clamp(220px, 57vw, 300px); }
 
   .hero-top-banner { padding: 1.25rem 1rem 1rem; }
   .hero-top-banner .hero-name    { font-size: 2rem; }
@@ -2287,19 +2292,54 @@ ul {
   .highway-btn.shake  { transform-origin: 50% calc(100% + 1rem); }
 
   /* ── Credential block ─────────────────────────────────────────────────────
-     FIX 3: Each sector becomes a distinct card — subtle border + background
-     separates them visually. Already stacked 1-col by the 960px rule above;
-     this adds card treatment and tighter spacing for mobile readability.
+     Sector cards (Private / Nonprofit / Public) become a horizontally
+     scrollable snap-row on mobile. Each card is 87% of the container so one
+     card is clearly in focus and the next peeks in from the right.
+     Education block is a sibling outside .cred-cols and stays full-width.
   ───────────────────────────────────────────────────────────────────────── */
-  .cred-cols { gap: 1.25rem; }
+  .cred-cols {
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 0.75rem;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 0.75rem;
+    margin-bottom: 0;
+  }
+
+  .cred-cols::-webkit-scrollbar { display: none; }
 
   .cred-col {
+    flex: 0 0 87%;
+    scroll-snap-align: start;
     background: rgba(255, 255, 255, 0.055);
     border: 1px solid rgba(201, 136, 58, 0.22);
     border-radius: 10px;
     padding: 1.75rem 1.25rem;
   }
 
+  /* Scroll dot indicator — three gold dots matching site's carousel dot style */
+  .cred-sector-dots {
+    display: flex;
+    justify-content: center;
+    gap: 0.45rem;
+    padding: 0.5rem 0 1.5rem;
+  }
+
+  .cred-sector-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: rgba(245, 240, 232, 0.25);
+    transition: background 0.3s ease;
+  }
+
+  .cred-sector-dot.is-active { background: var(--gold); }
+
+  /* Education block retains card treatment and full-width stacked layout */
   .cred-education {
     background: rgba(255, 255, 255, 0.055);
     border: 1px solid rgba(201, 136, 58, 0.22);

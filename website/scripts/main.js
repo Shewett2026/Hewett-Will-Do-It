@@ -656,6 +656,23 @@
   // =====================================================
 
   // =====================================================
+  // Credential Sector Scroller — dot indicator sync
+  // Updates the active dot as the user swipes between the
+  // three sector cards (Private / Nonprofit / Public).
+  // No-op on desktop where the dots are hidden via CSS.
+  // =====================================================
+
+  var credCols = document.querySelector('.cred-cols');
+  var credDots = Array.from(document.querySelectorAll('.cred-sector-dot'));
+  if (credCols && credDots.length) {
+    credCols.addEventListener('scroll', function () {
+      var cardWidth = credCols.querySelector('.cred-col').offsetWidth + 12; // card + gap
+      var idx = Math.min(Math.round(credCols.scrollLeft / cardWidth), credDots.length - 1);
+      credDots.forEach(function (d, i) { d.classList.toggle('is-active', i === idx); });
+    }, { passive: true });
+  }
+
+  // =====================================================
   // Philosophy Pillars — tap-to-expand on mobile
   // Desktop uses CSS :hover. This adds a click handler so
   // touch users can tap a pillar to expand its description.
