@@ -761,6 +761,11 @@ ul {
   object-position: center 20%;
 }
 
+/* Get Involved community banner — shift up to show faces/crowd rather than waist/legs */
+.gi-banner-img {
+  object-position: center 20%;
+}
+
 /* Dark overlay (with subtle radial gradients) over any bg photo */
 .hero-overlay {
   position: absolute;
