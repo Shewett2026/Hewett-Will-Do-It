@@ -2216,7 +2216,7 @@ ul {
      Taller min-height to fit philosophy panel at the bottom of the hero.
      All four mobile fixes are scoped to this block. Desktop unaffected.
   ───────────────────────────────────────────────────────────────────────── */
-  .hero--video { height: 75vh; min-height: 620px; }
+  .hero--video { height: 75vh; min-height: 560px; }
 
   /* Candidate photo: lifted above the philosophy panel via bottom offset so
      the two elements occupy clean, non-overlapping vertical zones.
@@ -2275,21 +2275,9 @@ ul {
      animate them via max-height transition (display:none kills transitions) */
   .hero-philosophy .phil-chevron      { display: none; }
 
-  /* CTA buttons raised above the ~160px philosophy panel */
-  .hero-cta-bottom {
-    bottom: 225px;
-    gap: 0.6rem;
-  }
-
-  .hero-cta-bottom .highway-btn {
-    font-size: 0.95rem;
-    padding: 0.75rem 1.3rem;
-    width: auto;
-    min-width: auto;
-  }
-
-  .highway-btn::after { height: 1rem; }
-  .highway-btn.shake  { transform-origin: 50% calc(100% + 1rem); }
+  /* Road sign CTA buttons + posts hidden on mobile — candidate photo and
+     badge carry the visual weight; buttons remain fully intact on desktop. */
+  .hero-cta-bottom { display: none; }
 
   /* ── Credential block ─────────────────────────────────────────────────────
      Sector cards (Private / Nonprofit / Public) become a horizontally
