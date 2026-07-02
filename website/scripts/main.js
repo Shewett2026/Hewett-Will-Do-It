@@ -655,6 +655,22 @@
   //       before the store goes live.
   // =====================================================
 
+  // =====================================================
+  // Philosophy Pillars — tap-to-expand on mobile
+  // Desktop uses CSS :hover. This adds a click handler so
+  // touch users can tap a pillar to expand its description.
+  // Only one pillar stays open at a time.
+  // =====================================================
+
+  var philBanners = document.querySelectorAll('.philosophy-banner');
+  philBanners.forEach(function (banner) {
+    banner.addEventListener('click', function () {
+      var wasOpen = banner.classList.contains('is-expanded');
+      philBanners.forEach(function (b) { b.classList.remove('is-expanded'); });
+      if (!wasOpen) banner.classList.add('is-expanded');
+    });
+  });
+
   var storeNotifyForm    = document.getElementById('storeNotifyForm');
   var storeNotifyInput   = document.getElementById('storeNotifyEmail');
   var storeNotifyConfirm = document.getElementById('storeNotifyConfirm');

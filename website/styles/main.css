@@ -2220,7 +2220,8 @@ ul {
      badge z-index (6) stays above candidate (5) so badge is never covered. */
   .candidate-swap {
     display: block;
-    height: 38%;
+    height: 52%;
+    min-width: 60px;
     opacity: 0.88;
   }
 
@@ -2265,8 +2266,8 @@ ul {
 
   .hero-philosophy .philosophy-banner { padding: 0.45rem 1rem; }
   .hero-philosophy .phil-title        { font-size: 0.74rem; letter-spacing: 0.08em; }
-  /* Descriptions and chevrons hidden on mobile — no hover available on touch */
-  .hero-philosophy .phil-desc,
+  /* Chevron hidden on mobile; descriptions stay in flow so tap-expand can
+     animate them via max-height transition (display:none kills transitions) */
   .hero-philosophy .phil-chevron      { display: none; }
 
   /* CTA buttons raised above the ~160px philosophy panel */
@@ -2306,25 +2307,49 @@ ul {
     padding: 1.75rem 1.25rem;
   }
 
-  .cred-org  { font-size: 1.05rem; line-height: 1.35; }
-  .cred-role { font-size: 0.85rem; }
-  .cred-list li { margin-bottom: 1.5rem; }
+  .cred-org  { font-size: 1.05rem; line-height: 1.4; }
+  .cred-role { font-size: 0.85rem; line-height: 1.5; }
+  .cred-detail { font-size: 0.8rem; line-height: 1.6; }
+  .cred-list li { margin-bottom: 1.75rem; }
+
+  .cred-subsection-label { margin-top: 1.5rem; font-size: 1.05rem; }
+  .cred-subsection-label--second { margin-top: 2rem; }
+  .cred-subsection-detail { font-size: 0.82rem; line-height: 1.7; margin-top: 0.35rem; }
 
   /* ── Carousel cards ───────────────────────────────────────────────────────
-     FIX 4a: Reduce header padding and gap so the "Tap to read" label doesn't
-     clip at 2-card (50% width) mobile layout. At ≤480px a separate rule
-     switches to single-card so there's plenty of room at all phone sizes.
+     FIX 5: "Tap to read" was clipping because the flex row couldn't fit
+     icon + title + cta-label + chevron in the narrow mobile card width.
+     Solution: wrap the header so cta-label gets its own full-width row,
+     preventing any overflow clipping regardless of viewport size.
+     Title gets overflow:hidden + ellipsis so long titles can't bleed over.
   ───────────────────────────────────────────────────────────────────────── */
+  .ac-section { padding: 3rem 1rem 4rem; }
+
   .ac-header {
-    padding: 1rem;
-    gap: 0.55rem;
+    flex-wrap: wrap;
+    padding: 0.9rem 1rem;
+    gap: 0.4rem;
+    row-gap: 0;
   }
 
-  .ac-title { font-size: 0.95rem; }
+  .ac-title {
+    font-size: 0.9rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
-  /* FIX 4b: Pulsing tap indicator — mobile-only prompt so touch users know
-     the card is interactive. Only visible before a card is opened.
-     Desktop never sees this because it's scoped inside this media query. */
+  /* Full-width centered row below icon+title+chevron — never clips */
+  .ac-cta-label {
+    order: 10;
+    width: 100%;
+    text-align: center;
+    padding-top: 0.35rem;
+    font-size: 0.7rem;
+  }
+
+  /* Pulsing tap indicator — centered on its own row */
   .ac-cta-label::before {
     content: '';
     display: inline-block;
@@ -2338,6 +2363,26 @@ ul {
   }
 
   .ac-item.is-open .ac-cta-label::before { display: none; }
+
+  /* ── Philosophy pillar tap-expand ────────────────────────────────────────
+     Desktop uses :hover. On mobile the JS adds .is-expanded on tap.
+     Higher specificity (0,3,0) overrides the default max-height: 0 rule.
+  ───────────────────────────────────────────────────────────────────────── */
+  .hero-philosophy .philosophy-banner.is-expanded .phil-desc {
+    max-height: 120px;
+    opacity: 1;
+    margin-top: 0.3rem;
+    font-size: 0.72rem;
+  }
+
+  .hero-philosophy .philosophy-banner.is-expanded .phil-title {
+    color: #F5F0E8;
+    margin-bottom: 0.35rem;
+  }
+
+  .hero-philosophy .philosophy-banner.is-expanded {
+    background: rgba(201, 136, 58, 0.12);
+  }
 }
 
 /* =====================================================
