@@ -24,8 +24,9 @@ exports.handler = async (event) => {
       console.log('[votes-fn] GET returning:', JSON.stringify(votes));
       return { statusCode: 200, headers: HEADERS, body: JSON.stringify(votes) };
     } catch (e) {
-      console.error('[votes-fn] GET error:', e.message || String(e));
-      return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ ...EMPTY_VOTES }) };
+      const errMsg = (e.message || String(e)).slice(0, 400);
+      console.error('[votes-fn] GET error:', errMsg);
+      return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ ...EMPTY_VOTES, _err: errMsg }) };
     }
   }
 
@@ -50,8 +51,9 @@ exports.handler = async (event) => {
       console.log('[votes-fn] POST track=' + track + ' stored:', JSON.stringify(votes));
       return { statusCode: 200, headers: HEADERS, body: JSON.stringify(votes) };
     } catch (e) {
-      console.error('[votes-fn] POST error:', e.message || String(e));
-      return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ ...EMPTY_VOTES }) };
+      const errMsg = (e.message || String(e)).slice(0, 400);
+      console.error('[votes-fn] POST error:', errMsg);
+      return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ ...EMPTY_VOTES, _err: errMsg }) };
     }
   }
 
