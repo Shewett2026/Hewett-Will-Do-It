@@ -1,7 +1,6 @@
-// Netlify Functions v2 — ES module format.
-// v2 is required for Netlify Blobs: only v2 functions receive the automatic
-// NETLIFY_BLOBS_CONTEXT credential injection that getStore() depends on.
-// v1 (CommonJS exports.handler) does NOT get that context and always throws.
+// Netlify Functions v2 — diagnostic build.
+// Reads NETLIFY_BLOBS_CONTEXT details and does a same-invocation readback
+// after every set() to isolate where persistence breaks.
 
 import { getStore } from '@netlify/blobs';
 
@@ -20,16 +19,29 @@ export default async (req) => {
     return new Response('', { status: 204, headers: HEADERS });
   }
 
+  // Decode context metadata (no secrets exposed — just structural info)
+  const rawCtx = process.env.NETLIFY_BLOBS_CONTEXT || '';
+  let ctxInfo = { present: !!rawCtx, len: rawCtx.length, keys: [] };
+  if (rawCtx) {
+    try {
+      const decoded = JSON.parse(Buffer.from(rawCtx, 'base64').toString('utf8'));
+      ctxInfo.keys = Object.keys(decoded);
+      ctxInfo.apiURL = decoded.apiURL || '(none)';
+      ctxInfo.siteID = decoded.siteID || '(none)';
+      ctxInfo.hasToken = !!decoded.token;
+    } catch (e) {
+      ctxInfo.parseErr = e.message;
+    }
+  }
+
   if (req.method === 'GET') {
     try {
       const store = getStore('campaign-votes');
       const raw   = await store.get('votes');
       const votes = raw ? JSON.parse(raw) : { ...EMPTY_VOTES };
-      console.log('[votes-fn] GET returning:', JSON.stringify(votes));
-      return new Response(JSON.stringify(votes), { status: 200, headers: HEADERS });
+      return new Response(JSON.stringify({ ...votes, _ctx: ctxInfo }), { status: 200, headers: HEADERS });
     } catch (e) {
-      console.error('[votes-fn] GET error:', e.message || String(e));
-      return new Response(JSON.stringify({ ...EMPTY_VOTES }), { status: 200, headers: HEADERS });
+      return new Response(JSON.stringify({ ...EMPTY_VOTES, _ctx: ctxInfo, _err: (e.message || String(e)).slice(0, 300) }), { status: 200, headers: HEADERS });
     }
   }
 
@@ -51,12 +63,22 @@ export default async (req) => {
       const raw    = await store.get('votes');
       const votes  = raw ? JSON.parse(raw) : { ...EMPTY_VOTES };
       votes[track] = (votes[track] || 0) + 1;
+
+      // Write
       await store.set('votes', JSON.stringify(votes));
-      console.log('[votes-fn] POST track=' + track + ' stored:', JSON.stringify(votes));
-      return new Response(JSON.stringify(votes), { status: 200, headers: HEADERS });
+
+      // Immediately read back from the SAME store object to see if the write "took"
+      const rawBack  = await store.get('votes');
+      const readback = rawBack ? JSON.parse(rawBack) : null;
+
+      return new Response(JSON.stringify({
+        written:  votes,
+        readback: readback,
+        readback_matches: JSON.stringify(readback) === JSON.stringify(votes),
+        _ctx: ctxInfo
+      }), { status: 200, headers: HEADERS });
     } catch (e) {
-      console.error('[votes-fn] POST error:', e.message || String(e));
-      return new Response(JSON.stringify({ ...EMPTY_VOTES }), { status: 200, headers: HEADERS });
+      return new Response(JSON.stringify({ error: (e.message || String(e)).slice(0, 300), _ctx: ctxInfo }), { status: 200, headers: HEADERS });
     }
   }
 
