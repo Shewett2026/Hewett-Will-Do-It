@@ -689,24 +689,40 @@
   });
 
   // =====================================================
-  // Background Music — tap to toggle play / pause
-  // Track: Melody Loops "Twang Happy" (License #42251871353)
-  // No autoplay — fully user-initiated per browser policy.
-  // Restarts from the beginning on each page load by design:
-  // sessionStorage can record intent but browsers block the
-  // subsequent autoplay on the new page, making persistence
-  // unreliable across navigations.
+  // Background Music + Vote Widget (Combined)
+  // Music button pill (bottom-left) toggles play/pause and
+  // opens the track panel on first play.
+  // Track name click = switch + play (independent of vote).
+  // Checkmark click = cast one vote per browser (localStorage).
+  // Votes shared server-side via /.netlify/functions/votes.
+  // Removing bgMusic.load() before play() avoids breaking
+  // the user-gesture chain on iOS Safari.
   // =====================================================
 
-  var bgMusic  = document.getElementById('bgMusic');
-  var musicBtn = document.getElementById('musicBtn');
+  var bgMusic    = document.getElementById('bgMusic');
+  var musicBtn   = document.getElementById('musicBtn');
+  var voteWidget = document.getElementById('voteWidget');
 
+  var TRACKS = {
+    'twang-happy':  { label: 'Breckenridge Mountain Drive', src: 'assets/audio/melodyloops-twang-happy.mp3' },
+    'desert-road':  { label: 'Westside Parkway Rhythm',     src: 'assets/audio/melodyloops-desert-road.mp3' },
+    'hidden-creek': { label: 'Truxtun Ave Track',           src: 'assets/audio/melodyloops-hidden-creek.mp3' }
+  };
+  var VOTES_API   = '/.netlify/functions/votes';
+  var VOTE_LS_KEY = 'hwdi_vote_cast';
+
+  // ── Music button ──────────────────────────────────────────────
   if (bgMusic && musicBtn) {
     bgMusic.volume = 0.42;
 
     musicBtn.addEventListener('click', function () {
       if (bgMusic.paused) {
-        bgMusic.play();
+        var p = bgMusic.play();
+        if (p !== undefined) {
+          p.catch(function (err) {
+            console.warn('[HWDI] Audio play() blocked:', err.name, '-', err.message);
+          });
+        }
       } else {
         bgMusic.pause();
       }
@@ -716,6 +732,7 @@
       musicBtn.classList.add('is-playing');
       musicBtn.setAttribute('aria-label', 'Pause background music');
       musicBtn.setAttribute('aria-pressed', 'true');
+      if (voteWidget) { voteWidget.classList.add('is-open'); }
     });
 
     bgMusic.addEventListener('pause', function () {
@@ -723,6 +740,85 @@
       musicBtn.setAttribute('aria-label', 'Play background music');
       musicBtn.setAttribute('aria-pressed', 'false');
     });
+  }
+
+  // ── Vote Widget ───────────────────────────────────────────────
+  if (voteWidget && bgMusic) {
+    var trackList    = voteWidget.querySelector('.vote-track-list');
+    var votedTrackId = localStorage.getItem(VOTE_LS_KEY);
+
+    var voteMarkActive = function (trackId) {
+      voteWidget.querySelectorAll('.vote-track-row').forEach(function (row) {
+        row.classList.toggle('is-active', row.getAttribute('data-track') === trackId);
+      });
+    };
+
+    var voteShowPct = function (votes) {
+      var total = Object.keys(TRACKS).reduce(function (s, id) { return s + (votes[id] || 0); }, 0);
+      if (trackList) { trackList.classList.add('has-voted'); }
+      Object.keys(TRACKS).forEach(function (id) {
+        var pct = total > 0 ? Math.round(((votes[id] || 0) / total) * 100) : 0;
+        var row = voteWidget.querySelector('.vote-track-row[data-track="' + id + '"]');
+        if (!row) return;
+        var pctEl = row.querySelector('.vote-pct');
+        if (pctEl) { pctEl.textContent = pct + '%'; }
+      });
+    };
+
+    var voteFetch = function () {
+      fetch(VOTES_API)
+        .then(function (r) { return r.json(); })
+        .then(function (v) { voteShowPct(v); })
+        .catch(function () { voteShowPct({}); });
+    };
+
+    // Track name button → switch track + play
+    voteWidget.querySelectorAll('.vote-track-play').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var trackId = btn.getAttribute('data-track');
+        var info = TRACKS[trackId];
+        if (!info) return;
+        voteMarkActive(trackId);
+        bgMusic.pause();
+        bgMusic.src = info.src;
+        var p = bgMusic.play();
+        if (p !== undefined) {
+          p.catch(function (err) {
+            console.warn('[HWDI] Track switch blocked:', err.name, '-', err.message);
+          });
+        }
+      });
+    });
+
+    // Checkmark button → cast vote (once per browser)
+    voteWidget.querySelectorAll('.vote-check-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (localStorage.getItem(VOTE_LS_KEY)) { return; }
+        var trackId = btn.getAttribute('data-track');
+        btn.classList.add('is-voted');
+        fetch(VOTES_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ track: trackId })
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (v) { localStorage.setItem(VOTE_LS_KEY, trackId); voteShowPct(v); })
+          .catch(function ()  { localStorage.setItem(VOTE_LS_KEY, trackId); voteFetch(); });
+      });
+    });
+
+    // On load: restore voted state + percentages if already voted this browser
+    if (votedTrackId) {
+      var votedRow = voteWidget.querySelector('.vote-track-row[data-track="' + votedTrackId + '"]');
+      if (votedRow) {
+        var votedCheckBtn = votedRow.querySelector('.vote-check-btn');
+        if (votedCheckBtn) { votedCheckBtn.classList.add('is-voted'); }
+      }
+      voteFetch();
+    }
+
+    // Default active track on load
+    voteMarkActive('twang-happy');
   }
 
   var storeNotifyForm    = document.getElementById('storeNotifyForm');
@@ -745,85 +841,5 @@
     });
   }
 
-  // =====================================================
-  // Vote Widget — "Campaign Tone" poll
-  // Three tracks: Playful / Open Road / Down Home.
-  // Tapping a pill previews the track and casts one vote
-  // via the Netlify Function at /.netlify/functions/votes.
-  // Votes are stored in Netlify Blobs (server-side, shared
-  // across all visitors). localStorage key hwdi_vote_cast
-  // remembers per-browser votes so the widget flips to the
-  // results bar-chart on repeat visits.
-  // =====================================================
-
-  var TRACKS = {
-    ‘twang-happy’:  { label: ‘Playful’,   src: ‘assets/audio/melodyloops-twang-happy.mp3’ },
-    ‘desert-road’:  { label: ‘Open Road’, src: ‘assets/audio/melodyloops-desert-road.mp3’ },
-    ‘hidden-creek’: { label: ‘Down Home’, src: ‘assets/audio/melodyloops-hidden-creek.mp3’ }
-  };
-  var VOTES_API   = ‘/.netlify/functions/votes’;
-  var VOTE_LS_KEY = ‘hwdi_vote_cast’;
-  var voteWidget   = document.getElementById(‘voteWidget’);
-  var voteOptPanel = document.getElementById(‘voteOptions’);
-  var voteResPanel = document.getElementById(‘voteResults’);
-
-  if (voteWidget && voteOptPanel && voteResPanel) {
-
-    function switchTrack(trackId) {
-      var info = TRACKS[trackId];
-      if (!info || !bgMusic) return;
-      bgMusic.pause();
-      bgMusic.src = info.src;
-      bgMusic.load();
-      var p = bgMusic.play();
-      if (p !== undefined) { p.catch(function () {}); }
-    }
-
-    function showVoteResults(votes) {
-      var total = Object.keys(TRACKS).reduce(function (s, id) { return s + (votes[id] || 0); }, 0);
-      var barGroup = document.getElementById(‘voteBarGroup’);
-      if (!barGroup) return;
-      barGroup.innerHTML = ‘’;
-      Object.keys(TRACKS).forEach(function (id) {
-        var pct = total > 0 ? Math.round(((votes[id] || 0) / total) * 100) : 0;
-        var row = document.createElement(‘div’);
-        row.className = ‘vote-bar-row’;
-        row.innerHTML =
-          ‘<span class="vote-bar-name">’ + TRACKS[id].label + ‘</span>’ +
-          ‘<div class="vote-bar-track"><div class="vote-bar-fill" style="width:’ + pct + ‘%"></div></div>’ +
-          ‘<span class="vote-bar-pct">’ + pct + ‘%</span>’;
-        barGroup.appendChild(row);
-      });
-      voteOptPanel.style.display = ‘none’;
-      voteResPanel.style.display = ‘block’;
-    }
-
-    function fetchAndShowResults() {
-      fetch(VOTES_API)
-        .then(function (r) { return r.json(); })
-        .then(function (v) { showVoteResults(v); })
-        .catch(function () { showVoteResults({}); });
-    }
-
-    if (localStorage.getItem(VOTE_LS_KEY)) {
-      voteOptPanel.style.display = ‘none’;
-      fetchAndShowResults();
-    }
-
-    voteWidget.querySelectorAll(‘.vote-pill’).forEach(function (pill) {
-      pill.addEventListener(‘click’, function () {
-        var trackId = pill.getAttribute(‘data-track’);
-        switchTrack(trackId);
-        fetch(VOTES_API, {
-          method: ‘POST’,
-          headers: { ‘Content-Type’: ‘application/json’ },
-          body: JSON.stringify({ track: trackId })
-        })
-          .then(function (r) { return r.json(); })
-          .then(function (v) { localStorage.setItem(VOTE_LS_KEY, ‘1’); showVoteResults(v); })
-          .catch(function () { localStorage.setItem(VOTE_LS_KEY, ‘1’); fetchAndShowResults(); });
-      });
-    });
-  }
 
 }());

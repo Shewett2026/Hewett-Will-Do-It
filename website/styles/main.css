@@ -1879,7 +1879,7 @@ ul {
 .hero-badge-spin-wrapper {
   display: block;
   transform-style: preserve-3d;
-  pointer-events: all;
+  pointer-events: auto;
   cursor: pointer;
 }
 
@@ -3488,10 +3488,10 @@ ul {
 }
 
 /* =====================================================
-   Vote Widget — floating tone-vote panel
-   Sits above the music button (bottom-left corner).
-   Shows three pill buttons before voting; replaces them
-   with a bar-chart results view after the user votes.
+   Vote Widget — floating track-picker + vote panel
+   Hidden by default (opacity 0, pointer-events none).
+   Revealed via .is-open when bgMusic fires its first
+   "play" event. Sits above the music button (bottom-left).
    ===================================================== */
 
 .vote-widget {
@@ -3502,97 +3502,117 @@ ul {
   background-color: var(--navy);
   border: 1px solid rgba(201, 136, 58, 0.35);
   border-radius: 12px;
-  padding: 0.75rem 0.9rem;
+  padding: 0.7rem 0.85rem 0.75rem;
   box-shadow: 0 4px 16px rgba(11, 31, 58, 0.42);
-  width: 168px;
+  width: 210px;
   font-family: var(--font-body);
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.22s ease;
 }
 
-.vote-prompt {
-  font-size: 0.7rem;
+.vote-widget.is-open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.vote-widget-label {
+  font-size: 0.62rem;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: rgba(201, 136, 58, 0.8);
-  margin: 0 0 0.55rem;
+  color: rgba(201, 136, 58, 0.7);
+  margin: 0 0 0.45rem;
 }
 
-.vote-options {
+.vote-track-list {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.15rem;
 }
 
-.vote-results {
-  display: none;
-}
-
-.vote-pill {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(201, 136, 58, 0.28);
-  border-radius: 100px;
-  color: var(--cream);
-  font-family: var(--font-body);
-  font-size: 0.78rem;
-  font-weight: 500;
-  padding: 0.35rem 0.75rem;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.2s ease, border-color 0.2s ease;
-}
-
-.vote-pill:hover {
-  background: rgba(201, 136, 58, 0.15);
-  border-color: var(--gold);
-}
-
-.vote-results-label {
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: rgba(201, 136, 58, 0.8);
-  margin: 0 0 0.55rem;
-}
-
-.vote-bar-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-}
-
-.vote-bar-row {
+.vote-track-row {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.3rem;
 }
 
-.vote-bar-name {
-  font-size: 0.72rem;
-  color: var(--cream);
-  width: 56px;
-  flex-shrink: 0;
-}
-
-.vote-bar-track {
+/* Track name — clicking plays the track, independent of voting */
+.vote-track-play {
   flex: 1;
-  height: 5px;
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: 3px;
-  overflow: hidden;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: rgba(245, 240, 232, 0.6);
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  font-weight: 500;
+  padding: 0.28rem 0.2rem;
+  cursor: pointer;
+  text-align: left;
+  line-height: 1.35;
+  border-radius: 4px;
+  transition: color 0.15s ease;
+  white-space: normal;
 }
 
-.vote-bar-fill {
-  height: 100%;
-  background: var(--gold);
-  border-radius: 3px;
-  transition: width 0.5s ease;
+.vote-track-play:hover {
+  color: var(--cream);
 }
 
-.vote-bar-pct {
-  font-size: 0.68rem;
-  color: rgba(201, 136, 58, 0.85);
-  width: 26px;
-  text-align: right;
+.vote-track-row.is-active .vote-track-play {
+  color: var(--gold);
+  font-weight: 600;
+}
+
+/* Checkmark vote button — right side of each row */
+.vote-check-btn {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.2rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(201, 136, 58, 0.25);
+  border-radius: 6px;
+  padding: 0.22rem 0.3rem;
+  cursor: pointer;
+  min-width: 26px;
+  transition: background 0.15s ease, border-color 0.15s ease, min-width 0.15s ease;
+}
+
+.vote-check-btn:hover {
+  background: rgba(201, 136, 58, 0.12);
+  border-color: rgba(201, 136, 58, 0.5);
+}
+
+/* Widen button to accommodate pct text after voting */
+.vote-track-list.has-voted .vote-check-btn {
+  min-width: 44px;
+}
+
+.vote-check-icon {
+  color: rgba(245, 240, 232, 0.28);
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.vote-check-btn.is-voted .vote-check-icon {
+  color: var(--gold);
+}
+
+/* Percentage label — hidden until .has-voted on the list */
+.vote-pct {
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: rgba(201, 136, 58, 0.8);
+  display: none;
+  min-width: 22px;
+  text-align: right;
+}
+
+.vote-track-list.has-voted .vote-pct {
+  display: inline;
 }

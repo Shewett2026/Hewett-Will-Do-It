@@ -185,15 +185,29 @@
        Melody Loops "Desert Road"   — License #[to be added]
        Melody Loops "Hidden Creek"  — License #[to be added] -->
   <div class="vote-widget" id="voteWidget">
-    <p class="vote-prompt">Vote on the campaign's tone</p>
-    <div class="vote-options" id="voteOptions">
-      <button class="vote-pill" data-track="twang-happy">Playful</button>
-      <button class="vote-pill" data-track="desert-road">Open Road</button>
-      <button class="vote-pill" data-track="hidden-creek">Down Home</button>
-    </div>
-    <div class="vote-results" id="voteResults">
-      <p class="vote-results-label">Campaign tone votes</p>
-      <div class="vote-bar-group" id="voteBarGroup"></div>
+    <p class="vote-widget-label">Choose a vibe</p>
+    <div class="vote-track-list" id="voteTrackList">
+      <div class="vote-track-row" data-track="twang-happy">
+        <button class="vote-track-play" data-track="twang-happy" aria-label="Play Breckenridge Mountain Drive">Breckenridge Mountain Drive</button>
+        <button class="vote-check-btn" data-track="twang-happy" aria-label="Vote for Breckenridge Mountain Drive">
+          <svg class="vote-check-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" aria-hidden="true"><polyline points="1.5,8 5,12 12.5,2.5"/></svg>
+          <span class="vote-pct"></span>
+        </button>
+      </div>
+      <div class="vote-track-row" data-track="desert-road">
+        <button class="vote-track-play" data-track="desert-road" aria-label="Play Westside Parkway Rhythm">Westside Parkway Rhythm</button>
+        <button class="vote-check-btn" data-track="desert-road" aria-label="Vote for Westside Parkway Rhythm">
+          <svg class="vote-check-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" aria-hidden="true"><polyline points="1.5,8 5,12 12.5,2.5"/></svg>
+          <span class="vote-pct"></span>
+        </button>
+      </div>
+      <div class="vote-track-row" data-track="hidden-creek">
+        <button class="vote-track-play" data-track="hidden-creek" aria-label="Play Truxtun Ave Track">Truxtun Ave Track</button>
+        <button class="vote-check-btn" data-track="hidden-creek" aria-label="Vote for Truxtun Ave Track">
+          <svg class="vote-check-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" aria-hidden="true"><polyline points="1.5,8 5,12 12.5,2.5"/></svg>
+          <span class="vote-pct"></span>
+        </button>
+      </div>
     </div>
   </div>
 
