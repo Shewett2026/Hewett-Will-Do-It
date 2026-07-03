@@ -3486,3 +3486,113 @@ ul {
   transform: translateY(0);
   transition-delay: 0.24s;
 }
+
+/* =====================================================
+   Vote Widget — floating tone-vote panel
+   Sits above the music button (bottom-left corner).
+   Shows three pill buttons before voting; replaces them
+   with a bar-chart results view after the user votes.
+   ===================================================== */
+
+.vote-widget {
+  position: fixed;
+  bottom: 5.5rem;
+  left: 2rem;
+  z-index: 900;
+  background-color: var(--navy);
+  border: 1px solid rgba(201, 136, 58, 0.35);
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem;
+  box-shadow: 0 4px 16px rgba(11, 31, 58, 0.42);
+  width: 168px;
+  font-family: var(--font-body);
+}
+
+.vote-prompt {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(201, 136, 58, 0.8);
+  margin: 0 0 0.55rem;
+}
+
+.vote-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.vote-results {
+  display: none;
+}
+
+.vote-pill {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(201, 136, 58, 0.28);
+  border-radius: 100px;
+  color: var(--cream);
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.vote-pill:hover {
+  background: rgba(201, 136, 58, 0.15);
+  border-color: var(--gold);
+}
+
+.vote-results-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(201, 136, 58, 0.8);
+  margin: 0 0 0.55rem;
+}
+
+.vote-bar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.vote-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.vote-bar-name {
+  font-size: 0.72rem;
+  color: var(--cream);
+  width: 56px;
+  flex-shrink: 0;
+}
+
+.vote-bar-track {
+  flex: 1;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.vote-bar-fill {
+  height: 100%;
+  background: var(--gold);
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+.vote-bar-pct {
+  font-size: 0.68rem;
+  color: rgba(201, 136, 58, 0.85);
+  width: 26px;
+  text-align: right;
+  flex-shrink: 0;
+}

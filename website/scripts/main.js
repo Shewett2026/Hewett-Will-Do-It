@@ -730,18 +730,99 @@
   var storeNotifyConfirm = document.getElementById('storeNotifyConfirm');
 
   if (storeNotifyForm) {
-    storeNotifyForm.addEventListener('submit', function (e) {
+    storeNotifyForm.addEventListener(‘submit’, function (e) {
       e.preventDefault();
-      var email = storeNotifyInput ? storeNotifyInput.value.trim() : '';
+      var email = storeNotifyInput ? storeNotifyInput.value.trim() : ‘’;
       if (!email) return;
 
       // PLACEHOLDER — replace with real service call
-      console.log('[Store notify] Email submitted:', email);
+      console.log(‘[Store notify] Email submitted:’, email);
 
       if (storeNotifyConfirm) {
-        storeNotifyConfirm.textContent = 'You’re on the list! We’ll let you know when the store launches.';
+        storeNotifyConfirm.textContent = ‘You’re on the list! We’ll let you know when the store launches.’;
       }
       storeNotifyForm.reset();
+    });
+  }
+
+  // =====================================================
+  // Vote Widget — "Campaign Tone" poll
+  // Three tracks: Playful / Open Road / Down Home.
+  // Tapping a pill previews the track and casts one vote
+  // via the Netlify Function at /.netlify/functions/votes.
+  // Votes are stored in Netlify Blobs (server-side, shared
+  // across all visitors). localStorage key hwdi_vote_cast
+  // remembers per-browser votes so the widget flips to the
+  // results bar-chart on repeat visits.
+  // =====================================================
+
+  var TRACKS = {
+    ‘twang-happy’:  { label: ‘Playful’,   src: ‘assets/audio/melodyloops-twang-happy.mp3’ },
+    ‘desert-road’:  { label: ‘Open Road’, src: ‘assets/audio/melodyloops-desert-road.mp3’ },
+    ‘hidden-creek’: { label: ‘Down Home’, src: ‘assets/audio/melodyloops-hidden-creek.mp3’ }
+  };
+  var VOTES_API   = ‘/.netlify/functions/votes’;
+  var VOTE_LS_KEY = ‘hwdi_vote_cast’;
+  var voteWidget   = document.getElementById(‘voteWidget’);
+  var voteOptPanel = document.getElementById(‘voteOptions’);
+  var voteResPanel = document.getElementById(‘voteResults’);
+
+  if (voteWidget && voteOptPanel && voteResPanel) {
+
+    function switchTrack(trackId) {
+      var info = TRACKS[trackId];
+      if (!info || !bgMusic) return;
+      bgMusic.pause();
+      bgMusic.src = info.src;
+      bgMusic.load();
+      var p = bgMusic.play();
+      if (p !== undefined) { p.catch(function () {}); }
+    }
+
+    function showVoteResults(votes) {
+      var total = Object.keys(TRACKS).reduce(function (s, id) { return s + (votes[id] || 0); }, 0);
+      var barGroup = document.getElementById(‘voteBarGroup’);
+      if (!barGroup) return;
+      barGroup.innerHTML = ‘’;
+      Object.keys(TRACKS).forEach(function (id) {
+        var pct = total > 0 ? Math.round(((votes[id] || 0) / total) * 100) : 0;
+        var row = document.createElement(‘div’);
+        row.className = ‘vote-bar-row’;
+        row.innerHTML =
+          ‘<span class="vote-bar-name">’ + TRACKS[id].label + ‘</span>’ +
+          ‘<div class="vote-bar-track"><div class="vote-bar-fill" style="width:’ + pct + ‘%"></div></div>’ +
+          ‘<span class="vote-bar-pct">’ + pct + ‘%</span>’;
+        barGroup.appendChild(row);
+      });
+      voteOptPanel.style.display = ‘none’;
+      voteResPanel.style.display = ‘block’;
+    }
+
+    function fetchAndShowResults() {
+      fetch(VOTES_API)
+        .then(function (r) { return r.json(); })
+        .then(function (v) { showVoteResults(v); })
+        .catch(function () { showVoteResults({}); });
+    }
+
+    if (localStorage.getItem(VOTE_LS_KEY)) {
+      voteOptPanel.style.display = ‘none’;
+      fetchAndShowResults();
+    }
+
+    voteWidget.querySelectorAll(‘.vote-pill’).forEach(function (pill) {
+      pill.addEventListener(‘click’, function () {
+        var trackId = pill.getAttribute(‘data-track’);
+        switchTrack(trackId);
+        fetch(VOTES_API, {
+          method: ‘POST’,
+          headers: { ‘Content-Type’: ‘application/json’ },
+          body: JSON.stringify({ track: trackId })
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (v) { localStorage.setItem(VOTE_LS_KEY, ‘1’); showVoteResults(v); })
+          .catch(function () { localStorage.setItem(VOTE_LS_KEY, ‘1’); fetchAndShowResults(); });
+      });
     });
   }
 
