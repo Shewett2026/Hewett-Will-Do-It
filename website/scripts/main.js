@@ -1,7 +1,14 @@
 ﻿/* =====================================================
-   Hewett Will Do It 2026 — main.js
-   ===================================================== */
+   Hewett Will Do It 2026 -- main.js
 
+   IMPORTANT -- STRING LITERAL ENCODING RULE:
+   Any string containing an apostrophe (e.g. "don't", "you're")
+   MUST use double-quote delimiters "..." not single-quote '...'.
+   AI-assisted editing tools silently replace straight single
+   quotes with curly/smart quotes (U+2018/U+2019) which are NOT
+   valid JS string delimiters and will crash the entire script.
+   Use double quotes for any string with apostrophes to prevent this.
+   ===================================================== */
 (function () {
   'use strict';
 
@@ -826,13 +833,13 @@
   var storeNotifyConfirm = document.getElementById('storeNotifyConfirm');
 
   if (storeNotifyForm) {
-    storeNotifyForm.addEventListener(‘submit’, function (e) {
+    storeNotifyForm.addEventListener("submit", function (e) {
       e.preventDefault();
-      var email = storeNotifyInput ? storeNotifyInput.value.trim() : ‘’;
+      var email = storeNotifyInput ? storeNotifyInput.value.trim() : "";
       if (!email) return;
 
       // PLACEHOLDER — replace with real service call
-      console.log(‘[Store notify] Email submitted:’, email);
+      console.log("[Store notify] Email submitted:", email);
 
       if (storeNotifyConfirm) {
         storeNotifyConfirm.textContent = "You’re on the list! We’ll let you know when the store launches.";
