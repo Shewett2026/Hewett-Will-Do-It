@@ -688,6 +688,43 @@
     });
   });
 
+  // =====================================================
+  // Background Music — tap to toggle play / pause
+  // Track: Melody Loops "Twang Happy" (License #42251871353)
+  // No autoplay — fully user-initiated per browser policy.
+  // Restarts from the beginning on each page load by design:
+  // sessionStorage can record intent but browsers block the
+  // subsequent autoplay on the new page, making persistence
+  // unreliable across navigations.
+  // =====================================================
+
+  var bgMusic  = document.getElementById('bgMusic');
+  var musicBtn = document.getElementById('musicBtn');
+
+  if (bgMusic && musicBtn) {
+    bgMusic.volume = 0.42;
+
+    musicBtn.addEventListener('click', function () {
+      if (bgMusic.paused) {
+        bgMusic.play();
+      } else {
+        bgMusic.pause();
+      }
+    });
+
+    bgMusic.addEventListener('play', function () {
+      musicBtn.classList.add('is-playing');
+      musicBtn.setAttribute('aria-label', 'Pause background music');
+      musicBtn.setAttribute('aria-pressed', 'true');
+    });
+
+    bgMusic.addEventListener('pause', function () {
+      musicBtn.classList.remove('is-playing');
+      musicBtn.setAttribute('aria-label', 'Play background music');
+      musicBtn.setAttribute('aria-pressed', 'false');
+    });
+  }
+
   var storeNotifyForm    = document.getElementById('storeNotifyForm');
   var storeNotifyInput   = document.getElementById('storeNotifyEmail');
   var storeNotifyConfirm = document.getElementById('storeNotifyConfirm');

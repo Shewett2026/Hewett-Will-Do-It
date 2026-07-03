@@ -2896,6 +2896,71 @@ ul {
 }
 
 /* =====================================================
+   Floating Music Button
+   Mirrors the Share button's pill shape, shadow, and
+   z-index but sits bottom-left (Share is bottom-right).
+   Navy background / gold text to distinguish from Share.
+   ===================================================== */
+
+.music-btn {
+  position: fixed;
+  bottom: 2rem;
+  left: 2rem;
+  z-index: 900;
+  background-color: var(--navy);
+  color: var(--gold);
+  border: 1px solid rgba(201, 136, 58, 0.35);
+  border-radius: 100px;
+  padding: 0.72rem 1.35rem;
+  font-family: var(--font-body);
+  font-size: 0.87rem;
+  font-weight: 600;
+  letter-spacing: 0.035em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  box-shadow: 0 4px 16px rgba(11, 31, 58, 0.42);
+  transition: background-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.music-btn:hover {
+  background-color: #162d52;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 22px rgba(11, 31, 58, 0.55);
+}
+
+/* Equalizer bars — visible in .is-playing state only */
+.music-btn-eq {
+  display: none;
+  align-items: flex-end;
+  gap: 2px;
+  height: 14px;
+}
+
+.music-btn.is-playing .music-btn-icon { display: none; }
+.music-btn.is-playing .music-btn-eq   { display: inline-flex; }
+
+.music-btn-eq span {
+  display: block;
+  width: 3px;
+  border-radius: 1.5px;
+  background-color: var(--gold);
+  transform-origin: bottom;
+  animation: eq-bounce 0.6s ease-in-out infinite alternate;
+}
+
+.music-btn-eq span:nth-child(1) { height: 8px;  animation-delay: 0s; }
+.music-btn-eq span:nth-child(2) { height: 14px; animation-delay: 0.15s; }
+.music-btn-eq span:nth-child(3) { height: 10px; animation-delay: 0.08s; }
+.music-btn-eq span:nth-child(4) { height: 12px; animation-delay: 0.22s; }
+
+@keyframes eq-bounce {
+  from { transform: scaleY(0.25); }
+  to   { transform: scaleY(1); }
+}
+
+/* =====================================================
    Meet Seth — Section Text Styles
    ===================================================== */
 
