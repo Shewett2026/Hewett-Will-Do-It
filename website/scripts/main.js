@@ -696,19 +696,24 @@
   });
 
   // =====================================================
-  // Background Music + Vote Widget (Combined)
-  // Music button pill (bottom-left) toggles play/pause and
-  // opens the track panel on first play.
-  // Track name click = switch + play (independent of vote).
-  // Checkmark click = cast one vote per browser (localStorage).
-  // Votes shared server-side via /.netlify/functions/votes.
-  // Removing bgMusic.load() before play() avoids breaking
-  // the user-gesture chain on iOS Safari.
+  // Music Controls + Vote Widget
+  //
+  // musicBtn   → toggles the "Choose a Vibe" panel open/closed.
+  //              Fully independent of playback state.
+  // musicPlayBtn → plays or pauses audio.
+  //              EQ bars animate while playing; play icon shows when paused.
+  //
+  // Track name click → switch track + begin playing.
+  // Checkmark click  → cast one vote per browser (localStorage guard).
+  // Votes stored server-side via /.netlify/functions/votes.
+  //
+  // Never call bgMusic.load() before play() — breaks iOS Safari gesture chain.
   // =====================================================
 
-  var bgMusic    = document.getElementById('bgMusic');
-  var musicBtn   = document.getElementById('musicBtn');
-  var voteWidget = document.getElementById('voteWidget');
+  var bgMusic      = document.getElementById('bgMusic');
+  var musicBtn     = document.getElementById('musicBtn');
+  var musicPlayBtn = document.getElementById('musicPlayBtn');
+  var voteWidget   = document.getElementById('voteWidget');
 
   var TRACKS = {
     'twang-happy':  { label: 'Breckenridge Mountain Drive', src: 'assets/audio/melodyloops-twang-happy.mp3' },
@@ -718,11 +723,19 @@
   var VOTES_API   = '/.netlify/functions/votes';
   var VOTE_LS_KEY = 'hwdi_vote_cast';
 
-  // ── Music button ──────────────────────────────────────────────
-  if (bgMusic && musicBtn) {
+  // ── Panel toggle button (Music) ───────────────────────────────
+  if (musicBtn && voteWidget) {
+    musicBtn.addEventListener('click', function () {
+      var isOpen = voteWidget.classList.toggle('is-open');
+      musicBtn.setAttribute('aria-expanded', String(isOpen));
+    });
+  }
+
+  // ── Play/pause button ─────────────────────────────────────────
+  if (bgMusic && musicPlayBtn) {
     bgMusic.volume = 0.42;
 
-    musicBtn.addEventListener('click', function () {
+    musicPlayBtn.addEventListener('click', function () {
       if (bgMusic.paused) {
         var p = bgMusic.play();
         if (p !== undefined) {
@@ -736,16 +749,15 @@
     });
 
     bgMusic.addEventListener('play', function () {
-      musicBtn.classList.add('is-playing');
-      musicBtn.setAttribute('aria-label', 'Pause background music');
-      musicBtn.setAttribute('aria-pressed', 'true');
-      if (voteWidget) { voteWidget.classList.add('is-open'); }
+      musicPlayBtn.classList.add('is-playing');
+      musicPlayBtn.setAttribute('aria-label', 'Pause background music');
+      musicPlayBtn.setAttribute('aria-pressed', 'true');
     });
 
     bgMusic.addEventListener('pause', function () {
-      musicBtn.classList.remove('is-playing');
-      musicBtn.setAttribute('aria-label', 'Play background music');
-      musicBtn.setAttribute('aria-pressed', 'false');
+      musicPlayBtn.classList.remove('is-playing');
+      musicPlayBtn.setAttribute('aria-label', 'Play background music');
+      musicPlayBtn.setAttribute('aria-pressed', 'false');
     });
   }
 
@@ -774,12 +786,23 @@
 
     var voteFetch = function () {
       fetch(VOTES_API)
-        .then(function (r) { return r.json(); })
-        .then(function (v) { voteShowPct(v); })
-        .catch(function () { voteShowPct({}); });
+        .then(function (r) {
+          if (!r.ok) { console.warn('[HWDI] GET /votes status:', r.status); return null; }
+          return r.json();
+        })
+        .then(function (v) {
+          if (v) {
+            console.log('[HWDI] GET /votes response:', JSON.stringify(v));
+            voteShowPct(v);
+          }
+        })
+        .catch(function (err) {
+          console.warn('[HWDI] GET /votes fetch error:', err);
+          voteShowPct({});
+        });
     };
 
-    // Track name button → switch track + play
+    // Track name button: switch track + play (panel stays open)
     voteWidget.querySelectorAll('.vote-track-play').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var trackId = btn.getAttribute('data-track');
@@ -797,7 +820,7 @@
       });
     });
 
-    // Checkmark button → cast vote (once per browser)
+    // Checkmark button: cast vote once per browser
     voteWidget.querySelectorAll('.vote-check-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
         if (localStorage.getItem(VOTE_LS_KEY)) { return; }
@@ -808,13 +831,30 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ track: trackId })
         })
-          .then(function (r) { return r.json(); })
-          .then(function (v) { localStorage.setItem(VOTE_LS_KEY, trackId); voteShowPct(v); })
-          .catch(function ()  { localStorage.setItem(VOTE_LS_KEY, trackId); voteFetch(); });
+          .then(function (r) {
+            if (!r.ok) {
+              console.warn('[HWDI] POST /votes status:', r.status);
+              localStorage.setItem(VOTE_LS_KEY, trackId);
+              voteFetch();
+              return null;
+            }
+            return r.json();
+          })
+          .then(function (v) {
+            if (!v) return;
+            console.log('[HWDI] POST /votes response:', JSON.stringify(v));
+            localStorage.setItem(VOTE_LS_KEY, trackId);
+            voteShowPct(v);
+          })
+          .catch(function (err) {
+            console.warn('[HWDI] POST /votes fetch error:', err);
+            localStorage.setItem(VOTE_LS_KEY, trackId);
+            voteFetch();
+          });
       });
     });
 
-    // On load: restore voted state + percentages if already voted this browser
+    // On load: restore voted state + fetch current totals if already voted
     if (votedTrackId) {
       var votedRow = voteWidget.querySelector('.vote-track-row[data-track="' + votedTrackId + '"]');
       if (votedRow) {
@@ -824,7 +864,7 @@
       voteFetch();
     }
 
-    // Default active track on load
+    // Default active track highlight on load
     voteMarkActive('twang-happy');
   }
 

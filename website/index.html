@@ -38,7 +38,7 @@
 
     <!-- ===================== HERO — drone video + absolute position layout ===================== -->
     <section class="hero hero--video">
-      <video class="hero-bg-video" autoplay muted playsinline>
+      <video class="hero-bg-video" autoplay muted playsinline loop>
         <source src="assets/ward-3-aerial.mp4" type="video/mp4">
       </video>
       <div class="hero-overlay"></div>
@@ -805,18 +805,27 @@
     </div>
   </div>
 
-  <!-- ===================== MUSIC BUTTON ===================== -->
+  <!-- ===================== MUSIC CONTROLS ===================== -->
   <!-- Licensed background music: Melody Loops "Twang Happy" (Strat 56) — License #42251871353 -->
   <audio id="bgMusic" src="assets/audio/melodyloops-twang-happy.mp3" loop preload="none"></audio>
-  <button class="music-btn" id="musicBtn" aria-label="Play background music" aria-pressed="false">
-    <svg class="music-btn-icon" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" aria-hidden="true">
-      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-    </svg>
-    <span class="music-btn-eq" aria-hidden="true">
-      <span></span><span></span><span></span><span></span>
-    </span>
-    Music
-  </button>
+  <div class="music-controls">
+    <!-- Panel toggle: opens/closes the track picker. Independent of playback. -->
+    <button class="music-btn" id="musicBtn" aria-label="Toggle track list" aria-expanded="false">
+      <svg class="music-btn-icon" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" aria-hidden="true">
+        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+      </svg>
+      Music
+    </button>
+    <!-- Play/pause: controls playback only. EQ bars animate while playing. -->
+    <button class="music-play-btn" id="musicPlayBtn" aria-label="Play background music" aria-pressed="false">
+      <span class="music-btn-eq" aria-hidden="true">
+        <span></span><span></span><span></span><span></span>
+      </span>
+      <svg class="music-play-icon" viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true">
+        <path d="M8 5v14l11-7z"/>
+      </svg>
+    </button>
+  </div>
 
   <!-- ===================== SHARE BUTTON ===================== -->
   <button class="share-btn" id="shareBtn" aria-label="Share this page" aria-expanded="false">

@@ -2896,17 +2896,24 @@ ul {
 }
 
 /* =====================================================
-   Floating Music Button
-   Mirrors the Share button's pill shape, shadow, and
-   z-index but sits bottom-left (Share is bottom-right).
-   Navy background / gold text to distinguish from Share.
+   Floating Music Controls
+   A fixed wrapper holds the panel-toggle pill (Music)
+   and the play/pause pill side-by-side at bottom-left.
+   Panel toggle: opens/closes the track picker widget.
+   Play/pause: controls audio playback independently.
    ===================================================== */
 
-.music-btn {
+.music-controls {
   position: fixed;
   bottom: 2rem;
   left: 2rem;
   z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.music-btn {
   background-color: var(--navy);
   color: var(--gold);
   border: 1px solid rgba(201, 136, 58, 0.35);
@@ -2930,7 +2937,29 @@ ul {
   box-shadow: 0 6px 22px rgba(11, 31, 58, 0.55);
 }
 
-/* Equalizer bars — visible in .is-playing state only */
+/* Play/pause pill — icon only, same visual weight as Music pill */
+.music-play-btn {
+  background-color: var(--navy);
+  color: var(--gold);
+  border: 1px solid rgba(201, 136, 58, 0.35);
+  border-radius: 100px;
+  padding: 0.72rem 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  box-shadow: 0 4px 16px rgba(11, 31, 58, 0.42);
+  transition: background-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.music-play-btn:hover {
+  background-color: #162d52;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 22px rgba(11, 31, 58, 0.55);
+}
+
+/* Equalizer bars — on the play/pause button, visible during playback */
 .music-btn-eq {
   display: none;
   align-items: flex-end;
@@ -2938,8 +2967,9 @@ ul {
   height: 14px;
 }
 
-.music-btn.is-playing .music-btn-icon { display: none; }
-.music-btn.is-playing .music-btn-eq   { display: inline-flex; }
+.music-play-btn .music-play-icon { display: block; }
+.music-play-btn.is-playing .music-play-icon { display: none; }
+.music-play-btn.is-playing .music-btn-eq    { display: inline-flex; }
 
 .music-btn-eq span {
   display: block;

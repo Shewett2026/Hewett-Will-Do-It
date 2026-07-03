@@ -20,10 +20,12 @@ exports.handler = async (event) => {
 
   if (event.httpMethod === 'GET') {
     try {
-      const data  = await store.get('votes', { type: 'json' });
-      const votes = data || { ...EMPTY_VOTES };
+      const raw   = await store.get('votes');
+      const votes = raw ? JSON.parse(raw) : { ...EMPTY_VOTES };
+      console.log('[votes-fn] GET → returning:', JSON.stringify(votes));
       return { statusCode: 200, headers: HEADERS, body: JSON.stringify(votes) };
     } catch (e) {
+      console.error('[votes-fn] GET error:', e.message || e);
       return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ ...EMPTY_VOTES }) };
     }
   }
@@ -41,13 +43,15 @@ exports.handler = async (event) => {
     }
 
     try {
-      const data  = await store.get('votes', { type: 'json' });
-      const votes = data || { ...EMPTY_VOTES };
+      const raw   = await store.get('votes');
+      const votes = raw ? JSON.parse(raw) : { ...EMPTY_VOTES };
       votes[track] = (votes[track] || 0) + 1;
       await store.set('votes', JSON.stringify(votes));
+      console.log('[votes-fn] POST track=' + track + ' → stored:', JSON.stringify(votes));
       return { statusCode: 200, headers: HEADERS, body: JSON.stringify(votes) };
     } catch (e) {
-      return { statusCode: 500, headers: HEADERS, body: JSON.stringify({ error: 'Storage error' }) };
+      console.error('[votes-fn] POST storage error:', e.message || e);
+      return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ ...EMPTY_VOTES }) };
     }
   }
 
