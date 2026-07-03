@@ -1,0 +1,9 @@
+{
+  "name": "hewett-will-do-it-2026",
+  "version": "1.0.0",
+  "description": "Campaign website for Seth Hewett — Bakersfield City Council Ward 3, 2026",
+  "private": true,
+  "dependencies": {
+    "@netlify/blobs": "^7.0.0"
+  }
+}
