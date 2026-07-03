@@ -16,16 +16,15 @@ exports.handler = async (event) => {
     return { statusCode: 204, headers: HEADERS, body: '' };
   }
 
-  const store = getStore({ name: 'campaign-votes', consistency: 'strong' });
-
   if (event.httpMethod === 'GET') {
     try {
+      const store = getStore('campaign-votes');
       const raw   = await store.get('votes');
       const votes = raw ? JSON.parse(raw) : { ...EMPTY_VOTES };
-      console.log('[votes-fn] GET → returning:', JSON.stringify(votes));
+      console.log('[votes-fn] GET returning:', JSON.stringify(votes));
       return { statusCode: 200, headers: HEADERS, body: JSON.stringify(votes) };
     } catch (e) {
-      console.error('[votes-fn] GET error:', e.message || e);
+      console.error('[votes-fn] GET error:', e.message || String(e));
       return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ ...EMPTY_VOTES }) };
     }
   }
@@ -43,14 +42,15 @@ exports.handler = async (event) => {
     }
 
     try {
-      const raw   = await store.get('votes');
-      const votes = raw ? JSON.parse(raw) : { ...EMPTY_VOTES };
+      const store  = getStore('campaign-votes');
+      const raw    = await store.get('votes');
+      const votes  = raw ? JSON.parse(raw) : { ...EMPTY_VOTES };
       votes[track] = (votes[track] || 0) + 1;
       await store.set('votes', JSON.stringify(votes));
-      console.log('[votes-fn] POST track=' + track + ' → stored:', JSON.stringify(votes));
+      console.log('[votes-fn] POST track=' + track + ' stored:', JSON.stringify(votes));
       return { statusCode: 200, headers: HEADERS, body: JSON.stringify(votes) };
     } catch (e) {
-      console.error('[votes-fn] POST storage error:', e.message || e);
+      console.error('[votes-fn] POST error:', e.message || String(e));
       return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ ...EMPTY_VOTES }) };
     }
   }
