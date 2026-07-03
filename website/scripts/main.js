@@ -739,7 +739,7 @@
       console.log(‘[Store notify] Email submitted:’, email);
 
       if (storeNotifyConfirm) {
-        storeNotifyConfirm.textContent = ‘You’re on the list! We’ll let you know when the store launches.’;
+        storeNotifyConfirm.textContent = "You’re on the list! We’ll let you know when the store launches.";
       }
       storeNotifyForm.reset();
     });
