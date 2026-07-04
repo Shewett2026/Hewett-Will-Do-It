@@ -1,22 +1,23 @@
 // ================================================================
-// KERN RIVER RUN — game.js   Phase 2
-// All 5 stages · Miles 0–165 · Progressive lane narrowing
+// KERN RIVER RUN — game.js   Phase 3
+// All 5 stages · Miles 0–165 · Collectibles + Ending Sequence
 // ================================================================
 
 // ── FIXED CONSTANTS ──────────────────────────────────────────────
-const JUMP_DURATION    = 42;    // frames for full jump arc (~0.7 s @ 60 fps)
-const JUMP_SCALE_PEAK  = 1.45;  // sprite scale multiplier at jump apex
-const PIXELS_PER_MILE  = 900;   // px scrolled per in-game mile
-const SCORE_PER_FRAME  = 2;     // points per frame while playing
-const MIN_OBSTACLE_GAP = 135;   // px minimum gap between spawns
-const SPAWN_Y_OFFSET   = 60;    // px above canvas where obstacles are born
-const PLAYER_Y_RATIO   = 0.78;  // player's fixed y as fraction of canvas height
-const HUD_H            = 54;    // px height of top HUD bar
+const JUMP_DURATION           = 42;
+const JUMP_SCALE_PEAK         = 1.45;
+const PIXELS_PER_MILE         = 900;
+const SCORE_PER_FRAME         = 2;
+const MIN_OBSTACLE_GAP        = 135;
+const SPAWN_Y_OFFSET          = 60;
+const PLAYER_Y_RATIO          = 0.78;
+const HUD_H                   = 54;
+const COLLECTIBLE_SCORE_VALUE = 50;
+const COLLECTIBLE_FREQUENCY   = 0.008;
+const ENDING_SLOWDOWN_FRAMES  = 90;
 // ─────────────────────────────────────────────────────────────────
 
 // ── STAGE DATA ───────────────────────────────────────────────────
-// Each stage defines its own lane count, speed, obstacle mix, and theming.
-// Speed/frequency increase gently so the game remains a relaxed river float.
 const STAGES = [
   {
     num: 1, name: 'HEADWATERS', enterMsg: null,
@@ -52,7 +53,6 @@ const STAGES = [
     speed: 2.3,  obsFreq: 0.015, fwFreq: 0.09,
     obsTypes: ['tumbleweed','sandbar','crack','cone','branch'],
     fwType: 'gate',
-    // Lane count narrows two more times within Stage 5
     subNarrow: [
       { atMile: 150, lanes: 2, msg: 'THE RIVER NARROWS', obsFreq: 0.012 },
       { atMile: 160, lanes: 1, msg: 'FINAL STRETCH',     obsFreq: 0.009 },
@@ -60,23 +60,21 @@ const STAGES = [
   },
 ];
 
-// ── VISUAL THEMES (one per stage) ────────────────────────────────
-// [water edge color, water center color, bank dark, bank light, current alpha, current color]
+// ── VISUAL THEMES ────────────────────────────────────────────────
 const BG_THEMES = [
-  { we:'#1A56C4', wm:'#3B82F6', bd:'#374151', bl:'#4B5563', ca:0.11, cc:'#BAE6FD', snow:true  }, // S1
-  { we:'#1D4ED8', wm:'#2563EB', bd:'#7C2D12', bl:'#9A3412', ca:0.17, cc:'#FED7AA', snow:false }, // S2
-  { we:'#1E6CB5', wm:'#38BDF8', bd:'#78716C', bl:'#A8A29E', ca:0.07, cc:'#BAE6FD', snow:false }, // S3
-  { we:'#1E3A5F', wm:'#1D4ED8', bd:'#1C1917', bl:'#292524', ca:0.13, cc:'#93C5FD', snow:false }, // S4
-  { we:'#1D4ED8', wm:'#60A5FA', bd:'#D97706', bl:'#FBBF24', ca:0.06, cc:'#BAE6FD', snow:false }, // S5
+  { we:'#1A56C4', wm:'#3B82F6', bd:'#374151', bl:'#4B5563', ca:0.11, cc:'#BAE6FD', snow:true  },
+  { we:'#1D4ED8', wm:'#2563EB', bd:'#7C2D12', bl:'#9A3412', ca:0.17, cc:'#FED7AA', snow:false },
+  { we:'#1E6CB5', wm:'#38BDF8', bd:'#78716C', bl:'#A8A29E', ca:0.07, cc:'#BAE6FD', snow:false },
+  { we:'#1E3A5F', wm:'#1D4ED8', bd:'#1C1917', bl:'#292524', ca:0.13, cc:'#93C5FD', snow:false },
+  { we:'#1D4ED8', wm:'#60A5FA', bd:'#D97706', bl:'#FBBF24', ca:0.06, cc:'#BAE6FD', snow:false },
 ];
 
-// Decor type/color pools per stage for bank decoration
 const DECOR_THEMES = [
-  { types:['tree','rock'],       hues:['#166534','#15803D'] }, // S1 pine + snow rock
-  { types:['rock','rock'],       hues:['#A16207','#78350F'] }, // S2 rust boulders
-  { types:['tree','dock'],       hues:['#D97706','#B45309'] }, // S3 cottonwood + dock
-  { types:['rock','rock'],       hues:['#44403C','#57534E'] }, // S4 dark cliff
-  { types:['cottonwood','rock'], hues:['#A16207','#CA8A04'] }, // S5 cottonwood + sand
+  { types:['tree','rock'],       hues:['#166534','#15803D'] },
+  { types:['rock','rock'],       hues:['#A16207','#78350F'] },
+  { types:['tree','dock'],       hues:['#D97706','#B45309'] },
+  { types:['rock','rock'],       hues:['#44403C','#57534E'] },
+  { types:['cottonwood','rock'], hues:['#A16207','#CA8A04'] },
 ];
 
 // ── CANVAS ───────────────────────────────────────────────────────
@@ -101,12 +99,12 @@ let distance        = 0;
 let currentMile     = 0;
 let bgScrollY       = 0;
 let framesSinceLast = 0;
-let journeyComplete = false;
 let obstacles       = [];
 let bgDecor         = [];
 let splashes        = [];
+let collectibles    = [];
 
-// Stage runtime state (driven by STAGES table)
+// Stage runtime state
 let currentStageIdx = 0;
 let currentLanes    = STAGES[0].lanes;
 let currentSpeed    = STAGES[0].speed;
@@ -114,8 +112,14 @@ let currentObsFreq  = STAGES[0].obsFreq;
 let currentFwFreq   = STAGES[0].fwFreq;
 let currentObsTypes = STAGES[0].obsTypes;
 let currentFwType   = STAGES[0].fwType;
-let transitionMsg   = null; // { text, life, maxLife }
+let transitionMsg   = null;
 let subNarrowFired  = new Set();
+
+// Ending sequence state
+let endingPhase     = 0;   // 0=slowdown  1=dialog1  2=dialog2
+let endingTimer     = 0;
+let endingSpeedMult = 1.0;
+let dustParticles   = [];
 
 // ── PLAYER ───────────────────────────────────────────────────────
 const player = {
@@ -124,10 +128,8 @@ const player = {
   animFrame: 0, dead: false,
 };
 
-// ── LANE GEOMETRY (dynamic — widens banks as lanes decrease) ─────
+// ── LANE GEOMETRY ────────────────────────────────────────────────
 function bankW() {
-  // River visually narrows as lane count drops:
-  // 7 lanes → 7% each bank; 1 lane → 31% each bank
   const frac = 0.07 + (7 - currentLanes) * 0.04;
   return Math.floor(canvas.width * frac);
 }
@@ -146,8 +148,9 @@ function applyStage(idx, msg) {
   currentSpeed    = stg.speed;
   setLanes(stg.lanes);
   if (msg) showTransition(msg, 160);
-  obstacles = [];
-  splashes  = [];
+  obstacles    = [];
+  collectibles = [];
+  splashes     = [];
   initBgDecor();
 }
 
@@ -190,7 +193,6 @@ function drawBackground() {
   const rw = riverW();
   const th = BG_THEMES[currentStageIdx];
 
-  // Water gradient
   const wg = ctx.createLinearGradient(bw, 0, bw + rw, 0);
   wg.addColorStop(0,    th.we);
   wg.addColorStop(0.5,  th.wm);
@@ -198,7 +200,6 @@ function drawBackground() {
   ctx.fillStyle = wg;
   ctx.fillRect(bw, 0, rw, H);
 
-  // Stage 5 — dry patches appear as water thins out
   if (currentStageIdx === 4 && currentMile > 148) {
     const dry = Math.min(1, (currentMile - 148) / 17);
     ctx.save();
@@ -215,7 +216,6 @@ function drawBackground() {
     ctx.restore();
   }
 
-  // Scrolling current lines
   const lg = 38, lo = bgScrollY % lg;
   ctx.save();
   ctx.globalAlpha = th.ca;
@@ -226,7 +226,6 @@ function drawBackground() {
   }
   ctx.restore();
 
-  // Lane dividers
   ctx.save();
   ctx.globalAlpha = 0.08;
   ctx.strokeStyle = '#93C5FD';
@@ -238,7 +237,6 @@ function drawBackground() {
   }
   ctx.restore();
 
-  // Banks
   const lgL = ctx.createLinearGradient(0, 0, bw, 0);
   lgL.addColorStop(0, th.bd); lgL.addColorStop(1, th.bl);
   ctx.fillStyle = lgL;
@@ -249,7 +247,6 @@ function drawBackground() {
   ctx.fillStyle = lgR;
   ctx.fillRect(W - bw, 0, bw, H);
 
-  // Snow patches (Stage 1 only)
   if (th.snow) {
     ctx.save();
     ctx.fillStyle   = '#EFF6FF';
@@ -262,7 +259,6 @@ function drawBackground() {
     ctx.restore();
   }
 
-  // Stage 4 — canyon wall striations
   if (currentStageIdx === 3) {
     ctx.save();
     ctx.globalAlpha = 0.18;
@@ -293,7 +289,6 @@ function drawBankDecor() {
     const sx = d.side === 'L' ? d.offX : W - bw + (bw - d.offX);
 
     if (d.type === 'tree') {
-      // Pine triangle with optional snow cap (Stage 1)
       ctx.fillStyle = d.hue;
       ctx.beginPath();
       ctx.moveTo(sx,              sy - d.sz);
@@ -315,7 +310,6 @@ function drawBankDecor() {
       }
 
     } else if (d.type === 'cottonwood') {
-      // Rounded cottonwood — oval crown (Stage 5 arid)
       ctx.fillStyle = d.hue;
       ctx.beginPath();
       ctx.ellipse(sx, sy, d.sz * 0.8, d.sz * 0.65, 0, 0, Math.PI * 2);
@@ -324,14 +318,12 @@ function drawBankDecor() {
       ctx.fillRect(sx - 2, sy + d.sz * 0.55, 4, d.sz * 0.6);
 
     } else if (d.type === 'dock') {
-      // Dock post — dark rectangle (Stage 3 lake)
       ctx.fillStyle = '#44403C';
       ctx.fillRect(sx - 3, sy - d.sz * 0.5, 6, d.sz * 1.2);
       ctx.fillStyle = '#57534E';
       ctx.fillRect(sx - 3, sy - d.sz * 0.5, 6, 3);
 
     } else {
-      // Rock — ellipse
       ctx.fillStyle = d.hue;
       ctx.beginPath();
       ctx.ellipse(sx, sy, d.sz, d.sz * 0.6, 0, 0, Math.PI * 2);
@@ -355,7 +347,6 @@ function drawObstacles() {
   }
 }
 
-// ── DRAW: FULL-WIDTH OBSTACLES ───────────────────────────────────
 function jumpLabel(obs) {
   if (obs.y > 0 && obs.y < canvas.height * 0.5) {
     ctx.save();
@@ -670,6 +661,161 @@ function drawSplashes() {
   }
 }
 
+// ── DRAW: COLLECTIBLE SPRITES ────────────────────────────────────
+function drawDrop(x, y, s) {
+  ctx.fillStyle = '#38BDF8';
+  ctx.beginPath();
+  ctx.moveTo(x, y - s);
+  ctx.bezierCurveTo(x + s * 0.7, y - s * 0.3, x + s * 0.7, y + s * 0.5, x, y + s * 0.6);
+  ctx.bezierCurveTo(x - s * 0.7, y + s * 0.5, x - s * 0.7, y - s * 0.3, x, y - s);
+  ctx.fill();
+  ctx.save();
+  ctx.globalAlpha = 0.65;
+  ctx.fillStyle = '#BAE6FD';
+  ctx.beginPath();
+  ctx.ellipse(x - s * 0.18, y - s * 0.25, s * 0.18, s * 0.32, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawFish(x, y, s) {
+  ctx.fillStyle = '#34D399';
+  ctx.beginPath();
+  ctx.ellipse(x - s * 0.1, y, s * 0.75, s * 0.38, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x + s * 0.6, y);
+  ctx.lineTo(x + s * 1.2, y - s * 0.42);
+  ctx.lineTo(x + s * 1.2, y + s * 0.42);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#0B1F3A';
+  ctx.beginPath();
+  ctx.arc(x - s * 0.4, y - s * 0.07, s * 0.12, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawPoppy(x, y, s) {
+  const angles = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
+  for (const a of angles) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(a);
+    ctx.fillStyle = a === 0 || a === Math.PI ? '#F97316' : '#FB923C';
+    ctx.beginPath();
+    ctx.ellipse(0, -s * 0.55, s * 0.30, s * 0.55, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.fillStyle = '#FBBF24';
+  ctx.beginPath();
+  ctx.arc(x, y, s * 0.28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#78350F';
+  ctx.beginPath();
+  ctx.arc(x, y, s * 0.12, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// ── COLLECTIBLE MANAGEMENT ───────────────────────────────────────
+function pickCollectibleType() {
+  const r = Math.random();
+  if (currentStageIdx <= 2) {
+    if (r < 0.50) return 'fish';
+    if (r < 0.80) return 'drop';
+    return 'poppy';
+  } else {
+    if (r < 0.50) return 'poppy';
+    if (r < 0.80) return 'drop';
+    return 'fish';
+  }
+}
+
+function spawnCollectible() {
+  const type = pickCollectibleType();
+  const lane = Math.floor(Math.random() * currentLanes);
+  collectibles.push({ type, lane, y: -SPAWN_Y_OFFSET, collected: false });
+}
+
+function drawCollectibles() {
+  const s = 7;
+  for (const c of collectibles) {
+    if (c.collected) continue;
+    const x = getLaneX(c.lane);
+    if      (c.type === 'drop')  drawDrop(x, c.y, s);
+    else if (c.type === 'fish')  drawFish(x, c.y, s);
+    else if (c.type === 'poppy') drawPoppy(x, c.y, s);
+  }
+}
+
+function checkCollectibles() {
+  const py = player.y, half = 18;
+  for (const c of collectibles) {
+    if (c.collected) continue;
+    if (c.lane === player.targetLane && c.y >= py - half && c.y <= py + half) {
+      c.collected = true;
+      score += COLLECTIBLE_SCORE_VALUE;
+    }
+  }
+}
+
+// ── DUST PARTICLES (ending sequence) ────────────────────────────
+function spawnDust() {
+  const bw = bankW(), rw = riverW();
+  dustParticles.push({
+    x:       bw + Math.random() * rw,
+    y:       canvas.height * (0.35 + Math.random() * 0.55),
+    vx:      (Math.random() - 0.5) * 1.4,
+    vy:      -(0.3 + Math.random() * 0.7),
+    r:       1 + Math.random() * 3,
+    life:    70 + Math.floor(Math.random() * 50),
+    maxLife: 120,
+  });
+}
+
+function updateDust() {
+  for (const d of dustParticles) {
+    d.x += d.vx;
+    d.y += d.vy;
+    d.life--;
+  }
+  dustParticles = dustParticles.filter(d => d.life > 0);
+}
+
+function drawDust() {
+  for (const d of dustParticles) {
+    const a = (d.life / d.maxLife) * 0.50;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#D97706';
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ── TEXT WRAP HELPER ─────────────────────────────────────────────
+function wrapText(text, maxWidth, font) {
+  ctx.save();
+  ctx.font = font;
+  const words = text.split(' ');
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    const test = cur ? cur + ' ' + w : w;
+    if (ctx.measureText(test).width <= maxWidth) {
+      cur = test;
+    } else {
+      if (cur) lines.push(cur);
+      cur = w;
+    }
+  }
+  if (cur) lines.push(cur);
+  ctx.restore();
+  return lines;
+}
+
 // ── DRAW: PLAYER (KAYAKER) ───────────────────────────────────────
 function drawPlayer() {
   const KW = 12, KH = 28;
@@ -738,9 +884,9 @@ function drawHUD() {
 
   ctx.font = '7px "Press Start 2P", monospace';
   ctx.textBaseline = 'middle'; ctx.fillStyle = '#F5F0E8';
-  ctx.textAlign = 'left';   ctx.fillText(stg.name,                       8,     14);
+  ctx.textAlign = 'left';   ctx.fillText(stg.name,                        8,    14);
   ctx.textAlign = 'center'; ctx.fillText('MILE ' + currentMile + ' / 165', W/2, 14);
-  ctx.textAlign = 'right';  ctx.fillText('STAGE ' + stg.num + '/5',      W-8,   14);
+  ctx.textAlign = 'right';  ctx.fillText('STAGE ' + stg.num + '/5',       W-8,  14);
 
   ctx.fillStyle = '#C9883A'; ctx.font = '6px "Press Start 2P", monospace';
   ctx.textAlign = 'left';  ctx.fillText('SCORE ' + Math.floor(score),     8,   42);
@@ -750,7 +896,7 @@ function drawHUD() {
 // ── DRAW: TRANSITION MESSAGE ──────────────────────────────────────
 function drawTransitionMsg() {
   if (!transitionMsg) return;
-  const t = transitionMsg.life / transitionMsg.maxLife; // 1→0
+  const t = transitionMsg.life / transitionMsg.maxLife;
   let alpha;
   if      (t > 0.73) alpha = (1 - t) / 0.27;
   else if (t > 0.27) alpha = 1.0;
@@ -791,18 +937,14 @@ function update() {
   score       += SCORE_PER_FRAME;
   currentMile  = Math.floor(distance / PIXELS_PER_MILE);
 
-  // Journey end
   if (currentMile >= 165) { endRun(true); return; }
 
-  // Stage advance (stages 1-4 boundaries)
   const stg = STAGES[currentStageIdx];
   if (currentMile >= stg.endMile && currentStageIdx < STAGES.length - 1) {
-    const next = STAGES[currentStageIdx + 1];
-    applyStage(currentStageIdx + 1, next.enterMsg);
+    applyStage(currentStageIdx + 1, STAGES[currentStageIdx + 1].enterMsg);
     return;
   }
 
-  // Stage 5 sub-narrowings
   if (currentStageIdx === 4 && STAGES[4].subNarrow) {
     for (const sn of STAGES[4].subNarrow) {
       if (currentMile >= sn.atMile && !subNarrowFired.has(sn.atMile)) {
@@ -810,18 +952,16 @@ function update() {
         setLanes(sn.lanes);
         if (sn.obsFreq !== undefined) currentObsFreq = sn.obsFreq;
         showTransition(sn.msg, 150);
-        obstacles = []; splashes = [];
+        obstacles = []; collectibles = []; splashes = [];
       }
     }
   }
 
-  // Player lerp
   const tx = getLaneX(player.targetLane);
   player.x += (tx - player.x) * 0.28;
   if (Math.abs(player.x - tx) < 0.6) { player.x = tx; player.lane = player.targetLane; }
   player.animFrame++;
 
-  // Jump arc
   if (player.isJumping) {
     player.jumpFrame++;
     const arc          = Math.sin((player.jumpFrame / JUMP_DURATION) * Math.PI);
@@ -833,15 +973,20 @@ function update() {
     }
   }
 
-  // Spawn
   framesSinceLast++;
   const minF = Math.ceil(MIN_OBSTACLE_GAP / currentSpeed);
   if (framesSinceLast >= minF && Math.random() < currentObsFreq) {
     spawnObstacle(); framesSinceLast = 0;
   }
 
+  // Collectible spawn — independent frequency
+  if (Math.random() < COLLECTIBLE_FREQUENCY) spawnCollectible();
+
   for (const obs of obstacles) obs.y += currentSpeed;
   obstacles = obstacles.filter(o => o.y < canvas.height + 80);
+
+  for (const c of collectibles) c.y += currentSpeed;
+  collectibles = collectibles.filter(c => !c.collected && c.y < canvas.height + 40);
 
   for (const sp of splashes) sp.life--;
   splashes = splashes.filter(sp => sp.life > 0);
@@ -851,6 +996,7 @@ function update() {
     if (transitionMsg.life <= 0) transitionMsg = null;
   }
 
+  checkCollectibles();
   checkCollision();
 }
 
@@ -867,36 +1013,95 @@ function checkCollision() {
 }
 
 function endRun(complete) {
-  player.dead    = true;
-  journeyComplete = complete;
-  gameState      = 'gameover';
+  player.dead = true;
   if (score > highScore) {
     highScore = Math.floor(score);
     localStorage.setItem('krr_hs', highScore);
   }
+  if (complete) {
+    endingPhase     = 0;
+    endingTimer     = 0;
+    endingSpeedMult = 1.0;
+    dustParticles   = [];
+    gameState       = 'ending';
+  } else {
+    gameState = 'gameover';
+  }
+}
+
+// ── ENDING SEQUENCE UPDATE ───────────────────────────────────────
+function updateEnding() {
+  endingTimer++;
+
+  if (endingPhase === 0) {
+    // Ease-out deceleration: speed² curve drops from 1→0 over ENDING_SLOWDOWN_FRAMES
+    const t = Math.min(1, endingTimer / ENDING_SLOWDOWN_FRAMES);
+    endingSpeedMult = (1 - t) * (1 - t);
+    const spd = currentSpeed * endingSpeedMult;
+
+    bgScrollY += spd;
+    for (const obs of obstacles)    obs.y += spd;
+    for (const c   of collectibles) c.y   += spd;
+    for (const sp  of splashes) sp.life--;
+    splashes = splashes.filter(s => s.life > 0);
+
+    if (endingTimer > 20 && Math.random() < 0.10) spawnDust();
+
+    // After full deceleration + brief pause, show first dialog
+    if (endingTimer >= ENDING_SLOWDOWN_FRAMES + 30) {
+      endingPhase  = 1;
+      endingTimer  = 0;
+      obstacles    = [];
+      collectibles = [];
+      splashes     = [];
+    }
+  }
+
+  updateDust();
 }
 
 // ── GAME LOOP ────────────────────────────────────────────────────
 function gameLoop() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
   if (gameState === 'playing') {
     update();
     drawBackground();
     drawObstacles();
+    drawCollectibles();
     drawSplashes();
     drawPlayer();
     drawTransitionMsg();
     drawHUD();
-  } else if (gameState === 'start')     { drawStartScreen(); }
-  else if (gameState === 'howtoplay')   { drawHowToPlay(); }
-  else if (gameState === 'gameover')    { drawGameOver(); }
+
+  } else if (gameState === 'ending') {
+    updateEnding();
+    drawBackground();
+    if (endingPhase === 0) {
+      drawObstacles();
+      drawCollectibles();
+      drawSplashes();
+      drawPlayer();
+      drawDust();
+      drawHUD();
+    } else {
+      drawPlayer();
+      drawDust();
+      if (endingPhase === 1) drawDialog1();
+      else                   drawDialog2();
+    }
+
+  } else if (gameState === 'start')   { drawStartScreen(); }
+  else if (gameState === 'howtoplay') { drawHowToPlay(); }
+  else if (gameState === 'gameover')  { drawGameOver(); }
+
   requestAnimationFrame(gameLoop);
 }
 
 // ── START GAME ───────────────────────────────────────────────────
 function startGame() {
   score           = 0; distance = 0; currentMile = 0;
-  bgScrollY       = 0; framesSinceLast = 0; journeyComplete = false;
+  bgScrollY       = 0; framesSinceLast = 0;
   transitionMsg   = null; subNarrowFired = new Set();
 
   currentStageIdx = 0;
@@ -907,14 +1112,21 @@ function startGame() {
   currentObsTypes = STAGES[0].obsTypes;
   currentFwType   = STAGES[0].fwType;
 
-  const startLane     = Math.floor(STAGES[0].lanes / 2);
-  player.lane         = startLane; player.targetLane = startLane;
-  player.x            = getLaneX(startLane);
-  player.y            = Math.floor(canvas.height * PLAYER_Y_RATIO);
-  player.isJumping    = false; player.jumpFrame = 0;
-  player.jumpScale    = 1.0;  player.shadowScale = 1.0;
-  player.animFrame    = 0;    player.dead = false;
-  obstacles = []; splashes = [];
+  const startLane  = Math.floor(STAGES[0].lanes / 2);
+  player.lane      = startLane; player.targetLane = startLane;
+  player.x         = getLaneX(startLane);
+  player.y         = Math.floor(canvas.height * PLAYER_Y_RATIO);
+  player.isJumping = false; player.jumpFrame = 0;
+  player.jumpScale = 1.0;   player.shadowScale = 1.0;
+  player.animFrame = 0;     player.dead = false;
+
+  obstacles    = [];
+  collectibles = [];
+  splashes     = [];
+  dustParticles = [];
+  endingPhase   = 0;
+  endingTimer   = 0;
+  endingSpeedMult = 1.0;
 
   initBgDecor();
   gameState = 'playing';
@@ -930,13 +1142,11 @@ function drawStartScreen() {
 
   drawStartScenery(W, H);
 
-  // Back link
   ctx.font = '6px "Press Start 2P", monospace';
   ctx.fillStyle = 'rgba(245,240,232,0.5)';
   ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   ctx.fillText('< BACK TO CAMPAIGN', 12, 10);
 
-  // Logo image or fallback text title
   const logoW = Math.min(W * 0.72, 280);
   if (logoLoaded && logoImg.naturalWidth > 0) {
     const logoH = logoW * (logoImg.naturalHeight / logoImg.naturalWidth);
@@ -1008,6 +1218,9 @@ function drawHowToPlay() {
     ['JUMP over full-width',      '#FDE68A'],
     ['obstacles!',                '#FDE68A'],
     ['', ''],
+    ['Collect water drops,',      '#38BDF8'],
+    ['fish & poppies for points!','#38BDF8'],
+    ['', ''],
     ['— DESKTOP —',               '#C9883A'],
     ['LEFT / RIGHT  arrow keys',  '#F5F0E8'],
     ['SPACE or UP   jump',        '#F5F0E8'],
@@ -1022,33 +1235,23 @@ function drawHowToPlay() {
   ctx.font = '6px "Press Start 2P", monospace';
   lines.forEach(([txt, col], i) => {
     if (!txt) return;
-    ctx.fillStyle = col; ctx.fillText(txt, W/2, H*0.21 + i*15);
+    ctx.fillStyle = col; ctx.fillText(txt, W/2, H*0.19 + i*14);
   });
-  drawBtn('GOT IT!', W/2, H*0.91, W*0.58, 40, '#2D6A4F', '#F5F0E8');
+  drawBtn('GOT IT!', W/2, H*0.93, W*0.58, 40, '#2D6A4F', '#F5F0E8');
 }
 
-// ── SCREEN: GAME OVER ────────────────────────────────────────────
+// ── SCREEN: GAME OVER (crash only) ───────────────────────────────
 function drawGameOver() {
   const W = canvas.width, H = canvas.height;
   ctx.fillStyle = 'rgba(11,31,58,0.92)'; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
 
-  if (journeyComplete) {
-    ctx.fillStyle = '#C9883A'; ctx.font = '11px "Press Start 2P", monospace';
-    ctx.fillText('JOURNEY',   W/2, H*0.18);
-    ctx.fillText('COMPLETE!', W/2, H*0.18 + 20);
-    ctx.font = '6px "Press Start 2P", monospace'; ctx.fillStyle = '#F5F0E8';
-    ctx.fillText('Mile 165 — Bakersfield!', W/2, H*0.18 + 50);
-    ctx.fillStyle = '#93C5FD';
-    ctx.fillText('(Full ending coming soon)', W/2, H*0.18 + 68);
-  } else {
-    ctx.fillStyle = '#EF4444'; ctx.font = '11px "Press Start 2P", monospace';
-    ctx.fillText('RUN ENDED', W/2, H*0.22);
-    const stg = STAGES[currentStageIdx];
-    ctx.font = '6px "Press Start 2P", monospace'; ctx.fillStyle = '#F5F0E8';
-    ctx.fillText('Wiped out on ' + stg.name, W/2, H*0.32);
-    ctx.fillText('Mile ' + currentMile + ' / 165',  W/2, H*0.32 + 16);
-  }
+  ctx.fillStyle = '#EF4444'; ctx.font = '11px "Press Start 2P", monospace';
+  ctx.fillText('RUN ENDED', W/2, H*0.22);
+  const stg = STAGES[currentStageIdx];
+  ctx.font = '6px "Press Start 2P", monospace'; ctx.fillStyle = '#F5F0E8';
+  ctx.fillText('Wiped out on ' + stg.name, W/2, H*0.32);
+  ctx.fillText('Mile ' + currentMile + ' / 165', W/2, H*0.32 + 16);
 
   ctx.font = '7px "Press Start 2P", monospace';
   ctx.fillStyle = '#C9883A'; ctx.fillText('SCORE  ' + Math.floor(score),    W/2, H*0.52);
@@ -1056,6 +1259,128 @@ function drawGameOver() {
 
   drawBtn('TRY AGAIN', W/2, H*0.68,      W*0.62, 40, '#2D6A4F', '#F5F0E8');
   drawBtn('MAIN MENU', W/2, H*0.68 + 54, W*0.62, 40, '#1E3A5F', '#C9883A');
+}
+
+// ── ENDING DIALOG 1: Campaign message ────────────────────────────
+function drawDialog1() {
+  const W = canvas.width, H = canvas.height;
+  const pad = 14;
+  const bx  = pad, by = HUD_H + 6;
+  const bdw = W - 2 * pad;
+  const bdh = H - by - 6;
+  const cx  = bx + bdw / 2;
+
+  // Box
+  ctx.fillStyle = 'rgba(0,0,0,0.72)';
+  ctx.fillRect(bx + 3, by + 3, bdw, bdh);
+  ctx.fillStyle = '#0B1F3A';
+  ctx.fillRect(bx, by, bdw, bdh);
+  ctx.strokeStyle = '#C9883A'; ctx.lineWidth = 2;
+  ctx.strokeRect(bx, by, bdw, bdh);
+
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+  // Title lines
+  let y = by + 20;
+  ctx.fillStyle = '#C9883A'; ctx.font = '8px "Press Start 2P", monospace';
+  ctx.fillText('YOU MADE IT.', cx, y); y += 18;
+  ctx.fillStyle = '#F97316';
+  ctx.fillText('THE KERN RIVER', cx, y); y += 15;
+  ctx.fillText("DOESN'T.", cx, y); y += 18;
+
+  // Body paragraphs
+  const bodyFont = '5px "Press Start 2P", monospace';
+  const textW    = bdw - 22;
+  const lineH    = 12;
+  const paraGap  = 6;
+
+  const paras = [
+    'Every year, snowmelt begins a 165-mile journey from the Sierra Nevada toward Bakersfield.',
+    'The Kern River has shaped our communities, our history, and our identity for generations.',
+    'This public resource deserves public stewardship.',
+    'My campaign is committed to ensuring the Kern River is better protected, better appreciated, and better connected to the people of Bakersfield.',
+  ];
+
+  ctx.fillStyle = '#F5F0E8'; ctx.font = bodyFont;
+  for (const para of paras) {
+    const lines = wrapText(para, textW, bodyFont);
+    ctx.font = bodyFont;
+    for (const line of lines) {
+      ctx.fillStyle = '#F5F0E8';
+      ctx.fillText(line, cx, y);
+      y += lineH;
+    }
+    y += paraGap;
+  }
+
+  // Continue button pinned to bottom of dialog
+  const btnY = by + bdh - 24;
+  drawBtn('CONTINUE >', cx, btnY, bdw * 0.74, 36, '#2D6A4F', '#F5F0E8');
+}
+
+// ── ENDING DIALOG 2: History + action buttons ────────────────────
+function drawDialog2() {
+  const W = canvas.width, H = canvas.height;
+  const pad = 14;
+  const bx  = pad, by = HUD_H + 6;
+  const bdw = W - 2 * pad;
+  const bdh = H - by - 6;
+  const cx  = bx + bdw / 2;
+
+  // Box
+  ctx.fillStyle = 'rgba(0,0,0,0.72)';
+  ctx.fillRect(bx + 3, by + 3, bdw, bdh);
+  ctx.fillStyle = '#0B1F3A';
+  ctx.fillRect(bx, by, bdw, bdh);
+  ctx.strokeStyle = '#C9883A'; ctx.lineWidth = 2;
+  ctx.strokeRect(bx, by, bdw, bdh);
+
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+  const textW   = bdw - 22;
+  const bodyFont = '6px "Press Start 2P", monospace';
+  const lineH    = 14;
+
+  // 3 buttons pinned to bottom
+  const btnW  = bdw * 0.84;
+  const btnH  = 36;
+  const btnGap = 8;
+  const btn3Y = by + bdh - 12 - btnH / 2;
+  const btn2Y = btn3Y - btnH - btnGap;
+  const btn1Y = btn2Y - btnH - btnGap;
+
+  // Text flows from top down to above button block
+  let y = by + 20;
+
+  const intro = 'In June 1973, Bakersfield leaders negotiated the Kern River into public hands.';
+  const introLines = wrapText(intro, textW, bodyFont);
+  ctx.font = bodyFont; ctx.fillStyle = '#F5F0E8';
+  for (const line of introLines) { ctx.fillText(line, cx, y); y += lineH; }
+  y += 10;
+
+  const quote = '"We achieved far more for the citizens of Bakersfield than we had dared dream."';
+  const quoteLines = wrapText(quote, textW, bodyFont);
+  ctx.font = bodyFont; ctx.fillStyle = '#FDE68A';
+  for (const line of quoteLines) { ctx.fillText(line, cx, y); y += lineH; }
+  y += 8;
+
+  const attr = '— Walter F. Heisey, after negotiating the Kern River from a private company for $17.9 million';
+  const attrLines = wrapText(attr, textW, '5px "Press Start 2P", monospace');
+  ctx.font = '5px "Press Start 2P", monospace'; ctx.fillStyle = '#93C5FD';
+  for (const line of attrLines) { ctx.fillText(line, cx, y); y += 12; }
+
+  // Score summary between text and buttons
+  y += 8;
+  ctx.font = '6px "Press Start 2P", monospace';
+  ctx.fillStyle = '#C9883A';
+  ctx.fillText('FINAL SCORE: ' + Math.floor(score), cx, y); y += 14;
+  ctx.fillStyle = '#93C5FD';
+  ctx.fillText('BEST: ' + Math.floor(highScore), cx, y);
+
+  // Action buttons
+  drawBtn('LEARN MORE',         cx, btn1Y, btnW, btnH, '#1E3A5F', '#38BDF8');
+  drawBtn('RETURN TO CAMPAIGN', cx, btn2Y, btnW, btnH, '#374151', '#F5F0E8');
+  drawBtn('PLAY AGAIN',         cx, btn3Y, btnW, btnH, '#2D6A4F', '#F5F0E8');
 }
 
 // ── BUTTON HELPERS ───────────────────────────────────────────────
@@ -1127,15 +1452,45 @@ canvas.addEventListener('click', e => {
 
 function handleTap(mx, my) {
   const W = canvas.width, H = canvas.height;
+
   if (gameState === 'start') {
     if (my < 28) { window.location.href = '../'; return; }
     if (hitBtn(mx,my, W/2, H*0.60,      W*0.62, 40)) { startGame(); return; }
     if (hitBtn(mx,my, W/2, H*0.60 + 56, W*0.62, 40)) { gameState = 'howtoplay'; }
+
   } else if (gameState === 'howtoplay') {
-    if (hitBtn(mx,my, W/2, H*0.91, W*0.58, 40)) gameState = 'start';
+    if (hitBtn(mx,my, W/2, H*0.93, W*0.58, 40)) gameState = 'start';
+
   } else if (gameState === 'gameover') {
     if (hitBtn(mx,my, W/2, H*0.68,      W*0.62, 40)) { startGame(); return; }
     if (hitBtn(mx,my, W/2, H*0.68 + 54, W*0.62, 40)) gameState = 'start';
+
+  } else if (gameState === 'ending') {
+    if (endingPhase === 1) {
+      // Dialog 1 — Continue button
+      const pad = 14, bx = pad, by = HUD_H + 6;
+      const bdw = W - 2 * pad, bdh = H - by - 6;
+      const cx  = bx + bdw / 2;
+      const btnY = by + bdh - 24;
+      if (hitBtn(mx, my, cx, btnY, bdw * 0.74, 36)) {
+        endingPhase = 2;
+        endingTimer = 0;
+      }
+
+    } else if (endingPhase === 2) {
+      // Dialog 2 — three action buttons
+      const pad = 14, bx = pad, by = HUD_H + 6;
+      const bdw = W - 2 * pad, bdh = H - by - 6;
+      const cx  = bx + bdw / 2;
+      const btnW  = bdw * 0.84;
+      const btnH  = 36, btnGap = 8;
+      const btn3Y = by + bdh - 12 - btnH / 2;
+      const btn2Y = btn3Y - btnH - btnGap;
+      const btn1Y = btn2Y - btnH - btnGap;
+      if      (hitBtn(mx, my, cx, btn1Y, btnW, btnH)) { window.location.href = '/kern-river'; }
+      else if (hitBtn(mx, my, cx, btn2Y, btnW, btnH)) { window.location.href = '/'; }
+      else if (hitBtn(mx, my, cx, btn3Y, btnW, btnH)) { startGame(); }
+    }
   }
 }
 
