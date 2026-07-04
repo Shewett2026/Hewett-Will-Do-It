@@ -2,20 +2,97 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#0B1F3A">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kern River Run — Hewett Will Do It 2026</title>
-  <!-- Press Start 2P: pixel/retro font for game UI -->
+  <link rel="icon" type="image/x-icon" href="../assets/favicon/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="../assets/favicon/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100dvh;
+      background: #0B1F3A;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Inter', sans-serif;
+      color: #F5F0E8;
+      padding: 24px;
+    }
+
+    .container {
+      text-align: center;
+      max-width: 480px;
+    }
+
+    .eyebrow {
+      font-family: 'Inter', sans-serif;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #C9883A;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      font-family: 'Playfair Display', serif;
+      font-size: clamp(2rem, 10vw, 3rem);
+      font-weight: 700;
+      color: #F5F0E8;
+      line-height: 1.15;
+      margin-bottom: 20px;
+    }
+
+    .divider {
+      width: 48px;
+      height: 3px;
+      background: #C9883A;
+      margin: 0 auto 20px;
+      border-radius: 2px;
+    }
+
+    .subtitle {
+      font-size: 1.05rem;
+      font-weight: 300;
+      color: #CBD5E1;
+      line-height: 1.65;
+      margin-bottom: 40px;
+    }
+
+    .back-link {
+      display: inline-block;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #F5F0E8;
+      text-decoration: none;
+      border: 1.5px solid rgba(245,240,232,0.35);
+      border-radius: 4px;
+      padding: 10px 24px;
+      transition: border-color 0.18s, color 0.18s;
+    }
+
+    .back-link:hover,
+    .back-link:focus {
+      border-color: #C9883A;
+      color: #C9883A;
+      outline: none;
+    }
+  </style>
 </head>
 <body>
-  <div id="gameWrapper">
-    <!-- Portrait canvas — primary game surface. All rendering is done in game.js. -->
-    <canvas id="gameCanvas"></canvas>
+  <div class="container">
+    <p class="eyebrow">Ward 3 &middot; 2026</p>
+    <h1>Kern River Run</h1>
+    <div class="divider"></div>
+    <p class="subtitle">A new way to experience Seth&rsquo;s campaign,<br>coming soon.</p>
+    <a href="/" class="back-link">Back to Campaign</a>
   </div>
-  <script src="game.js"></script>
 </body>
 </html>
