@@ -4,20 +4,36 @@
 // ================================================================
 
 // ── FIXED CONSTANTS ──────────────────────────────────────────────
-const JUMP_DURATION           = 56;
-const JUMP_SCALE_PEAK         = 1.45;
-const PIXELS_PER_MILE         = 900;
-const SCORE_PER_FRAME         = 2;
-const MIN_OBSTACLE_GAP        = 135;
-const SPAWN_Y_OFFSET          = 60;
-const PLAYER_Y_RATIO          = 0.80;
-const HUD_H                   = 54;
-const HORIZON_OFFSET          = 80;     // horizon is this many px below HUD
-const COLLECTIBLE_SCORE_VALUE = 50;
-const COLLECTIBLE_FREQUENCY   = 0.008;
-const ENDING_SLOWDOWN_FRAMES  = 90;
+const JUMP_DURATION               = 56;
+const JUMP_SCALE_PEAK             = 1.45;
+const PIXELS_PER_MILE             = 900;
+const SCORE_PER_FRAME             = 2;
+const MIN_OBSTACLE_GAP            = 135;
+const SPAWN_Y_OFFSET              = 60;
+const PLAYER_Y_RATIO              = 0.80;
+const HUD_H                       = 54;
+const HORIZON_OFFSET              = 80;
+const COMMON_COLLECTIBLE_VALUE    = 50;
+const RARE_COLLECTIBLE_VALUE      = 150;
+const COLLECTIBLE_FREQUENCY       = 0.008;
+const ENDING_SLOWDOWN_FRAMES      = 90;
+const RIVER_WASH_SPINOUT_DURATION = 90;  // ~1.5s at 60fps
 
-const COLL_GLOW = { drop: '#38BDF8', fish: '#34D399', poppy: '#F97316' };
+const RARE_COLLECTIBLE_TYPES = new Set(['mountain_crystal', 'treasure_chest']);
+
+const COLL_GLOW = {
+  poppy:                '#F97316',
+  golden_trout:         '#FBBF24',
+  mountain_crystal:     '#A5F3FC',
+  fishing_lure:         '#EF4444',
+  golden_eagle_feather: '#C9883A',
+  beach_ball:           '#60A5FA',
+  cooler:               '#38BDF8',
+  gold_nugget:          '#FBBF24',
+  treasure_chest:       '#F59E0B',
+  fox_theater_ticket:   '#E879F9',
+  city_seal_medallion:  '#93C5FD',
+};
 // ─────────────────────────────────────────────────────────────────
 
 // ── STAGE DATA ───────────────────────────────────────────────────
@@ -26,36 +42,46 @@ const STAGES = [
     num: 1, name: 'HEADWATERS', enterMsg: null,
     startMile: 0,   endMile: 33,  lanes: 7,
     speed: 1.7,  obsFreq: 0.014, fwFreq: 0.11,
-    obsTypes: ['rock','rock','branch','roots','rapids'],
-    fwType: 'wooden_bridge',
+    stageObs: 'deadfall_log',
+    obsTypes: ['deadfall_log', 'deadfall_log', 'boulder', 'boulder', 'river_wash'],
+    fwType: 'fallen_sequoia',
+    collA: 'golden_trout', collB: 'mountain_crystal',
   },
   {
     num: 2, name: 'UPPER KERN', enterMsg: 'ENTERING UPPER KERN',
     startMile: 33,  endMile: 66,  lanes: 6,
     speed: 1.9,  obsFreq: 0.015, fwFreq: 0.12,
-    obsTypes: ['boulder','boulder','wave','kayak_traffic','branch'],
-    fwType: ['wooden_bridge','tube_procession'],
+    stageObs: 'capsized_raft',
+    obsTypes: ['capsized_raft', 'capsized_raft', 'boulder', 'boulder', 'river_wash'],
+    fwType: 'raft_train',
+    collA: 'fishing_lure', collB: 'golden_eagle_feather',
   },
   {
     num: 3, name: 'LAKE ISABELLA', enterMsg: 'ENTERING LAKE ISABELLA',
     startMile: 66,  endMile: 99,  lanes: 5,
     speed: 2.05, obsFreq: 0.016, fwFreq: 0.10,
-    obsTypes: ['piling','fishing','cooler','wave','boulder'],
-    fwType: 'tube_procession',
+    stageObs: 'drifting_sailboat',
+    obsTypes: ['drifting_sailboat', 'drifting_sailboat', 'boulder', 'boulder', 'river_wash'],
+    fwType: 'pontoon_party',
+    collA: 'beach_ball', collB: 'cooler',
   },
   {
     num: 4, name: 'KERN CANYON', enterMsg: 'ENTERING KERN CANYON',
     startMile: 99,  endMile: 132, lanes: 4,
     speed: 2.2,  obsFreq: 0.017, fwFreq: 0.12,
-    obsTypes: ['rockslide','cone','barrier','boulder','crack'],
-    fwType: 'tube_riders',
+    stageObs: 'mine_cart',
+    obsTypes: ['mine_cart', 'mine_cart', 'boulder', 'boulder', 'river_wash'],
+    fwType: 'old_mining_bridge',
+    collA: 'gold_nugget', collB: 'treasure_chest',
   },
   {
     num: 5, name: 'BAKERSFIELD', enterMsg: 'APPROACHING BAKERSFIELD',
     startMile: 132, endMile: 165, lanes: 3,
     speed: 2.3,  obsFreq: 0.015, fwFreq: 0.09,
-    obsTypes: ['tumbleweed','sandbar','crack','cone','branch'],
-    fwType: 'tube_riders',
+    stageObs: 'shopping_cart',
+    obsTypes: ['shopping_cart', 'shopping_cart', 'boulder', 'boulder', 'river_wash'],
+    fwType: 'tube_float_parade',
+    collA: 'fox_theater_ticket', collB: 'city_seal_medallion',
     subNarrow: [
       { atMile: 150, lanes: 2, msg: 'THE RIVER NARROWS', obsFreq: 0.012 },
       { atMile: 160, lanes: 1, msg: 'FINAL STRETCH',     obsFreq: 0.009 },
@@ -133,6 +159,8 @@ const player = {
   lane: 3, targetLane: 3, x: 0, y: 0,
   isJumping: false, jumpFrame: 0, jumpScale: 1.0, shadowScale: 1.0,
   animFrame: 0, dead: false,
+  hasShield: false,
+  spinoutFrames: 0,
 };
 
 // ── FLAT LANE GEOMETRY (reference frame at player.y, perspT=1) ───
@@ -189,6 +217,7 @@ function applyStage(idx, msg) {
   if (msg) showTransition(msg, 160);
   obstacles = []; collectibles = []; splashes = [];
   initBgDecor();
+  updateLegend(idx);
 }
 
 function setLanes(n) {
@@ -517,10 +546,15 @@ function drawFullWidthObs(obs) {
   ctx.shadowBlur    = 12 * scaleAt(obs.y);
   ctx.shadowOffsetY = 6  * scaleAt(obs.y);
   switch (obs.type) {
-    case 'wooden_bridge':   drawWoodenBridge(obs);   break;
-    case 'tube_procession': drawTubeProcession(obs); break;
-    case 'tube_riders':     drawTubeRiders(obs);     break;
-    default:                drawWoodenBridge(obs);   break;
+    case 'wooden_bridge':    drawWoodenBridge(obs);    break;
+    case 'tube_procession':  drawTubeProcession(obs);  break;
+    case 'tube_riders':      drawTubeRiders(obs);      break;
+    case 'fallen_sequoia':   drawFallenSequoia(obs);   break;
+    case 'raft_train':       drawRaftTrain(obs);       break;
+    case 'pontoon_party':    drawPontoonParty(obs);    break;
+    case 'old_mining_bridge':drawOldMiningBridge(obs); break;
+    case 'tube_float_parade':drawTubeFloatParade(obs); break;
+    default:                 drawWoodenBridge(obs);    break;
   }
   ctx.restore();
 }
@@ -635,6 +669,140 @@ function drawTubeRiders(obs) {
   }
   ctx.restore();
   jumpLabelAt(obs);
+}
+
+function drawFallenSequoia(obs) {
+  const W = canvas.width;
+  const topY = obs.y, botY = obs.y + obs.h;
+  const topLx = riverLeftAt(topY), topRx = W - topLx;
+  const botLx = riverLeftAt(botY), botRx = W - botLx;
+  const sc = scaleAt(obs.y);
+  ctx.fillStyle = '#78350F';
+  ctx.beginPath();
+  ctx.moveTo(topLx-4,topY); ctx.lineTo(topRx+4,topY);
+  ctx.lineTo(botRx+4,botY); ctx.lineTo(botLx-4,botY);
+  ctx.closePath(); ctx.fill();
+  const midY = topY + (botY-topY)*0.35, midLx = riverLeftAt(midY), midRx = W-midLx;
+  ctx.fillStyle = '#92400E';
+  ctx.beginPath();
+  ctx.moveTo(topLx-4,topY); ctx.lineTo(topRx+4,topY);
+  ctx.lineTo(midRx+4,midY); ctx.lineTo(midLx-4,midY);
+  ctx.closePath(); ctx.fill();
+  ctx.save(); clearShadow(); ctx.strokeStyle = '#5C2002'; ctx.lineWidth = Math.max(1, 1.5*sc);
+  ctx.globalAlpha = 0.30;
+  for (let i = 1; i <= 4; i++) {
+    const t=i/5, ty=topY+t*(botY-topY), lx=riverLeftAt(ty), rx=W-lx;
+    ctx.beginPath(); ctx.moveTo(lx,ty); ctx.lineTo(rx,ty); ctx.stroke();
+  }
+  ctx.globalAlpha = 0.40; ctx.strokeStyle='#B45309'; ctx.lineWidth=1.5*sc;
+  ctx.beginPath(); ctx.arc(botLx+8*sc, (topY+botY)/2, obs.h*0.35*sc, 0, Math.PI*2); ctx.stroke();
+  ctx.restore();
+  jumpLabelAt(obs);
+}
+
+function drawRaftTrain(obs) {
+  const W = canvas.width;
+  const cy = obs.y + obs.h/2, rw = riverWidthAt(cy), lx = riverLeftAt(cy), sc = scaleAt(cy);
+  const raftH = obs.h*0.72*sc, raftW = rw*0.28;
+  ctx.save(); clearShadow();
+  for (let i = 0; i < 3; i++) {
+    const rx = lx + rw*(0.12 + i*0.36);
+    ctx.fillStyle = '#92400E'; ctx.fillRect(rx-raftW/2, cy-raftH/2, raftW, raftH);
+    ctx.fillStyle = '#B45309'; ctx.fillRect(rx-raftW/2, cy-raftH/2, raftW, raftH*0.28);
+    ctx.strokeStyle = '#78350F'; ctx.lineWidth = 1*sc;
+    for (let p=1; p<=2; p++) {
+      const px_=rx-raftW/2+p*raftW/3;
+      ctx.beginPath(); ctx.moveTo(px_,cy-raftH/2); ctx.lineTo(px_,cy+raftH/2); ctx.stroke();
+    }
+    if (i < 2) {
+      const nrx = lx + rw*(0.12+(i+1)*0.36);
+      ctx.strokeStyle='#78350F'; ctx.lineWidth=2*sc;
+      ctx.beginPath(); ctx.moveTo(rx+raftW/2,cy); ctx.lineTo(nrx-raftW/2,cy); ctx.stroke();
+    }
+  }
+  ctx.restore(); jumpLabelAt(obs);
+}
+
+function drawPontoonParty(obs) {
+  const W = canvas.width;
+  const topY=obs.y, botY=obs.y+obs.h;
+  const topLx=riverLeftAt(topY), topRx=W-topLx;
+  const botLx=riverLeftAt(botY), botRx=W-botLx;
+  const sc=scaleAt(obs.y);
+  ctx.fillStyle='#1D4ED8';
+  ctx.beginPath();
+  ctx.moveTo(topLx,topY); ctx.lineTo(topRx,topY);
+  ctx.lineTo(botRx,botY); ctx.lineTo(botLx,botY);
+  ctx.closePath(); ctx.fill();
+  const deckY=topY+(botY-topY)*0.42, dLx=riverLeftAt(deckY), dRx=W-dLx;
+  ctx.fillStyle='rgba(239,246,255,0.92)';
+  ctx.beginPath();
+  ctx.moveTo(topLx,topY); ctx.lineTo(topRx,topY);
+  ctx.lineTo(dRx,deckY); ctx.lineTo(dLx,deckY);
+  ctx.closePath(); ctx.fill();
+  const colors=['#F97316','#FBBF24','#34D399','#F97316'], fw=topRx-topLx;
+  ctx.save(); clearShadow();
+  for (let i=0;i<4;i++) {
+    ctx.fillStyle=colors[i];
+    ctx.beginPath(); ctx.arc(topLx+fw*(0.15+i*0.22), topY-3*sc, 3*sc, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore(); jumpLabelAt(obs);
+}
+
+function drawOldMiningBridge(obs) {
+  const W=canvas.width;
+  const topY=obs.y, botY=obs.y+obs.h;
+  const topLx=riverLeftAt(topY), topRx=W-topLx;
+  const botLx=riverLeftAt(botY), botRx=W-botLx;
+  const sc=scaleAt(obs.y);
+  ctx.fillStyle='#44403C';
+  ctx.beginPath();
+  ctx.moveTo(topLx,topY); ctx.lineTo(topRx,topY);
+  ctx.lineTo(botRx,botY); ctx.lineTo(botLx,botY);
+  ctx.closePath(); ctx.fill();
+  const h3Y=topY+(botY-topY)*0.22, h3Lx=riverLeftAt(h3Y), h3Rx=W-h3Lx;
+  ctx.fillStyle='#78350F';
+  ctx.beginPath();
+  ctx.moveTo(topLx,topY); ctx.lineTo(topRx,topY); ctx.lineTo(h3Rx,h3Y); ctx.lineTo(h3Lx,h3Y);
+  ctx.closePath(); ctx.fill();
+  ctx.save(); clearShadow();
+  ctx.strokeStyle='#292524'; ctx.lineWidth=Math.max(3,4*sc); ctx.lineCap='butt';
+  for (let i=0; i<=4; i++) {
+    const f=i/4;
+    ctx.beginPath();
+    ctx.moveTo(topLx+f*(topRx-topLx), topY-6*sc);
+    ctx.lineTo(botLx+f*(botRx-botLx), botY+6*sc); ctx.stroke();
+  }
+  ctx.lineWidth=Math.max(2,3*sc); ctx.strokeStyle='#1C1917';
+  ctx.beginPath(); ctx.moveTo(topLx,topY); ctx.lineTo(topRx,topY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(botLx,botY); ctx.lineTo(botRx,botY); ctx.stroke();
+  ctx.restore(); jumpLabelAt(obs);
+}
+
+function drawTubeFloatParade(obs) {
+  const W=canvas.width;
+  const cy=obs.y+obs.h/2, rw=riverWidthAt(cy), lx=riverLeftAt(cy), sc=scaleAt(cy);
+  const tubeR=obs.h*0.42*sc;
+  const colors=['#F97316','#3B82F6','#F472B6','#34D399'];
+  const posF=[0.14,0.37,0.62,0.83];
+  ctx.save(); clearShadow();
+  for (let i=0; i<posF.length; i++) {
+    const tx=lx+posF[i]*rw;
+    ctx.strokeStyle=colors[i%colors.length]; ctx.lineWidth=4*sc;
+    ctx.beginPath(); ctx.arc(tx, cy+tubeR*0.15, tubeR, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle='rgba(255,255,255,0.18)';
+    ctx.beginPath(); ctx.arc(tx, cy+tubeR*0.15, tubeR, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle='#FBBF24';
+    ctx.beginPath(); ctx.arc(tx, cy-tubeR*0.60, tubeR*0.30, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#92400E'; ctx.lineWidth=1.8*sc; ctx.lineCap='round';
+    const wave=Math.sin(obs.y*0.04+i*1.2)*0.35;
+    ctx.beginPath();
+    ctx.moveTo(tx-tubeR*0.52, cy-tubeR*(0.22+wave));
+    ctx.lineTo(tx,              cy-tubeR*0.10);
+    ctx.lineTo(tx+tubeR*0.52, cy-tubeR*(0.22-wave));
+    ctx.stroke();
+  }
+  ctx.restore(); jumpLabelAt(obs);
 }
 
 // ── DRAW: LANE OBSTACLES (PERSPECTIVE-SCALED) ────────────────────
@@ -795,6 +963,91 @@ function drawObsAt(type, cx, cy, r, lw_) {
     ctx.beginPath(); ctx.ellipse(cx, cy, lw_*0.42, r*0.88, 0, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = '#FBBF24';
     ctx.beginPath(); ctx.ellipse(cx-r*0.1, cy-r*0.12, lw_*0.22, r*0.44, 0, 0, Math.PI*2); ctx.fill();
+
+  } else if (type === 'river_wash') {
+    ctx.save();
+    ctx.fillStyle = 'rgba(56,189,248,0.20)';
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+    // Swirl arcs
+    for (let i = 0; i < 3; i++) {
+      ctx.strokeStyle = i===0 ? '#38BDF8' : i===1 ? '#7DD3FC' : '#EFF6FF';
+      ctx.lineWidth   = Math.max(1.2, r * 0.17);
+      ctx.globalAlpha = 0.88 - i * 0.22;
+      ctx.beginPath(); ctx.arc(cx, cy, r * (0.35 + i * 0.27), 0, Math.PI * 1.4); ctx.stroke();
+    }
+    ctx.globalAlpha = 1.0;
+    ctx.fillStyle = '#EFF6FF';
+    ctx.beginPath(); ctx.arc(cx, cy, r * 0.24, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+
+  } else if (type === 'deadfall_log') {
+    ctx.save(); ctx.lineCap = 'round';
+    ctx.strokeStyle = '#44403C'; ctx.lineWidth = Math.max(7, r * 0.85);
+    ctx.beginPath(); ctx.moveTo(cx-r, cy-r*0.2); ctx.lineTo(cx+r, cy+r*0.2); ctx.stroke();
+    ctx.strokeStyle = '#57534E'; ctx.lineWidth = Math.max(2, r * 0.25);
+    ctx.beginPath(); ctx.moveTo(cx-r, cy-r*0.2); ctx.lineTo(cx+r, cy+r*0.2); ctx.stroke();
+    ctx.strokeStyle = '#292524'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx-r*0.75, cy-r*0.12, r*0.22, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+
+  } else if (type === 'capsized_raft') {
+    ctx.save();
+    ctx.fillStyle = '#57534E';
+    ctx.beginPath(); ctx.ellipse(cx, cy, lw_*0.44, r*0.52, 0, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#292524'; ctx.lineWidth = 1;
+    for (let i = -2; i <= 2; i++) {
+      ctx.beginPath();
+      ctx.moveTo(cx + i * lw_*0.14, cy - r*0.52);
+      ctx.lineTo(cx + i * lw_*0.14, cy + r*0.52); ctx.stroke();
+    }
+    ctx.fillStyle = '#92400E';
+    ctx.beginPath(); ctx.arc(cx + lw_*0.3, cy - r*0.35, r*0.18, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+
+  } else if (type === 'drifting_sailboat') {
+    ctx.save();
+    ctx.fillStyle = '#1E3A5F';
+    ctx.beginPath();
+    ctx.moveTo(cx-r*0.75, cy+r*0.28); ctx.lineTo(cx+r*0.75, cy+r*0.28);
+    ctx.lineTo(cx+r*0.45, cy+r*0.75); ctx.lineTo(cx-r*0.45, cy+r*0.75);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#EFF6FF'; ctx.fillRect(cx-r*0.75, cy+r*0.18, r*1.5, r*0.18);
+    ctx.strokeStyle = '#57534E'; ctx.lineWidth = Math.max(1.5, r*0.12);
+    ctx.beginPath(); ctx.moveTo(cx, cy+r*0.28); ctx.lineTo(cx, cy-r*0.88); ctx.stroke();
+    ctx.fillStyle = 'rgba(239,246,255,0.90)';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy-r*0.82); ctx.lineTo(cx+r*0.72, cy-r*0.04); ctx.lineTo(cx, cy+r*0.24);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+
+  } else if (type === 'mine_cart') {
+    ctx.save();
+    ctx.fillStyle = '#1C1917';
+    ctx.beginPath();
+    ctx.moveTo(cx-r*0.72, cy-r*0.52); ctx.lineTo(cx+r*0.72, cy-r*0.52);
+    ctx.lineTo(cx+r*0.55, cy+r*0.42); ctx.lineTo(cx-r*0.55, cy+r*0.42);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#292524'; ctx.fillRect(cx-r*0.72, cy-r*0.56, r*1.44, r*0.22);
+    ctx.fillStyle = '#44403C';
+    ctx.beginPath(); ctx.arc(cx-r*0.40, cy+r*0.58, r*0.25, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+r*0.40, cy+r*0.58, r*0.25, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#57534E';
+    ctx.beginPath(); ctx.arc(cx-r*0.40, cy+r*0.58, r*0.11, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+r*0.40, cy+r*0.58, r*0.11, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+
+  } else if (type === 'shopping_cart') {
+    ctx.save(); ctx.strokeStyle = '#9CA3AF'; ctx.lineWidth = Math.max(1.5, r*0.13); ctx.lineCap = 'round';
+    ctx.strokeRect(cx-r*0.62, cy-r*0.52, r*1.24, r*1.0);
+    ctx.beginPath(); ctx.moveTo(cx-r*0.20, cy-r*0.52); ctx.lineTo(cx-r*0.20, cy+r*0.48); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx+r*0.20, cy-r*0.52); ctx.lineTo(cx+r*0.20, cy+r*0.48); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx-r*0.48, cy-r*0.52); ctx.lineTo(cx-r*0.48, cy-r*0.88);
+    ctx.lineTo(cx+r*0.62, cy-r*0.88); ctx.stroke();
+    ctx.fillStyle = '#6B7280';
+    ctx.beginPath(); ctx.arc(cx-r*0.35, cy+r*0.62, r*0.20, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+r*0.35, cy+r*0.62, r*0.20, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
   }
 }
 
@@ -856,24 +1109,171 @@ function drawPoppy(x, y, s) {
   ctx.beginPath(); ctx.arc(x, y, s*0.12, 0, Math.PI*2); ctx.fill();
 }
 
+function drawGoldenTrout(x, y, s) {
+  ctx.fillStyle='#FBBF24';
+  ctx.beginPath(); ctx.ellipse(x-s*0.12, y, s*0.78, s*0.40, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x+s*0.60,y); ctx.lineTo(x+s*1.22,y-s*0.45); ctx.lineTo(x+s*1.22,y+s*0.45);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#F59E0B';
+  ctx.beginPath(); ctx.ellipse(x-s*0.12, y, s*0.52, s*0.25, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle='#0B1F3A';
+  ctx.beginPath(); ctx.arc(x-s*0.42, y-s*0.08, s*0.12, 0, Math.PI*2); ctx.fill();
+}
+
+function drawMountainCrystal(x, y, s) {
+  ctx.fillStyle='#A5F3FC';
+  ctx.beginPath();
+  ctx.moveTo(x, y-s); ctx.lineTo(x+s*0.72, y-s*0.22); ctx.lineTo(x+s*0.55, y+s*0.78);
+  ctx.lineTo(x-s*0.55, y+s*0.78); ctx.lineTo(x-s*0.72, y-s*0.22);
+  ctx.closePath(); ctx.fill();
+  ctx.save(); ctx.globalAlpha=0.80; ctx.fillStyle='#E0F9FF';
+  ctx.beginPath(); ctx.moveTo(x,y-s); ctx.lineTo(x+s*0.72,y-s*0.22); ctx.lineTo(x,y-s*0.10);
+  ctx.closePath(); ctx.fill();
+  ctx.globalAlpha=0.65; ctx.fillStyle='#38BDF8';
+  ctx.beginPath(); ctx.moveTo(x,y-s*0.10); ctx.lineTo(x-s*0.55,y+s*0.78); ctx.lineTo(x+s*0.55,y+s*0.78);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function drawFishingLure(x, y, s) {
+  ctx.fillStyle='#EF4444';
+  ctx.beginPath(); ctx.ellipse(x, y, s*0.42, s*0.78, 0, 0, Math.PI*2); ctx.fill();
+  ctx.save(); ctx.globalAlpha=0.7; ctx.fillStyle='#FCA5A5';
+  ctx.beginPath(); ctx.ellipse(x-s*0.12, y-s*0.22, s*0.22, s*0.42, -0.3, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.save(); ctx.strokeStyle='#9CA3AF'; ctx.lineWidth=s*0.14; ctx.lineCap='round';
+  ctx.beginPath(); ctx.arc(x+s*0.12, y+s*0.62, s*0.28, 0, Math.PI); ctx.stroke();
+  ctx.restore();
+}
+
+function drawGoldenEagleFeather(x, y, s) {
+  ctx.save(); ctx.fillStyle='#C9883A';
+  ctx.beginPath();
+  ctx.moveTo(x, y-s*0.88);
+  ctx.bezierCurveTo(x+s*0.48,y-s*0.40, x+s*0.52,y+s*0.40, x,y+s*0.75);
+  ctx.bezierCurveTo(x-s*0.52,y+s*0.40, x-s*0.48,y-s*0.40, x,y-s*0.88);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#B45309';
+  ctx.beginPath();
+  ctx.moveTo(x-s*0.10,y-s*0.88);
+  ctx.bezierCurveTo(x+s*0.18,y-s*0.38, x+s*0.18,y+s*0.38, x,y+s*0.75);
+  ctx.bezierCurveTo(x-s*0.18,y+s*0.38, x-s*0.18,y-s*0.38, x-s*0.10,y-s*0.88);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='#A16207'; ctx.lineWidth=s*0.08; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(x,y-s*0.80); ctx.lineTo(x,y+s*0.70); ctx.stroke();
+  ctx.restore();
+}
+
+function drawBeachBall(x, y, s) {
+  ctx.save();
+  ctx.beginPath(); ctx.arc(x,y,s,0,Math.PI*2); ctx.clip();
+  ctx.fillStyle='#60A5FA'; ctx.fillRect(x-s,y-s,s*2,s*2);
+  ctx.fillStyle='#EF4444';
+  ctx.beginPath(); ctx.moveTo(x,y-s); ctx.arc(x,y,s,-Math.PI*0.5,-Math.PI*0.17); ctx.lineTo(x,y); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#FDE68A';
+  ctx.beginPath(); ctx.moveTo(x,y-s); ctx.arc(x,y,s,-Math.PI*0.5,-Math.PI*0.83,true); ctx.lineTo(x,y); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#34D399';
+  ctx.beginPath(); ctx.moveTo(x,y+s); ctx.arc(x,y,s,Math.PI*0.5,Math.PI*0.17,true); ctx.lineTo(x,y); ctx.closePath(); ctx.fill();
+  ctx.globalAlpha=0.22; ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.ellipse(x-s*0.30,y-s*0.35,s*0.28,s*0.18,-0.4,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawCoolerCollectible(x, y, s) {
+  ctx.fillStyle='#1D4ED8'; ctx.fillRect(x-s*0.72,y-s*0.50,s*1.44,s*0.88);
+  ctx.fillStyle='#EFF6FF'; ctx.fillRect(x-s*0.72,y-s*0.50,s*1.44,s*0.30);
+  ctx.fillStyle='#3B82F6'; ctx.fillRect(x-s*0.22,y-s*0.58,s*0.44,s*0.15);
+  ctx.fillStyle='#1E40AF';
+  ctx.fillRect(x-s*0.60,y-s*0.50,s*0.18,s*0.80);
+  ctx.fillRect(x+s*0.42,y-s*0.50,s*0.18,s*0.80);
+}
+
+function drawGoldNugget(x, y, s) {
+  ctx.fillStyle='#FBBF24';
+  ctx.beginPath();
+  ctx.moveTo(x,y-s); ctx.lineTo(x+s*0.75,y-s*0.18); ctx.lineTo(x+s*0.55,y+s*0.78);
+  ctx.lineTo(x-s*0.55,y+s*0.78); ctx.lineTo(x-s*0.75,y-s*0.18);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#FDE68A';
+  ctx.beginPath();
+  ctx.moveTo(x-s*0.18,y-s*0.82); ctx.lineTo(x+s*0.52,y-s*0.22); ctx.lineTo(x+s*0.08,y+s*0.10);
+  ctx.closePath(); ctx.fill();
+}
+
+function drawTreasureChest(x, y, s) {
+  ctx.fillStyle='#92400E'; ctx.fillRect(x-s*0.72,y-s*0.05,s*1.44,s*0.85);
+  ctx.fillStyle='#B45309';
+  ctx.beginPath();
+  ctx.moveTo(x-s*0.72,y-s*0.05); ctx.lineTo(x+s*0.72,y-s*0.05);
+  ctx.lineTo(x+s*0.72,y-s*0.55);
+  ctx.bezierCurveTo(x+s*0.72,y-s*0.85, x-s*0.72,y-s*0.85, x-s*0.72,y-s*0.55);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#FBBF24'; ctx.fillRect(x-s*0.14,y-s*0.12,s*0.28,s*0.22);
+  ctx.fillStyle='#C9883A'; ctx.fillRect(x-s*0.06,y-s*0.04,s*0.12,s*0.10);
+  ctx.strokeStyle='#78350F'; ctx.lineWidth=s*0.14;
+  ctx.beginPath(); ctx.moveTo(x-s*0.72,y-s*0.05); ctx.lineTo(x+s*0.72,y-s*0.05); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x-s*0.72,y+s*0.80); ctx.lineTo(x+s*0.72,y+s*0.80); ctx.stroke();
+}
+
+function drawFoxTheaterTicket(x, y, s) {
+  ctx.fillStyle='#7C3AED'; ctx.fillRect(x-s*0.82,y-s*0.55,s*1.64,s*0.92);
+  ctx.fillStyle='#8B5CF6'; ctx.fillRect(x-s*0.82,y-s*0.55,s*1.64,s*0.38);
+  ctx.save(); ctx.setLineDash([2,3]); ctx.strokeStyle='#6D28D9'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(x-s*0.48,y-s*0.55); ctx.lineTo(x-s*0.48,y+s*0.37); ctx.stroke();
+  ctx.restore();
+  // 5-pointed star
+  ctx.fillStyle='#FBBF24';
+  ctx.save(); ctx.translate(x+s*0.18, y+s*0.06);
+  ctx.beginPath();
+  for (let i=0; i<5; i++) {
+    const a=(i*Math.PI*2/5)-Math.PI/2, ar=a+Math.PI/5;
+    i===0 ? ctx.moveTo(Math.cos(a)*s*0.28, Math.sin(a)*s*0.28)
+           : ctx.lineTo(Math.cos(a)*s*0.28, Math.sin(a)*s*0.28);
+    ctx.lineTo(Math.cos(ar)*s*0.12, Math.sin(ar)*s*0.12);
+  }
+  ctx.closePath(); ctx.fill(); ctx.restore();
+}
+
+function drawCitySealMedallion(x, y, s) {
+  ctx.fillStyle='#C9883A';
+  ctx.beginPath(); ctx.arc(x,y,s,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1D4ED8';
+  ctx.beginPath(); ctx.arc(x,y,s*0.78,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#93C5FD'; ctx.lineWidth=s*0.12;
+  ctx.beginPath(); ctx.arc(x,y,s*0.52,0,Math.PI*2); ctx.stroke();
+  ctx.fillStyle='#93C5FD';
+  ctx.beginPath(); ctx.arc(x,y,s*0.26,0,Math.PI*2); ctx.fill();
+  for (let a=0; a<Math.PI*2; a+=Math.PI/2) {
+    ctx.beginPath();
+    ctx.moveTo(x+Math.cos(a)*s*0.40, y+Math.sin(a)*s*0.40);
+    ctx.lineTo(x+Math.cos(a)*s*0.68, y+Math.sin(a)*s*0.68); ctx.stroke();
+  }
+}
+
 function drawCollAt(type, cx, cy, s) {
-  if      (type === 'drop')  drawDrop(cx, cy, s);
-  else if (type === 'fish')  drawFish(cx, cy, s);
-  else if (type === 'poppy') drawPoppy(cx, cy, s);
+  switch (type) {
+    case 'poppy':                drawPoppy(cx,cy,s);              break;
+    case 'golden_trout':         drawGoldenTrout(cx,cy,s);        break;
+    case 'mountain_crystal':     drawMountainCrystal(cx,cy,s);    break;
+    case 'fishing_lure':         drawFishingLure(cx,cy,s);        break;
+    case 'golden_eagle_feather': drawGoldenEagleFeather(cx,cy,s); break;
+    case 'beach_ball':           drawBeachBall(cx,cy,s);          break;
+    case 'cooler':               drawCoolerCollectible(cx,cy,s);  break;
+    case 'gold_nugget':          drawGoldNugget(cx,cy,s);         break;
+    case 'treasure_chest':       drawTreasureChest(cx,cy,s);      break;
+    case 'fox_theater_ticket':   drawFoxTheaterTicket(cx,cy,s);   break;
+    case 'city_seal_medallion':  drawCitySealMedallion(cx,cy,s);  break;
+  }
 }
 
 // ── COLLECTIBLE MANAGEMENT ───────────────────────────────────────
 function pickCollectibleType() {
-  const r = Math.random();
-  if (currentStageIdx <= 2) {
-    if (r < 0.50) return 'fish';
-    if (r < 0.80) return 'drop';
-    return 'poppy';
-  } else {
-    if (r < 0.50) return 'poppy';
-    if (r < 0.80) return 'drop';
-    return 'fish';
-  }
+  const stg = STAGES[currentStageIdx];
+  const r   = Math.random();
+  if (r < 0.12) return 'poppy';      // universal shield buff
+  if (r < 0.22) return stg.collB;    // rare/secondary
+  return stg.collA;                  // common
 }
 
 function spawnCollectible() {
@@ -907,7 +1307,13 @@ function checkCollectibles() {
     if (c.collected) continue;
     if (c.lane === player.targetLane && c.y >= py - half && c.y <= py + half) {
       c.collected = true;
-      score += COLLECTIBLE_SCORE_VALUE;
+      if (c.type === 'poppy') {
+        player.hasShield = true; // shield buff — no score awarded
+      } else if (RARE_COLLECTIBLE_TYPES.has(c.type)) {
+        score += RARE_COLLECTIBLE_VALUE;
+      } else {
+        score += COMMON_COLLECTIBLE_VALUE;
+      }
     }
   }
 }
@@ -956,6 +1362,15 @@ function drawPlayer() {
   const paddleLeft  = (player.animFrame % 60) < 30;
   const paddleAngle = paddleLeft ? -0.30 : 0.30;
 
+  // Spinout: rotate the entire sprite around its center
+  ctx.save();
+  if (player.spinoutFrames > 0) {
+    const elapsed = RIVER_WASH_SPINOUT_DURATION - player.spinoutFrames;
+    ctx.translate(px, py);
+    ctx.rotate((elapsed / RIVER_WASH_SPINOUT_DURATION) * Math.PI * 4);
+    ctx.translate(-px, -py);
+  }
+
   ctx.save();
   const shadowA = player.isJumping ? 0.20*player.shadowScale : 0.30;
   ctx.globalAlpha = shadowA; ctx.fillStyle = '#000';
@@ -995,6 +1410,18 @@ function drawPlayer() {
   ctx.beginPath(); ctx.ellipse(-sh-KW*0.18,-1.5,KW*0.10,2.5,0,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse(sh+KW*0.18,-1.5,KW*0.10,2.5,0,0,Math.PI*2); ctx.fill();
   ctx.restore(); ctx.restore();
+  ctx.restore(); // end spinout wrapper
+
+  // Shield glow ring — drawn outside spinout transform so it stays centred
+  if (player.hasShield) {
+    const pulse = 0.65 + Math.sin(player.animFrame * 0.15) * 0.30;
+    ctx.save();
+    ctx.globalAlpha = pulse;
+    ctx.strokeStyle = '#F97316'; ctx.lineWidth = 3;
+    ctx.shadowColor = '#F97316'; ctx.shadowBlur = 14;
+    ctx.beginPath(); ctx.arc(px, py, 22, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
 }
 
 // ── DRAW: HUD ────────────────────────────────────────────────────
@@ -1045,7 +1472,10 @@ function drawTransitionMsg() {
 }
 
 // ── SPAWN OBSTACLES ──────────────────────────────────────────────
-const H_OVERRIDES = { rapids:46, wave:44, kayak_traffic:40, sandbar:40, boulder:36, rockslide:38 };
+const H_OVERRIDES = {
+  boulder: 36, river_wash: 38, deadfall_log: 28,
+  capsized_raft: 32, drifting_sailboat: 44, mine_cart: 36, shopping_cart: 38,
+};
 
 function spawnObstacle() {
   if (Math.random() < currentFwFreq) {
@@ -1088,6 +1518,9 @@ function update() {
     }
   }
 
+  // Spinout countdown
+  if (player.spinoutFrames > 0) player.spinoutFrames--;
+
   const tx = getLaneX(player.targetLane);
   player.x += (tx - player.x) * 0.28;
   if (Math.abs(player.x - tx) < 0.6) { player.x = tx; player.lane = player.targetLane; }
@@ -1125,16 +1558,26 @@ function update() {
   checkCollision();
 }
 
-// Collision operates at player.y where perspT=1:
-// laneXAt(lane, player.y) === getLaneX(lane), geometry is identical to pre-perspective code
+// Collision at player.y — laneXAt(lane, player.y) === getLaneX(lane), geometry unchanged
 function checkCollision() {
   const py = player.y, half = 12;
   for (const obs of obstacles) {
     if (obs.resolved) continue;
-    if (obs.y + obs.h >= py - half && obs.y <= py + half) {
-      obs.resolved = true;
-      const safe = player.isJumping || (!obs.fullWidth && obs.lane !== player.targetLane);
-      if (!safe) { endRun(false); return; }
+    if (obs.y + obs.h < py - half || obs.y > py + half) continue;
+    obs.resolved = true;
+    const safe = player.isJumping || (!obs.fullWidth && obs.lane !== player.targetLane);
+    if (safe) continue;
+    // Shield absorbs any single hit
+    if (player.hasShield) {
+      player.hasShield = false;
+      spawnSplash(player.x, player.y);
+      continue;
+    }
+    // River wash = spinout instead of instant death
+    if (obs.type === 'river_wash') {
+      player.spinoutFrames = Math.max(player.spinoutFrames, RIVER_WASH_SPINOUT_DURATION);
+    } else {
+      endRun(false); return;
     }
   }
 }
@@ -1222,9 +1665,11 @@ function startGame() {
   player.isJumping = false; player.jumpFrame = 0;
   player.jumpScale = 1.0;  player.shadowScale = 1.0;
   player.animFrame = 0;    player.dead = false;
+  player.hasShield = false; player.spinoutFrames = 0;
   obstacles = []; collectibles = []; splashes = [];
   dustParticles = []; endingPhase = 0; endingTimer = 0; endingSpeedMult = 1.0;
   initBgDecor();
+  updateLegend(0);
   gameState = 'playing';
 }
 
@@ -1364,27 +1809,31 @@ function drawHowToPlay() {
   ctx.fillText('HOW TO PLAY', W/2, H*0.09);
 
   const lines = [
-    ['Paddle left/right between', '#F5F0E8'],
-    ['river lanes to dodge',      '#F5F0E8'],
-    ['rocks, branches & more.',   '#F5F0E8'],
+    ['Dodge obstacles &',           '#F5F0E8'],
+    ['collect items paddling',      '#F5F0E8'],
+    ['165 miles to Bakersfield.',   '#F5F0E8'],
     ['', ''],
-    ['JUMP over full-width',      '#FDE68A'],
-    ['obstacles spanning',        '#FDE68A'],
-    ['the whole river!',          '#FDE68A'],
+    ['JUMP over full-river',        '#FDE68A'],
+    ['obstacles — trees,',          '#FDE68A'],
+    ['rafts, pontoons & more!',     '#FDE68A'],
     ['', ''],
-    ['Grab drops, fish &',        '#38BDF8'],
-    ['poppies for +50 pts each.', '#38BDF8'],
+    ['BOULDERS  instant crash',     '#EF4444'],
+    ['RIVER WASH  spin-out!',       '#38BDF8'],
+    ['POPPY  grants a shield',      '#F97316'],
+    ['(absorbs 1 obstacle hit)',    '#F5F0E8'],
     ['', ''],
-    ['— DESKTOP —',               '#C9883A'],
-    ['LEFT / RIGHT  arrow keys',  '#F5F0E8'],
-    ['SPACE or UP   jump',        '#F5F0E8'],
+    ['Each stage has its own',      '#C9883A'],
+    ['unique obstacles &',          '#C9883A'],
+    ['collectibles. Check the',     '#C9883A'],
+    ['legend panel in-game!',       '#C9883A'],
     ['', ''],
-    ['— MOBILE —',                '#C9883A'],
-    ['SWIPE left / right  lane',  '#F5F0E8'],
-    ['TAP anywhere   jump',       '#F5F0E8'],
+    ['— DESKTOP —',                 '#93C5FD'],
+    ['LEFT / RIGHT  arrow keys',    '#F5F0E8'],
+    ['SPACE or UP   jump',          '#F5F0E8'],
     ['', ''],
-    ['Follow the Kern River',     '#93C5FD'],
-    ['165 miles to Bakersfield!', '#93C5FD'],
+    ['— MOBILE —',                  '#93C5FD'],
+    ['SWIPE left / right  lane',    '#F5F0E8'],
+    ['TAP anywhere   jump',         '#F5F0E8'],
   ];
   ctx.font = '7px "Press Start 2P", monospace';
   lines.forEach(([txt, col], i) => {
@@ -1402,65 +1851,62 @@ function drawItemGuide() {
   ctx.fillStyle = 'rgba(11,31,58,0.97)'; ctx.fillRect(0,0,W,H);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#C9883A'; ctx.font = '9px "Press Start 2P", monospace';
-  ctx.fillText('ITEM GUIDE', W/2, H*0.07);
+  ctx.fillText('ITEM GUIDE', W/2, H*0.06);
 
-  const iconR  = 13, iconS = 11, lw_ = 65;
-  const colL   = W * 0.27, colR = W * 0.73;
-  const startY = H * 0.16;
-  const rowH   = Math.min(52, (H - startY - 90) / 7);
+  const S = 11, R = 13, lw_ = 55;
+  const cx = W/2;
+  let y = H*0.14;
+  const rowH = Math.min(46, (H*0.74) / 9);
 
-  ctx.font = '6px "Press Start 2P", monospace';
-  ctx.fillStyle = '#EF4444'; ctx.textAlign = 'center';
-  ctx.fillText('— AVOID —', colL, startY - 16);
-  ctx.fillStyle = '#34D399'; ctx.fillText('— COLLECT —', colR, startY - 16);
+  // Universal section
+  ctx.font='6px "Press Start 2P", monospace'; ctx.fillStyle='#93C5FD';
+  ctx.fillText('— IN EVERY STAGE —', cx, y); y += rowH*0.7;
 
-  const avoidItems = [
-    { type:'rock',       label:'Rock' },
-    { type:'boulder',    label:'Boulder' },
-    { type:'branch',     label:'Branch' },
-    { type:'wave',       label:'Wave' },
-    { type:'tumbleweed', label:'Tumbleweed' },
-    { type:'sandbar',    label:'Sandbar' },
+  const universals = [
+    { draw: () => { ctx.save(); ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=5; ctx.shadowOffsetY=3; drawObsAt('boulder',cx-W*0.30,y,R,lw_); ctx.restore(); },
+      label:'Boulder', sub:'instant crash', col:'#EF4444' },
+    { draw: () => { ctx.save(); ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=5; ctx.shadowOffsetY=3; drawObsAt('river_wash',cx,y,R,lw_); ctx.restore(); },
+      label:'River Wash', sub:'spin-out!', col:'#38BDF8' },
+    { draw: () => { ctx.save(); ctx.shadowColor=COLL_GLOW['poppy']; ctx.shadowBlur=12; drawCollAt('poppy',cx+W*0.30,y,S); ctx.restore(); },
+      label:'Poppy Power', sub:'grants shield', col:'#F97316' },
   ];
-  for (let i = 0; i < avoidItems.length; i++) {
-    const { type, label } = avoidItems[i];
-    const iy = startY + i * rowH;
-    ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = 6; ctx.shadowOffsetY = 4;
-    drawObsAt(type, colL, iy, iconR, lw_);
-    ctx.restore();
-    ctx.font = '5px "Press Start 2P", monospace'; ctx.fillStyle = '#F5F0E8'; ctx.textAlign = 'center';
-    ctx.fillText(label, colL, iy + iconR + 9);
+  for (const item of universals) {
+    item.draw();
   }
+  ctx.font='5px "Press Start 2P", monospace';
+  ctx.fillStyle='#EF4444';  ctx.fillText(universals[0].label, cx-W*0.30, y+R+9);
+  ctx.fillStyle='#EF4444';  ctx.fillText(universals[0].sub,   cx-W*0.30, y+R+20);
+  ctx.fillStyle='#38BDF8';  ctx.fillText(universals[1].label, cx,        y+R+9);
+  ctx.fillStyle='#38BDF8';  ctx.fillText(universals[1].sub,   cx,        y+R+20);
+  ctx.fillStyle='#F97316';  ctx.fillText(universals[2].label, cx+W*0.30, y+R+9);
+  ctx.fillStyle='#F97316';  ctx.fillText(universals[2].sub,   cx+W*0.30, y+R+20);
+  y += rowH * 1.8;
 
-  const bridgeY = startY + avoidItems.length * rowH;
-  const bW = 34, bH = 14;
-  ctx.save(); ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=6; ctx.shadowOffsetY=4;
-  ctx.fillStyle = '#92400E'; ctx.fillRect(colL - bW/2, bridgeY - bH/2, bW, bH);
-  ctx.fillStyle = '#5C2D0A';
-  ctx.fillRect(colL - bW/2 - 2, bridgeY - bH/2 - 5, 5, bH + 10);
-  ctx.fillRect(colL + bW/2 - 3, bridgeY - bH/2 - 5, 5, bH + 10);
-  ctx.restore(); ctx.save(); clearShadow();
-  ctx.font = '5px "Press Start 2P", monospace'; ctx.fillStyle = '#FDE68A'; ctx.textAlign = 'center';
-  ctx.fillText('Bridge',  colL, bridgeY + bH/2 + 9);
-  ctx.fillText('(JUMP!)', colL, bridgeY + bH/2 + 20);
-  ctx.restore();
+  // Per-stage collectibles preview
+  ctx.font='6px "Press Start 2P", monospace'; ctx.fillStyle='#C9883A';
+  ctx.fillText('— STAGE COLLECTIBLES —', cx, y); y += rowH*0.65;
 
-  const collectItems = [
-    { type:'drop',  label:'Drop',  pts:'+50' },
-    { type:'fish',  label:'Fish',  pts:'+50' },
-    { type:'poppy', label:'Poppy', pts:'+50' },
+  const stgPreviews = [
+    { name:'S1 HEADWATERS', a:'golden_trout', b:'mountain_crystal' },
+    { name:'S2 UPPER KERN',  a:'fishing_lure',  b:'golden_eagle_feather' },
+    { name:'S3 LAKE ISABELLA',a:'beach_ball',   b:'cooler' },
+    { name:'S4 KERN CANYON', a:'gold_nugget',   b:'treasure_chest' },
+    { name:'S5 BAKERSFIELD', a:'fox_theater_ticket', b:'city_seal_medallion' },
   ];
-  for (let i = 0; i < collectItems.length; i++) {
-    const { type, label, pts } = collectItems[i];
-    const iy = startY + rowH + i * rowH * 1.6;
-    ctx.save();
-    ctx.shadowColor = COLL_GLOW[type]; ctx.shadowBlur = 14;
-    drawCollAt(type, colR, iy, iconS);
-    ctx.restore();
-    ctx.font = '5px "Press Start 2P", monospace'; ctx.textAlign = 'center';
-    ctx.fillStyle = '#F5F0E8'; ctx.fillText(label, colR, iy + iconS + 9);
-    ctx.fillStyle = '#C9883A'; ctx.fillText(pts + ' pts', colR, iy + iconS + 20);
+  const colA=W*0.22, colB=W*0.50, colC=W*0.78;
+  ctx.font='4px "Press Start 2P", monospace'; ctx.fillStyle='#9CA3AF';
+  ctx.fillText('Stage', colA, y); ctx.fillText('Common +50', colB, y); ctx.fillText('Rare / +150', colC, y);
+  y += rowH*0.55;
+
+  for (const sp of stgPreviews) {
+    ctx.font='4px "Press Start 2P", monospace'; ctx.fillStyle='#F5F0E8';
+    ctx.textAlign='left'; ctx.fillText(sp.name, W*0.02, y+4);
+    ctx.textAlign='center';
+    ctx.save(); ctx.shadowColor=COLL_GLOW[sp.a]||'#fff'; ctx.shadowBlur=10;
+    drawCollAt(sp.a, colB, y, S*0.85); ctx.restore();
+    ctx.save(); ctx.shadowColor=COLL_GLOW[sp.b]||'#fff'; ctx.shadowBlur=10;
+    drawCollAt(sp.b, colC, y, S*0.85); ctx.restore();
+    y += rowH*0.90;
   }
 
   drawBtn('< BACK',  W*0.27, H*0.93, W*0.48, 38, '#1E3A5F', '#C9883A');
@@ -1577,12 +2023,15 @@ function clientToCanvas(ex, ey) {
 
 // ── INPUT ────────────────────────────────────────────────────────
 function doMoveLeft() {
+  if (player.spinoutFrames > 0) return;
   if (player.targetLane > 0) { spawnSplash(player.x, player.y+8); player.targetLane--; }
 }
 function doMoveRight() {
+  if (player.spinoutFrames > 0) return;
   if (player.targetLane < currentLanes-1) { spawnSplash(player.x, player.y+8); player.targetLane++; }
 }
 function doJump() {
+  if (player.spinoutFrames > 0) return;
   if (!player.isJumping && gameState==='playing') {
     player.isJumping=true; player.jumpFrame=0; player.jumpScale=1.0; player.shadowScale=1.0;
   }
@@ -1671,6 +2120,62 @@ function handleTap(mx, my) {
   }
 }
 
+// ── DYNAMIC LEGEND ───────────────────────────────────────────────
+const ITEM_ICONS = {
+  boulder:          { svg:`<svg width="26" height="26" viewBox="0 0 26 26"><path d="M13,1 L24,7 L22,24 L4,24 L2,7 Z" fill="#7C2D12"/><path d="M6,4 L15,8 L10,13 Z" fill="#A16207" opacity="0.70"/></svg>`, label:'Boulder', sub:null, cat:'avoid' },
+  river_wash:       { svg:`<svg width="28" height="28" viewBox="0 0 28 28"><circle cx="14" cy="14" r="11" fill="rgba(56,189,248,0.18)" stroke="#38BDF8" stroke-width="1.5"/><path d="M14,6 Q20,10 18,14 Q16,19 14,16 Q11,12 13,8 Q15,5 20,8" fill="none" stroke="#38BDF8" stroke-width="2" stroke-linecap="round"/><circle cx="14" cy="14" r="3" fill="#EFF6FF"/></svg>`, label:'River Wash', sub:'SPIN OUT', cat:'avoid' },
+  deadfall_log:     { svg:`<svg width="40" height="18" viewBox="0 0 40 18"><rect x="4" y="5" width="32" height="9" rx="4" fill="#44403C"/><rect x="4" y="5" width="32" height="4" rx="3" fill="#57534E"/><circle cx="12" cy="9" r="3" fill="none" stroke="#292524" stroke-width="1.2"/></svg>`, label:'Deadfall Log', sub:null, cat:'avoid' },
+  capsized_raft:    { svg:`<svg width="38" height="18" viewBox="0 0 38 18"><ellipse cx="19" cy="11" rx="15" ry="5" fill="#57534E"/><rect x="9" y="6" width="20" height="6" fill="#44403C"/><line x1="15" y1="6" x2="15" y2="12" stroke="#292524" stroke-width="1.5"/><line x1="23" y1="6" x2="23" y2="12" stroke="#292524" stroke-width="1.5"/></svg>`, label:'Capsized Raft', sub:null, cat:'avoid' },
+  drifting_sailboat:{ svg:`<svg width="28" height="28" viewBox="0 0 28 28"><path d="M6,20 L22,20 L19,26 L9,26 Z" fill="#1E3A5F"/><rect x="6" y="18" width="16" height="3" fill="#EFF6FF"/><line x1="14" y1="20" x2="14" y2="4" stroke="#57534E" stroke-width="2"/><path d="M14,5 L23,17 L14,20 Z" fill="rgba(239,246,255,0.88)"/></svg>`, label:'Sailboat', sub:null, cat:'avoid' },
+  mine_cart:        { svg:`<svg width="28" height="28" viewBox="0 0 28 28"><path d="M4,10 L24,10 L21,20 L7,20 Z" fill="#1C1917"/><rect x="4" y="8" width="20" height="3" fill="#292524"/><circle cx="9" cy="24" r="3" fill="#44403C"/><circle cx="19" cy="24" r="3" fill="#44403C"/></svg>`, label:'Mine Cart', sub:null, cat:'avoid' },
+  shopping_cart:    { svg:`<svg width="28" height="28" viewBox="0 0 28 28"><rect x="8" y="5" width="16" height="13" fill="none" stroke="#9CA3AF" stroke-width="2"/><line x1="13" y1="5" x2="13" y2="18" stroke="#9CA3AF" stroke-width="1"/><path d="M5,3 L8,3 L8,18" fill="none" stroke="#9CA3AF" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="23" r="2.5" fill="#6B7280"/><circle cx="20" cy="23" r="2.5" fill="#6B7280"/></svg>`, label:'Shopping Cart', sub:null, cat:'avoid' },
+  fallen_sequoia:   { svg:`<svg width="44" height="18" viewBox="0 0 44 18"><rect x="2" y="5" width="40" height="10" rx="5" fill="#166534"/><rect x="2" y="5" width="40" height="4" rx="4" fill="#15803D"/><line x1="10" y1="5" x2="10" y2="15" stroke="#14532D" stroke-width="1.5"/><line x1="22" y1="5" x2="22" y2="15" stroke="#14532D" stroke-width="1.5"/><line x1="34" y1="5" x2="34" y2="15" stroke="#14532D" stroke-width="1.5"/></svg>`, label:'Sequoia', sub:'JUMP!', cat:'jump' },
+  raft_train:       { svg:`<svg width="44" height="18" viewBox="0 0 44 18"><rect x="2" y="4" width="18" height="10" rx="2" fill="#92400E"/><rect x="24" y="4" width="18" height="10" rx="2" fill="#92400E"/><rect x="2" y="4" width="18" height="4" rx="2" fill="#B45309"/><rect x="24" y="4" width="18" height="4" rx="2" fill="#B45309"/><line x1="20" y1="9" x2="24" y2="9" stroke="#78350F" stroke-width="2"/></svg>`, label:'Raft Train', sub:'JUMP!', cat:'jump' },
+  pontoon_party:    { svg:`<svg width="44" height="22" viewBox="0 0 44 22"><rect x="4" y="10" width="36" height="10" rx="3" fill="#1D4ED8"/><rect x="4" y="4" width="36" height="8" rx="2" fill="#EFF6FF" opacity="0.9"/><circle cx="13" cy="8" r="2.5" fill="#FBBF24"/><circle cx="22" cy="8" r="2.5" fill="#F97316"/><circle cx="31" cy="8" r="2.5" fill="#FBBF24"/></svg>`, label:'Pontoon Party', sub:'JUMP!', cat:'jump' },
+  old_mining_bridge:{ svg:`<svg width="44" height="20" viewBox="0 0 44 20"><rect x="2" y="6" width="40" height="10" fill="#44403C"/><rect x="2" y="6" width="40" height="4" fill="#78350F"/><line x1="7" y1="2" x2="7" y2="20" stroke="#292524" stroke-width="3"/><line x1="37" y1="2" x2="37" y2="20" stroke="#292524" stroke-width="3"/><line x1="2" y1="5" x2="42" y2="5" stroke="#1C1917" stroke-width="2"/></svg>`, label:'Old Bridge', sub:'JUMP!', cat:'jump' },
+  tube_float_parade:{ svg:`<svg width="44" height="22" viewBox="0 0 44 22"><circle cx="10" cy="14" r="7" fill="none" stroke="#F97316" stroke-width="3"/><circle cx="22" cy="14" r="7" fill="none" stroke="#60A5FA" stroke-width="3"/><circle cx="34" cy="14" r="7" fill="none" stroke="#F472B6" stroke-width="3"/><circle cx="10" cy="5" r="3" fill="#FBBF24"/><circle cx="22" cy="5" r="3" fill="#FBBF24"/><circle cx="34" cy="5" r="3" fill="#FBBF24"/></svg>`, label:'Float Parade', sub:'JUMP!', cat:'jump' },
+  poppy:            { svg:`<svg width="26" height="26" viewBox="0 0 26 26"><ellipse cx="13" cy="6" rx="3.5" ry="6" fill="#F97316"/><ellipse cx="13" cy="20" rx="3.5" ry="6" fill="#FB923C"/><ellipse cx="6" cy="13" rx="6" ry="3.5" fill="#F97316"/><ellipse cx="20" cy="13" rx="6" ry="3.5" fill="#FB923C"/><circle cx="13" cy="13" r="3.5" fill="#FBBF24"/><circle cx="13" cy="13" r="1.5" fill="#78350F"/></svg>`, label:'Poppy Power', sub:'SHIELD', cat:'collect' },
+  golden_trout:     { svg:`<svg width="30" height="18" viewBox="0 0 30 18"><ellipse cx="12" cy="9" rx="9" ry="5" fill="#FBBF24"/><polygon points="21,9 30,4 30,14" fill="#FBBF24"/><ellipse cx="12" cy="9" rx="6" ry="3" fill="#F59E0B"/><circle cx="6" cy="7" r="1.5" fill="#0B1F3A"/></svg>`, label:'Golden Trout', sub:'+50', cat:'collect' },
+  mountain_crystal: { svg:`<svg width="24" height="28" viewBox="0 0 24 28"><polygon points="12,2 22,10 18,26 6,26 2,10" fill="#A5F3FC"/><polygon points="12,2 22,10 12,10" fill="#E0F9FF" opacity="0.8"/><polygon points="12,10 6,26 18,26" fill="#38BDF8" opacity="0.7"/></svg>`, label:'M. Crystal', sub:'+150 RARE', cat:'collect' },
+  fishing_lure:     { svg:`<svg width="24" height="26" viewBox="0 0 24 26"><ellipse cx="12" cy="12" rx="5" ry="9" fill="#EF4444"/><ellipse cx="10.5" cy="9.5" rx="2.5" ry="5" fill="#FCA5A5" opacity="0.7"/><path d="M12,21 Q17,24 18,21 Q18,17 16,19" fill="none" stroke="#9CA3AF" stroke-width="1.8" stroke-linecap="round"/></svg>`, label:'Fishing Lure', sub:'+50', cat:'collect' },
+  golden_eagle_feather:{ svg:`<svg width="16" height="30" viewBox="0 0 16 30"><path d="M8,2 C12,8 14,16 10,26 C8,28 6,28 6,26 C4,22 4,14 8,2 Z" fill="#C9883A"/><line x1="8" y1="4" x2="8" y2="26" stroke="#B45309" stroke-width="1" stroke-linecap="round"/></svg>`, label:'Eagle Feather', sub:'+50', cat:'collect' },
+  beach_ball:       { svg:`<svg width="26" height="26" viewBox="0 0 26 26"><circle cx="13" cy="13" r="11" fill="#60A5FA"/><path d="M2,13 Q13,2 24,13" fill="#EF4444"/><path d="M2,13 Q13,24 24,13" fill="#FDE68A"/></svg>`, label:'Beach Ball', sub:'+50', cat:'collect' },
+  cooler:           { svg:`<svg width="32" height="22" viewBox="0 0 32 22"><rect x="3" y="6" width="26" height="13" rx="2" fill="#1D4ED8"/><rect x="3" y="6" width="26" height="5" rx="2" fill="#EFF6FF"/><rect x="11" y="2" width="10" height="5" rx="1" fill="#3B82F6"/></svg>`, label:'Cooler', sub:'+50', cat:'collect' },
+  gold_nugget:      { svg:`<svg width="24" height="22" viewBox="0 0 24 22"><path d="M12,2 L21,7 L19,20 L5,20 L3,7 Z" fill="#FBBF24"/><path d="M6,4 L14,8 L10,13 Z" fill="#FDE68A" opacity="0.75"/></svg>`, label:'Gold Nugget', sub:'+50', cat:'collect' },
+  treasure_chest:   { svg:`<svg width="28" height="24" viewBox="0 0 28 24"><rect x="2" y="10" width="24" height="12" rx="2" fill="#92400E"/><path d="M2,10 Q14,4 26,10" fill="#B45309"/><rect x="2" y="10" width="24" height="3" fill="#B45309"/><rect x="11" y="11" width="6" height="5" rx="1" fill="#FBBF24"/><circle cx="14" cy="14" r="1.5" fill="#C9883A"/></svg>`, label:'Treasure Chest', sub:'+150 RARE', cat:'collect' },
+  fox_theater_ticket:{ svg:`<svg width="30" height="20" viewBox="0 0 30 20"><rect x="2" y="3" width="26" height="14" rx="2" fill="#7C3AED"/><rect x="2" y="3" width="26" height="6" rx="2" fill="#8B5CF6"/><circle cx="15" cy="12" r="3" fill="#FBBF24"/></svg>`, label:'Fox Ticket', sub:'+50', cat:'collect' },
+  city_seal_medallion:{ svg:`<svg width="26" height="26" viewBox="0 0 26 26"><circle cx="13" cy="13" r="11" fill="#C9883A"/><circle cx="13" cy="13" r="8.5" fill="#1D4ED8"/><circle cx="13" cy="13" r="5" fill="none" stroke="#93C5FD" stroke-width="1.5"/><circle cx="13" cy="13" r="2.5" fill="#93C5FD"/></svg>`, label:'City Seal', sub:'+50', cat:'collect' },
+};
+
+function legendRow(type) {
+  const info = ITEM_ICONS[type];
+  if (!info) return '';
+  let sub = '';
+  if      (info.cat === 'jump')    sub = '<br><em>(JUMP!)</em>';
+  else if (info.sub === 'SPIN OUT') sub = '<br><em>SPIN OUT</em>';
+  else if (info.sub === 'SHIELD')  sub = '<br><em>SHIELD</em>';
+  else if (info.sub)               sub = `<br><em>${info.sub}</em>`;
+  return `<div class="legend-row">${info.svg}<span>${info.label}${sub}</span></div>`;
+}
+
+function updateLegend(idx) {
+  const el = document.getElementById('gameLegend');
+  if (!el) return;
+  const stg    = STAGES[idx];
+  const fwType = Array.isArray(stg.fwType) ? stg.fwType[0] : stg.fwType;
+  el.innerHTML =
+    `<p class="legend-title">STAGE ${stg.num}: ${stg.name}</p>` +
+    `<p class="legend-section avoid-label">AVOID</p>` +
+    legendRow('boulder') +
+    legendRow('river_wash') +
+    legendRow(stg.stageObs) +
+    legendRow(fwType) +
+    `<p class="legend-section collect-label">COLLECT</p>` +
+    legendRow('poppy') +
+    legendRow(stg.collA) +
+    legendRow(stg.collB);
+}
+
 // ── IMAGE PRELOADS ────────────────────────────────────────────────
 const logoImg     = new Image();
 let   logoLoaded  = false;
@@ -1687,5 +2192,6 @@ bgSceneImg.src      = 'sierra-nevada-bg.png.png';
 resizeCanvas();
 player.x = getLaneX(player.targetLane);
 player.y = Math.floor(canvas.height * PLAYER_Y_RATIO);
+updateLegend(0);
 
 document.fonts.ready.then(() => requestAnimationFrame(gameLoop));
