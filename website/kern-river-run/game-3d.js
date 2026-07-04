@@ -206,19 +206,29 @@ let wfGroup     = null;
 let wfStrips    = [];
 
 // ── TEXTURE PRELOAD ───────────────────────────────────────────────
-// Cache keyed by stage number. Callback updates any live backdropMesh
-// if it was placed before the texture finished loading.
+// Warms the cache before the player clicks START so buildStageBackdrop
+// can apply the texture immediately (no async flash).
 var stageTexCache = {};
-new THREE.TextureLoader().load('sierra-nevada-bg.png.png', function(tex) {
-  tex.magFilter    = THREE.NearestFilter;
-  tex.minFilter    = THREE.NearestFilter;
-  tex.generateMipmaps = false;
-  stageTexCache['s1'] = tex;
-  if (backdropMesh && backdropMesh.material) {
-    backdropMesh.material.map = tex;
-    backdropMesh.material.needsUpdate = true;
+new THREE.TextureLoader().load(
+  'sierra-nevada-bg.png.png',
+  function(tex) {
+    console.log('[KRR] Preload OK: sierra-nevada-bg.png.png');
+    tex.magFilter    = THREE.NearestFilter;
+    tex.minFilter    = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate  = true;
+    stageTexCache['s1'] = tex;
+    // Patch the start-screen backdrop if it was built before this fired
+    if (backdropMesh && backdropMesh.material && !backdropMesh.material.map) {
+      backdropMesh.material.map = tex;
+      backdropMesh.material.needsUpdate = true;
+    }
+  },
+  undefined,
+  function(err) {
+    console.error('[KRR] Preload FAILED: sierra-nevada-bg.png.png', err);
   }
-});
+);
 let stageIdx    = 0;
 let curLanes    = STAGES3[0].lanes;
 
@@ -389,15 +399,46 @@ function buildStageBackdrop(stg) {
   var bd = stg.backdrop;
   if (!bd) return;
 
-  // Backdrop plane -- NearestFilter set in texture preload callback
-  var bdMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF, fog: false });
-  if (stageTexCache['s1']) {
-    bdMat.map = stageTexCache['s1'];
-  }
-  // If texture not ready yet, the preload callback will inject it when done
+  // Backdrop plane - start with sky-blue fallback so any load failure is invisible
+  var bdMat = new THREE.MeshBasicMaterial({ color: 0x87CEEB, fog: false });
   backdropMesh = new THREE.Mesh(new THREE.PlaneGeometry(78, 52), bdMat);
   backdropMesh.position.set(0, 26, -88);
   scene.add(backdropMesh);
+
+  // Capture current mesh so the async callback patches the RIGHT instance
+  // even if buildWorld() is called again before the load finishes.
+  var capMesh = backdropMesh;
+
+  function applyBackdropTex(tex) {
+    tex.magFilter    = THREE.NearestFilter;
+    tex.minFilter    = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate  = true;
+    stageTexCache['s1'] = tex;
+    if (capMesh.material) {
+      capMesh.material.map   = tex;
+      capMesh.material.color.set(0xFFFFFF);
+      capMesh.material.needsUpdate = true;
+    }
+  }
+
+  if (stageTexCache['s1']) {
+    // Preload already finished - apply immediately, no async flash
+    applyBackdropTex(stageTexCache['s1']);
+  } else {
+    // Preload not done yet (or failed) - load fresh with error visibility
+    new THREE.TextureLoader().load(
+      bd.img,
+      function(tex) {
+        console.log('[KRR] Backdrop texture loaded: ' + bd.img);
+        applyBackdropTex(tex);
+      },
+      undefined,
+      function(err) {
+        console.error('[KRR] Backdrop texture FAILED to load:', bd.img, err);
+      }
+    );
+  }
 
   // Animated waterfall strips
   var wf  = bd.wf;
