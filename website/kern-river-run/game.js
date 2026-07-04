@@ -16,7 +16,7 @@ const HORIZON_OFFSET              = 70;
 const HORIZON_MIN_W               = 0.28;  // river width fraction at horizon (widens spawn area)
 const COMMON_COLLECTIBLE_VALUE    = 50;
 const RARE_COLLECTIBLE_VALUE      = 150;
-const COLLECTIBLE_FREQUENCY       = 0.008;
+const COLLECTIBLE_FREQUENCY       = 0.006;
 const ENDING_SLOWDOWN_FRAMES      = 90;
 const RIVER_WASH_SPINOUT_DURATION = 90;  // ~1.5s at 60fps
 
@@ -42,7 +42,7 @@ const STAGES = [
   {
     num: 1, name: 'HEADWATERS', enterMsg: null,
     startMile: 0,   endMile: 33,  lanes: 7,
-    speed: 1.48, obsFreq: 0.014, fwFreq: 0.11,
+    speed: 1.48, obsFreq: 0.011, fwFreq: 0.11,
     stageObs: 'deadfall_log',
     obsTypes: ['deadfall_log', 'deadfall_log', 'boulder', 'boulder', 'river_wash'],
     fwType: 'fallen_sequoia',
@@ -51,7 +51,7 @@ const STAGES = [
   {
     num: 2, name: 'UPPER KERN', enterMsg: 'ENTERING UPPER KERN',
     startMile: 33,  endMile: 66,  lanes: 6,
-    speed: 1.65, obsFreq: 0.015, fwFreq: 0.12,
+    speed: 1.65, obsFreq: 0.012, fwFreq: 0.12,
     stageObs: 'capsized_raft',
     obsTypes: ['capsized_raft', 'capsized_raft', 'boulder', 'boulder', 'river_wash'],
     fwType: 'raft_train',
@@ -60,7 +60,7 @@ const STAGES = [
   {
     num: 3, name: 'LAKE ISABELLA', enterMsg: 'ENTERING LAKE ISABELLA',
     startMile: 66,  endMile: 99,  lanes: 5,
-    speed: 1.78, obsFreq: 0.016, fwFreq: 0.10,
+    speed: 1.78, obsFreq: 0.012, fwFreq: 0.10,
     stageObs: 'drifting_sailboat',
     obsTypes: ['drifting_sailboat', 'drifting_sailboat', 'boulder', 'boulder', 'river_wash'],
     fwType: 'pontoon_party',
@@ -69,7 +69,7 @@ const STAGES = [
   {
     num: 4, name: 'KERN CANYON', enterMsg: 'ENTERING KERN CANYON',
     startMile: 99,  endMile: 132, lanes: 4,
-    speed: 1.91, obsFreq: 0.017, fwFreq: 0.12,
+    speed: 1.91, obsFreq: 0.013, fwFreq: 0.12,
     stageObs: 'mine_cart',
     obsTypes: ['mine_cart', 'mine_cart', 'boulder', 'boulder', 'river_wash'],
     fwType: 'old_mining_bridge',
@@ -78,14 +78,14 @@ const STAGES = [
   {
     num: 5, name: 'BAKERSFIELD', enterMsg: 'APPROACHING BAKERSFIELD',
     startMile: 132, endMile: 165, lanes: 3,
-    speed: 2.00, obsFreq: 0.015, fwFreq: 0.09,
+    speed: 2.00, obsFreq: 0.012, fwFreq: 0.09,
     stageObs: 'shopping_cart',
     obsTypes: ['shopping_cart', 'shopping_cart', 'boulder', 'boulder', 'river_wash'],
     fwType: 'tube_float_parade',
     collA: 'fox_theater_ticket', collB: 'city_seal_medallion',
     subNarrow: [
-      { atMile: 150, lanes: 2, msg: 'THE RIVER NARROWS', obsFreq: 0.012 },
-      { atMile: 160, lanes: 1, msg: 'FINAL STRETCH',     obsFreq: 0.009 },
+      { atMile: 150, lanes: 2, msg: 'THE RIVER NARROWS', obsFreq: 0.009 },
+      { atMile: 160, lanes: 1, msg: 'FINAL STRETCH',     obsFreq: 0.007 },
     ],
   },
 ];
@@ -306,12 +306,18 @@ function drawBackground() {
   // Perspective flow lines inside river
   drawFlowLines(W, hy, th);
 
-  // Lane dividers — from widened horizon top to full-width bottom
+  // Lane dividers — two-segment: vertical through HORIZON_MIN_W zone, then angled,
+  // matching riverWidthAt() exactly so items never drift relative to dividers
   ctx.save(); ctx.globalAlpha = 0.08; ctx.strokeStyle = '#93C5FD'; ctx.lineWidth = 1;
+  const yTrans = hy + HORIZON_MIN_W * (player.y - hy);
   for (let l = 1; l < currentLanes; l++) {
-    const topX = topLx + l * (riverWidthAt(hy) / currentLanes);
-    const botX = riverLeftAt(H) + l * (riverWidthAt(H) / currentLanes);
-    ctx.beginPath(); ctx.moveTo(topX, hy); ctx.lineTo(botX, H); ctx.stroke();
+    const transX = topLx + l * (riverWidthAt(hy) / currentLanes);
+    const botX   = riverLeftAt(H) + l * (riverWidthAt(H) / currentLanes);
+    ctx.beginPath();
+    ctx.moveTo(transX, hy);
+    ctx.lineTo(transX, yTrans);
+    ctx.lineTo(botX,   H);
+    ctx.stroke();
   }
   ctx.restore();
 
