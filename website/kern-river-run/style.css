@@ -1,0 +1,41 @@
+/* Kern River Run — style.css */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  /* Campaign navy as page background behind the canvas */
+  background: #0B1F3A;
+  /* Prevent elastic scroll on iOS */
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
+body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#gameWrapper {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#gameCanvas {
+  display: block;
+  /* Keeps pixel art crisp when CSS-scaled */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  /* Canvas fills viewport; game.js drives actual pixel dimensions */
+  max-width: 100vw;
+  max-height: 100vh;
+}
