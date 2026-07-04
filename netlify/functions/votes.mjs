@@ -10,12 +10,13 @@ const HEADERS = {
   'Content-Type':                 'application/json'
 };
 
-// consistency: 'strong' forces reads through uncachedEdgeURL instead of the
-// CDN-cached edgeURL. Without it, writes persist but reads return stale data
-// for up to ~60 seconds. Must be inside try/catch — getStore can throw if
-// NETLIFY_BLOBS_CONTEXT is absent or malformed.
+// Use string form of getStore (never throws on init) and apply
+// consistency: 'strong' per-operation on reads so every get() bypasses
+// the CDN edge cache and hits the origin. Store-level consistency via the
+// object form was not reliably applying in v7.4.0, causing reads to return
+// null and every POST to start from EMPTY_VOTES (last vote wins at 100%).
 function store() {
-  return getStore({ name: 'campaign-votes', consistency: 'strong' });
+  return getStore('campaign-votes');
 }
 
 export default async (req) => {
@@ -25,7 +26,7 @@ export default async (req) => {
 
   if (req.method === 'GET') {
     try {
-      const raw   = await store().get('votes');
+      const raw   = await store().get('votes', { consistency: 'strong' });
       const votes = raw ? JSON.parse(raw) : { ...EMPTY_VOTES };
       console.log('[votes-fn] GET returning:', JSON.stringify(votes));
       return new Response(JSON.stringify(votes), { status: 200, headers: HEADERS });
@@ -36,10 +37,11 @@ export default async (req) => {
   }
 
   if (req.method === 'POST') {
-    let track;
+    let track, previousTrack;
     try {
-      const body = await req.json();
-      track = body.track;
+      const body  = await req.json();
+      track         = body.track;
+      previousTrack = body.previousTrack || null;
     } catch (e) {
       return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: HEADERS });
     }
@@ -47,14 +49,25 @@ export default async (req) => {
     if (!VALID_TRACKS.includes(track)) {
       return new Response(JSON.stringify({ error: 'Invalid track' }), { status: 400, headers: HEADERS });
     }
+    if (previousTrack && !VALID_TRACKS.includes(previousTrack)) {
+      return new Response(JSON.stringify({ error: 'Invalid previousTrack' }), { status: 400, headers: HEADERS });
+    }
 
     try {
       const s     = store();
-      const raw   = await s.get('votes');
+      const raw   = await s.get('votes', { consistency: 'strong' });
       const votes = raw ? JSON.parse(raw) : { ...EMPTY_VOTES };
+
+      // When changing an existing vote: decrement the old track (floor 0),
+      // increment the new one — total vote count stays the same.
+      if (previousTrack && previousTrack !== track) {
+        votes[previousTrack] = Math.max(0, (votes[previousTrack] || 0) - 1);
+      }
       votes[track] = (votes[track] || 0) + 1;
+
       await s.set('votes', JSON.stringify(votes));
-      console.log('[votes-fn] POST track=' + track + ' stored:', JSON.stringify(votes));
+      const logTag = previousTrack ? ' (changed from ' + previousTrack + ')' : '';
+      console.log('[votes-fn] POST track=' + track + logTag + ' stored:', JSON.stringify(votes));
       return new Response(JSON.stringify(votes), { status: 200, headers: HEADERS });
     } catch (e) {
       console.error('[votes-fn] POST error:', e.message || String(e));

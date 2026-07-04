@@ -820,16 +820,35 @@
       });
     });
 
-    // Checkmark button: cast vote once per browser
+    // Checkmark button: cast first vote, or change vote to a different track.
+    // Same-track tap is a no-op. Changing sends previousTrack so the backend
+    // can decrement the old track and increment the new one atomically.
     voteWidget.querySelectorAll('.vote-check-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        if (localStorage.getItem(VOTE_LS_KEY)) { return; }
-        var trackId = btn.getAttribute('data-track');
+        var trackId       = btn.getAttribute('data-track');
+        var previousTrack = localStorage.getItem(VOTE_LS_KEY);
+
+        // Tapping the same track already voted for does nothing
+        if (previousTrack === trackId) { return; }
+
+        // Immediately update checkmark UI: unhighlight old, highlight new
+        if (previousTrack) {
+          var prevRow = voteWidget.querySelector('.vote-track-row[data-track="' + previousTrack + '"]');
+          if (prevRow) {
+            var prevBtn = prevRow.querySelector('.vote-check-btn');
+            if (prevBtn) { prevBtn.classList.remove('is-voted'); }
+          }
+        }
         btn.classList.add('is-voted');
+
+        // Include previousTrack in the POST body when changing an existing vote
+        var postBody = { track: trackId };
+        if (previousTrack) { postBody.previousTrack = previousTrack; }
+
         fetch(VOTES_API, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ track: trackId })
+          body: JSON.stringify(postBody)
         })
           .then(function (r) {
             if (!r.ok) {
