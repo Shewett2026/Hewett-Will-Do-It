@@ -1,6 +1,6 @@
 // ================================================================
 // KERN RIVER RUN — game-3d-experiment.js  (Visual Upgrade)
-// Isolated Three.js 3D experiment. game-dev.html / game.js untouched.
+// Isolated Three.js 3D experiment. game-2d-backup.html / game.js untouched.
 // ================================================================
 
 // ── CONSTANTS ────────────────────────────────────────────────────
