@@ -10,9 +10,10 @@ const PIXELS_PER_MILE             = 900;
 const SCORE_PER_FRAME             = 2;
 const MIN_OBSTACLE_GAP            = 135;
 const SPAWN_Y_OFFSET              = 60;
-const PLAYER_Y_RATIO              = 0.80;
+const PLAYER_Y_RATIO              = 0.82;
 const HUD_H                       = 54;
-const HORIZON_OFFSET              = 80;
+const HORIZON_OFFSET              = 70;
+const HORIZON_MIN_W               = 0.28;  // river width fraction at horizon (widens spawn area)
 const COMMON_COLLECTIBLE_VALUE    = 50;
 const RARE_COLLECTIBLE_VALUE      = 150;
 const COLLECTIBLE_FREQUENCY       = 0.008;
@@ -41,7 +42,7 @@ const STAGES = [
   {
     num: 1, name: 'HEADWATERS', enterMsg: null,
     startMile: 0,   endMile: 33,  lanes: 7,
-    speed: 1.7,  obsFreq: 0.014, fwFreq: 0.11,
+    speed: 1.48, obsFreq: 0.014, fwFreq: 0.11,
     stageObs: 'deadfall_log',
     obsTypes: ['deadfall_log', 'deadfall_log', 'boulder', 'boulder', 'river_wash'],
     fwType: 'fallen_sequoia',
@@ -50,7 +51,7 @@ const STAGES = [
   {
     num: 2, name: 'UPPER KERN', enterMsg: 'ENTERING UPPER KERN',
     startMile: 33,  endMile: 66,  lanes: 6,
-    speed: 1.9,  obsFreq: 0.015, fwFreq: 0.12,
+    speed: 1.65, obsFreq: 0.015, fwFreq: 0.12,
     stageObs: 'capsized_raft',
     obsTypes: ['capsized_raft', 'capsized_raft', 'boulder', 'boulder', 'river_wash'],
     fwType: 'raft_train',
@@ -59,7 +60,7 @@ const STAGES = [
   {
     num: 3, name: 'LAKE ISABELLA', enterMsg: 'ENTERING LAKE ISABELLA',
     startMile: 66,  endMile: 99,  lanes: 5,
-    speed: 2.05, obsFreq: 0.016, fwFreq: 0.10,
+    speed: 1.78, obsFreq: 0.016, fwFreq: 0.10,
     stageObs: 'drifting_sailboat',
     obsTypes: ['drifting_sailboat', 'drifting_sailboat', 'boulder', 'boulder', 'river_wash'],
     fwType: 'pontoon_party',
@@ -68,7 +69,7 @@ const STAGES = [
   {
     num: 4, name: 'KERN CANYON', enterMsg: 'ENTERING KERN CANYON',
     startMile: 99,  endMile: 132, lanes: 4,
-    speed: 2.2,  obsFreq: 0.017, fwFreq: 0.12,
+    speed: 1.91, obsFreq: 0.017, fwFreq: 0.12,
     stageObs: 'mine_cart',
     obsTypes: ['mine_cart', 'mine_cart', 'boulder', 'boulder', 'river_wash'],
     fwType: 'old_mining_bridge',
@@ -77,7 +78,7 @@ const STAGES = [
   {
     num: 5, name: 'BAKERSFIELD', enterMsg: 'APPROACHING BAKERSFIELD',
     startMile: 132, endMile: 165, lanes: 3,
-    speed: 2.3,  obsFreq: 0.015, fwFreq: 0.09,
+    speed: 2.00, obsFreq: 0.015, fwFreq: 0.09,
     stageObs: 'shopping_cart',
     obsTypes: ['shopping_cart', 'shopping_cart', 'boulder', 'boulder', 'river_wash'],
     fwType: 'tube_float_parade',
@@ -181,9 +182,9 @@ function perspT(y) {
   return (y - horizonY()) / (player.y - horizonY());
 }
 
-// River width at a given screen y (scales with perspective)
+// River width at a given screen y — floor at HORIZON_MIN_W to widen the spawn area
 function riverWidthAt(y) {
-  return riverW() * Math.max(0, perspT(y));
+  return riverW() * Math.max(HORIZON_MIN_W, perspT(y));
 }
 
 // Left edge of river at screen y
@@ -191,17 +192,16 @@ function riverLeftAt(y) {
   return canvas.width / 2 - riverWidthAt(y) / 2;
 }
 
-// X position for lane center at screen y (perspective-correct)
+// X position for lane center at screen y (perspective-correct, uses widened riverWidthAt)
 function laneXAt(lane, y) {
-  const t  = Math.max(0, perspT(y));
-  const rw = riverW() * t;
+  const rw = riverWidthAt(y);
   const lw = rw / currentLanes;
   return canvas.width / 2 - rw / 2 + (lane + 0.5) * lw;
 }
 
-// Uniform scale factor for sprites: 1.0 at player.y, small near horizon
+// Uniform scale factor: 1.0 at player.y, minimum ~0.18 at horizon
 function scaleAt(y) {
-  return Math.max(0.05, perspT(y));
+  return Math.max(HORIZON_MIN_W * 0.65, perspT(y));
 }
 
 // ── STAGE MANAGEMENT ─────────────────────────────────────────────
@@ -273,15 +273,17 @@ function drawBackground() {
   ctx.beginPath(); ctx.moveTo(0, hy); ctx.lineTo(W, hy); ctx.stroke();
   ctx.restore();
 
-  // River trapezoid — converges to a point at (W/2, hy)
+  // River trapezoid — flat top at widened horizon, fans out toward player
   const botLx = riverLeftAt(H), botRx = W - botLx;
+  const topLx = riverLeftAt(hy), topRx = W - topLx;
   const riverGrad = ctx.createLinearGradient(0, hy, 0, H);
   riverGrad.addColorStop(0,   th.wm);
   riverGrad.addColorStop(0.5, th.we);
   riverGrad.addColorStop(1,   th.wm);
   ctx.fillStyle = riverGrad;
   ctx.beginPath();
-  ctx.moveTo(W / 2, hy);
+  ctx.moveTo(topLx, hy);
+  ctx.lineTo(topRx, hy);
   ctx.lineTo(botRx, H);
   ctx.lineTo(botLx, H);
   ctx.closePath(); ctx.fill();
@@ -304,11 +306,12 @@ function drawBackground() {
   // Perspective flow lines inside river
   drawFlowLines(W, hy, th);
 
-  // Lane dividers — lines converging to horizon center
+  // Lane dividers — from widened horizon top to full-width bottom
   ctx.save(); ctx.globalAlpha = 0.08; ctx.strokeStyle = '#93C5FD'; ctx.lineWidth = 1;
   for (let l = 1; l < currentLanes; l++) {
-    const ex = riverLeftAt(H) + l * (riverWidthAt(H) / currentLanes);
-    ctx.beginPath(); ctx.moveTo(W / 2, hy); ctx.lineTo(ex, H); ctx.stroke();
+    const topX = topLx + l * (riverWidthAt(hy) / currentLanes);
+    const botX = riverLeftAt(H) + l * (riverWidthAt(H) / currentLanes);
+    ctx.beginPath(); ctx.moveTo(topX, hy); ctx.lineTo(botX, H); ctx.stroke();
   }
   ctx.restore();
 
@@ -317,7 +320,7 @@ function drawBackground() {
   lbGrad.addColorStop(0, th.bl); lbGrad.addColorStop(1, th.bd);
   ctx.fillStyle = lbGrad;
   ctx.beginPath();
-  ctx.moveTo(0, hy); ctx.lineTo(W / 2, hy);
+  ctx.moveTo(0, hy); ctx.lineTo(topLx, hy);
   ctx.lineTo(botLx, H); ctx.lineTo(0, H);
   ctx.closePath(); ctx.fill();
 
@@ -326,7 +329,7 @@ function drawBackground() {
   rbGrad.addColorStop(0, th.bl); rbGrad.addColorStop(1, th.bd);
   ctx.fillStyle = rbGrad;
   ctx.beginPath();
-  ctx.moveTo(W / 2, hy); ctx.lineTo(W, hy);
+  ctx.moveTo(topRx, hy); ctx.lineTo(W, hy);
   ctx.lineTo(W, H); ctx.lineTo(botRx, H);
   ctx.closePath(); ctx.fill();
 
@@ -542,9 +545,9 @@ function jumpLabelAt(obs) {
 
 function drawFullWidthObs(obs) {
   ctx.save();
-  ctx.shadowColor   = 'rgba(0,0,0,0.50)';
-  ctx.shadowBlur    = 12 * scaleAt(obs.y);
-  ctx.shadowOffsetY = 6  * scaleAt(obs.y);
+  ctx.shadowColor   = 'rgba(0,0,0,0.62)';
+  ctx.shadowBlur    = 16 * scaleAt(obs.y);
+  ctx.shadowOffsetY = 8  * scaleAt(obs.y);
   switch (obs.type) {
     case 'wooden_bridge':    drawWoodenBridge(obs);    break;
     case 'tube_procession':  drawTubeProcession(obs);  break;
@@ -813,11 +816,22 @@ function drawLaneObs(obs) {
   const r   = Math.min(lw_ * 0.44, obs.h * 0.68 * sc);
 
   ctx.save();
-  ctx.shadowColor   = 'rgba(0,0,0,0.55)';
-  ctx.shadowBlur    = 8 * sc;
-  ctx.shadowOffsetY = 5 * sc;
-  ctx.shadowOffsetX = 1 * sc;
+  ctx.shadowColor   = 'rgba(0,0,0,0.65)';
+  ctx.shadowBlur    = 14 * sc;
+  ctx.shadowOffsetY = 8  * sc;
+  ctx.shadowOffsetX = 2  * sc;
   drawObsAt(obs.type, cx, obs.y, r, lw_);
+  ctx.restore();
+
+  // Depth: soft top-left light highlight gives obstacles a 3-D quality
+  ctx.save(); clearShadow();
+  ctx.globalAlpha = 0.16;
+  const hiG = ctx.createRadialGradient(cx - r*0.32, obs.y - r*0.42, r*0.04, cx, obs.y, r*1.08);
+  hiG.addColorStop(0,    'rgba(255,255,255,1)');
+  hiG.addColorStop(0.48, 'rgba(255,255,255,0)');
+  hiG.addColorStop(1,    'rgba(0,0,0,0)');
+  ctx.fillStyle = hiG;
+  ctx.beginPath(); ctx.arc(cx, obs.y, r*1.08, 0, Math.PI*2); ctx.fill();
   ctx.restore();
 }
 
@@ -1289,13 +1303,37 @@ function drawCollectibles() {
   const hy = horizonY();
   for (const c of collectibles) {
     if (c.collected || c.y < hy) continue;
-    const sc = scaleAt(c.y);
-    const x  = laneXAt(c.lane, c.y);
-    const s  = 11 * sc;
+    const sc       = scaleAt(c.y);
+    const x        = laneXAt(c.lane, c.y);
+    const s        = 11 * sc;
+    const hoverOff = Math.round(7 * sc);
+
+    // Water shadow — tinted ellipse sitting on the water surface below the hovering item
+    ctx.save(); clearShadow();
+    ctx.globalAlpha = 0.34 * Math.min(1, sc * 2);
+    ctx.fillStyle = COLL_GLOW[c.type] || '#888888';
+    ctx.beginPath(); ctx.ellipse(x, c.y + s*0.28, s*0.68, s*0.20, 0, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+
+    // Hovering collectible with glow
     ctx.save();
     ctx.shadowColor = COLL_GLOW[c.type] || '#FFFFFF';
-    ctx.shadowBlur  = 14 * sc;
-    drawCollAt(c.type, x, c.y, s);
+    ctx.shadowBlur  = 18 * sc;
+    drawCollAt(c.type, x, c.y - hoverOff, s);
+    ctx.restore();
+
+    // Specular glint — top-left highlight reinforces 3-D depth
+    ctx.save(); clearShadow();
+    ctx.globalAlpha = 0.22;
+    const specG = ctx.createRadialGradient(
+      x - s*0.22, c.y - hoverOff - s*0.32, 0,
+      x,          c.y - hoverOff,           s*0.92
+    );
+    specG.addColorStop(0,    'rgba(255,255,255,0.95)');
+    specG.addColorStop(0.42, 'rgba(255,255,255,0)');
+    specG.addColorStop(1,    'rgba(0,0,0,0)');
+    ctx.fillStyle = specG;
+    ctx.beginPath(); ctx.arc(x, c.y - hoverOff, s*0.92, 0, Math.PI*2); ctx.fill();
     ctx.restore();
   }
 }
@@ -1356,7 +1394,7 @@ function wrapText(text, maxWidth, font) {
 
 // ── DRAW: PLAYER ────────────────────────────────────────────────
 function drawPlayer() {
-  const KW = 12, KH = 28;
+  const KW = 19, KH = 44;
   const s  = player.jumpScale;
   const px = player.x, py = player.y;
   const paddleLeft  = (player.animFrame % 60) < 30;
@@ -1419,7 +1457,7 @@ function drawPlayer() {
     ctx.globalAlpha = pulse;
     ctx.strokeStyle = '#F97316'; ctx.lineWidth = 3;
     ctx.shadowColor = '#F97316'; ctx.shadowBlur = 14;
-    ctx.beginPath(); ctx.arc(px, py, 22, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(px, py, 30, 0, Math.PI*2); ctx.stroke();
     ctx.restore();
   }
 }
