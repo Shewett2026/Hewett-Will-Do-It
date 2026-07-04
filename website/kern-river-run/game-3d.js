@@ -25,30 +25,45 @@ const STAGES3 = [
     waterColor:0x38BDF8, bankColor:0x374151,
     obsTypes:['deadfall_log','deadfall_log','boulder','boulder','river_wash'],
     fwType:'fallen_sequoia', collA:'golden_trout', collB:'mountain_crystal',
+    // ── Stage 1 environment config (swap img/colors here for other stages) ──
+    backdrop: {
+      img:        'sierra-nevada-bg.png.png',
+      bankGrass:  0x3A7D44,
+      bankEarth:  0x4A3728,
+      treeColors: [0x1B5E20, 0x2E7D32, 0x388E3C, 0x4A7C32],
+      trunkColor: 0x5D4037,
+      // Waterfall overlay: x/z in world coords aligned to right cliff in the image.
+      // yTop = world-y of waterfall top; height = fall distance in world units.
+      wf: { x: 19.5, yTop: 23.5, height: 8.5, width: 1.2, z: -86.0 },
+    },
   },
   {
     num:2, name:'UPPER KERN', endMile:66, lanes:6, speed:1.65, obsFreq:0.012, fwFreq:0.12,
     waterColor:0x0EA5E9, bankColor:0x7C2D12,
     obsTypes:['capsized_raft','capsized_raft','boulder','boulder','river_wash'],
     fwType:'raft_train', collA:'fishing_lure', collB:'golden_eagle_feather',
+    backdrop: null,
   },
   {
     num:3, name:'LAKE ISABELLA', endMile:99, lanes:5, speed:1.78, obsFreq:0.012, fwFreq:0.10,
     waterColor:0x0891B2, bankColor:0x78716C,
     obsTypes:['drifting_sailboat','drifting_sailboat','boulder','boulder','river_wash'],
     fwType:'pontoon_party', collA:'beach_ball', collB:'cooler',
+    backdrop: null,
   },
   {
     num:4, name:'KERN CANYON', endMile:132, lanes:4, speed:1.91, obsFreq:0.013, fwFreq:0.12,
     waterColor:0x0369A1, bankColor:0x1C1917,
     obsTypes:['mine_cart','mine_cart','boulder','boulder','river_wash'],
     fwType:'old_mining_bridge', collA:'gold_nugget', collB:'treasure_chest',
+    backdrop: null,
   },
   {
     num:5, name:'BAKERSFIELD', endMile:165, lanes:3, speed:2.00, obsFreq:0.012, fwFreq:0.09,
     waterColor:0x22D3EE, bankColor:0xD97706,
     obsTypes:['shopping_cart','shopping_cart','boulder','boulder','river_wash'],
     fwType:'tube_float_parade', collA:'fox_theater_ticket', collB:'city_seal_medallion',
+    backdrop: null,
     subNarrow:[
       { atMile:150, lanes:2, msg:'THE RIVER NARROWS', obsFreq:0.009 },
       { atMile:160, lanes:1, msg:'FINAL STRETCH',     obsFreq:0.007 },
@@ -186,6 +201,24 @@ let riverGroup  = null;
 let flowLines3d = [];
 let horizonGrp  = null;
 let waterMesh   = null;
+let backdropMesh = null;
+let wfGroup     = null;
+let wfStrips    = [];
+
+// ── TEXTURE PRELOAD ───────────────────────────────────────────────
+// Cache keyed by stage number. Callback updates any live backdropMesh
+// if it was placed before the texture finished loading.
+var stageTexCache = {};
+new THREE.TextureLoader().load('sierra-nevada-bg.png.png', function(tex) {
+  tex.magFilter    = THREE.NearestFilter;
+  tex.minFilter    = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  stageTexCache['s1'] = tex;
+  if (backdropMesh && backdropMesh.material) {
+    backdropMesh.material.map = tex;
+    backdropMesh.material.needsUpdate = true;
+  }
+});
 let stageIdx    = 0;
 let curLanes    = STAGES3[0].lanes;
 
@@ -200,7 +233,9 @@ function buildWorld() {
   }
   flowLines3d.forEach(l => { l.geometry.dispose(); scene.remove(l); });
   flowLines3d = [];
-  if (horizonGrp) { scene.remove(horizonGrp); }
+  if (horizonGrp)   { scene.remove(horizonGrp); horizonGrp = null; }
+  if (backdropMesh) { scene.remove(backdropMesh); backdropMesh.geometry.dispose(); backdropMesh = null; }
+  if (wfGroup)      { scene.remove(wfGroup); wfGroup = null; wfStrips = []; }
 
   const stg = STAGES3[stageIdx];
   const rw  = riverWidth();
@@ -218,10 +253,11 @@ function buildWorld() {
   riverGroup.add(water);
   waterMesh = water;
 
-  // Banks
-  const bkW = 5.5;
-  const bkMat = new THREE.MeshLambertMaterial({ color: stg.bankColor });
-  const bkGeo = new THREE.BoxGeometry(bkW, 0.60, 145);
+  // Banks -- color from backdrop config when present, else plain bankColor
+  const bkW    = 5.5;
+  const bkColor = stg.backdrop ? stg.backdrop.bankGrass : stg.bankColor;
+  const bkMat  = new THREE.MeshLambertMaterial({ color: bkColor });
+  const bkGeo  = new THREE.BoxGeometry(bkW, 0.60, 145);
   for (const side of [-1, 1]) {
     const bk = new THREE.Mesh(bkGeo, bkMat.clone());
     bk.position.set(side * (rw / 2 + bkW / 2), 0.30, -55);
@@ -255,29 +291,76 @@ function buildWorld() {
     flowLines3d.push(fl);
   }
 
-  horizonGrp = buildHorizonArt(stg);
-  scene.add(horizonGrp);
+  // Use the backdrop image for Stage 1; fall back to procedural cone mountains otherwise
+  if (stg.backdrop) {
+    buildStageBackdrop(stg);
+  } else {
+    horizonGrp = buildHorizonArt(stg);
+    scene.add(horizonGrp);
+  }
 }
 
 function addBankDecor(group, rw, stg) {
-  const zPositions = [-15, -28, -42, -55, -33, -18, -50];
-  const foliageCol = stg.num <= 2 ? 0x166534 : stg.num === 3 ? 0xD97706 : 0x44403C;
-  const treeMat  = new THREE.MeshLambertMaterial({ color: foliageCol });
-  const trunkMat = new THREE.MeshLambertMaterial({ color: 0x78350F });
+  var bd = stg.backdrop;
 
-  for (let i = 0; i < 7; i++) {
-    const side = i % 2 === 0 ? -1 : 1;
-    const xBase = side * (rw / 2 + 1.4 + (i % 3) * 1.9);
-    const z     = zPositions[i];
+  // Tree z-spread: more positions for Stage 1, fewer for others
+  var zPos = bd
+    ? [-10, -18, -26, -34, -42, -50, -58, -14, -22, -30, -38, -46, -54, -62]
+    : [-15, -28, -42, -55, -33, -18, -50];
+
+  var trunkColor = bd ? bd.trunkColor : 0x78350F;
+  var trunkMat   = new THREE.MeshLambertMaterial({ color: trunkColor });
+
+  for (var i = 0; i < zPos.length; i++) {
+    var side  = i % 2 === 0 ? -1 : 1;
+    var xOff  = (i % 4) * 1.55;
+    var xBase = side * (rw / 2 + 1.2 + xOff);
+    var z     = zPos[i];
 
     if (stg.num === 4) {
-      const rock = new THREE.Mesh(new THREE.BoxGeometry(0.9, 4.0, 0.75), new THREE.MeshLambertMaterial({ color: 0x292524 }));
+      // Kern Canyon: dark rock pillars
+      var rock = new THREE.Mesh(
+        new THREE.BoxGeometry(0.9, 4.0, 0.75),
+        new THREE.MeshLambertMaterial({ color: 0x292524 })
+      );
       rock.position.set(xBase, 2.0, z); rock.castShadow = true; group.add(rock);
+
+    } else if (bd) {
+      // Stage 1 (and future backdrop stages): layered low-poly pine
+      var treeH  = 1.5 + (i % 3) * 0.85;
+      var trunkH = treeH * 0.22;
+      var trk = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.14, trunkH, 5),
+        trunkMat
+      );
+      trk.position.set(xBase, trunkH / 2, z);
+      group.add(trk);
+
+      // 3-tier cones: each tier overlaps the one below for a pine silhouette
+      for (var t = 0; t < 3; t++) {
+        var col   = bd.treeColors[(i * 3 + t) % bd.treeColors.length];
+        var tierR = (0.84 - t * 0.19) * treeH * 0.30;
+        var tierH = treeH * 0.44;
+        var tierY = trunkH + t * (treeH * 0.25);
+        var cone  = new THREE.Mesh(
+          new THREE.ConeGeometry(tierR, tierH, 6),
+          new THREE.MeshLambertMaterial({ color: col })
+        );
+        cone.position.set(xBase, tierY + tierH / 2, z);
+        cone.castShadow = true;
+        group.add(cone);
+      }
+
     } else {
-      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.20, 1.1, 5), trunkMat);
-      trunk.position.set(xBase, 0.55, z); group.add(trunk);
-      const canopy = new THREE.Mesh(new THREE.ConeGeometry(0.80, 1.7, 6), treeMat);
-      canopy.position.set(xBase, 1.95, z); canopy.castShadow = true; group.add(canopy);
+      // Generic single-cone tree for stages 2-3 and 5
+      var foliageCol = stg.num <= 2 ? 0x166534 : stg.num === 3 ? 0xD97706 : 0x44403C;
+      var trk2 = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.20, 1.1, 5), trunkMat);
+      trk2.position.set(xBase, 0.55, z); group.add(trk2);
+      var can = new THREE.Mesh(
+        new THREE.ConeGeometry(0.80, 1.7, 6),
+        new THREE.MeshLambertMaterial({ color: foliageCol })
+      );
+      can.position.set(xBase, 1.95, z); can.castShadow = true; group.add(can);
     }
   }
 }
@@ -294,6 +377,65 @@ function buildHorizonArt(stg) {
     grp.add(mesh);
   }
   return grp;
+}
+
+// ── STAGE BACKDROP + WATERFALL ────────────────────────────────────
+// Call this instead of buildHorizonArt when stg.backdrop is set.
+// Image plane: 1536x1024 source (3:2). World plane 78x52, center y=26
+// so the bottom of the image aligns with ground (y=0) and the top
+// reaches y=52 well above the play area. fog:false keeps pixel art crisp.
+// To use for a future stage: set stg.backdrop.img + colors in STAGES3.
+function buildStageBackdrop(stg) {
+  var bd = stg.backdrop;
+  if (!bd) return;
+
+  // Backdrop plane -- NearestFilter set in texture preload callback
+  var bdMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF, fog: false });
+  if (stageTexCache['s1']) {
+    bdMat.map = stageTexCache['s1'];
+  }
+  // If texture not ready yet, the preload callback will inject it when done
+  backdropMesh = new THREE.Mesh(new THREE.PlaneGeometry(78, 52), bdMat);
+  backdropMesh.position.set(0, 26, -88);
+  scene.add(backdropMesh);
+
+  // Animated waterfall strips
+  var wf  = bd.wf;
+  wfGroup  = new THREE.Group();
+  wfStrips = [];
+  var N        = 10;
+  var stripH   = wf.height / N;
+  var wfStripMat = new THREE.MeshBasicMaterial({
+    color: 0xC8E8F8, transparent: true, opacity: 0.72, fog: false, depthWrite: false
+  });
+  for (var wi = 0; wi < N; wi++) {
+    var strip = new THREE.Mesh(
+      new THREE.PlaneGeometry(wf.width, stripH * 0.60),
+      wfStripMat.clone()
+    );
+    strip.position.set(wf.x, wf.yTop - wi * stripH, wf.z);
+    wfGroup.add(strip);
+    wfStrips.push(strip);
+  }
+
+  // Mist puffs at base of waterfall
+  var mistMat = new THREE.MeshBasicMaterial({
+    color: 0xE0F4FF, transparent: true, opacity: 0.30, fog: false, depthWrite: false
+  });
+  for (var mi = 0; mi < 3; mi++) {
+    var mist = new THREE.Mesh(
+      new THREE.SphereGeometry(0.65 + mi * 0.22, 6, 4),
+      mistMat.clone()
+    );
+    mist.position.set(
+      wf.x + (mi - 1) * 0.38,
+      wf.yTop - wf.height + 0.45 + mi * 0.18,
+      wf.z + 0.12
+    );
+    wfGroup.add(mist);
+  }
+
+  scene.add(wfGroup);
 }
 
 // ── KAYAK HULL GEOMETRY (custom hex-prism with pointed bow/stern) ─
@@ -1027,6 +1169,21 @@ function updateVisuals3() {
   for (var ci = 0; ci < clouds3.length; ci++) {
     clouds3[ci].position.z += clouds3[ci].userData.spd;
     if (clouds3[ci].position.z > -38) clouds3[ci].position.z = -96;
+  }
+
+  // Scroll waterfall strips downward; each strip loops to the top when it exits the base.
+  if (wfStrips.length > 0) {
+    var wfBd = STAGES3[stageIdx].backdrop;
+    if (wfBd && wfBd.wf) {
+      var wfCfg     = wfBd.wf;
+      var wfSpacing = wfCfg.height / wfStrips.length;
+      for (var wsi = 0; wsi < wfStrips.length; wsi++) {
+        wfStrips[wsi].position.y -= 0.055;
+        if (wfStrips[wsi].position.y < wfCfg.yTop - wfCfg.height - wfSpacing) {
+          wfStrips[wsi].position.y = wfCfg.yTop;
+        }
+      }
+    }
   }
 }
 
