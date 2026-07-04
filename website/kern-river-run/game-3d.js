@@ -1,5 +1,5 @@
 // ================================================================
-// KERN RIVER RUN — game-3d-experiment.js  (Visual Upgrade)
+// KERN RIVER RUN — game-3d.js  (Visual Upgrade)
 // Isolated Three.js 3D experiment. game-2d-backup.html / game.js untouched.
 // ================================================================
 
