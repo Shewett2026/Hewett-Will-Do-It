@@ -43,11 +43,15 @@ body {
   right: 16px;
   top: 50%;
   transform: translateY(-50%);
-  width: 108px;
-  background: rgba(11,31,58,0.88);
+  width: 176px;
+  max-height: 90vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(201,136,58,0.40) transparent;
+  background: rgba(11,31,58,0.92);
   border: 1px solid rgba(201,136,58,0.50);
   border-radius: 6px;
-  padding: 10px 8px 12px;
+  padding: 12px 10px 14px;
   font-family: 'Press Start 2P', monospace;
   color: #F5F0E8;
   user-select: none;
@@ -55,20 +59,20 @@ body {
 }
 
 .legend-title {
-  font-size: 6px;
+  font-size: 9px;
   color: #C9883A;
   text-align: center;
   letter-spacing: 0.12em;
-  margin-bottom: 8px;
+  margin-bottom: 9px;
   border-bottom: 1px solid rgba(201,136,58,0.35);
-  padding-bottom: 6px;
+  padding-bottom: 7px;
 }
 
 .legend-section {
-  font-size: 5px;
+  font-size: 7px;
   letter-spacing: 0.10em;
   text-align: center;
-  margin: 8px 0 4px;
+  margin: 9px 0 5px;
 }
 
 .avoid-label   { color: #EF4444; }
@@ -77,20 +81,20 @@ body {
 .legend-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 5px 0;
+  gap: 7px;
+  margin: 6px 0;
   padding: 2px 0;
 }
 
 .legend-row svg {
   flex-shrink: 0;
   filter: drop-shadow(0 2px 3px rgba(0,0,0,0.55));
-  width: 32px;
+  width: 44px;
   height: auto;
 }
 
 .legend-row span {
-  font-size: 5px;
+  font-size: 7px;
   color: #F5F0E8;
   line-height: 1.55;
 }
@@ -100,7 +104,7 @@ body {
   color: #C9883A;
 }
 
-/* Show legend only when viewport has room beside the canvas (430px canvas + 2×108px legend margin) */
-@media (min-width: 680px) {
+/* Show legend when viewport has room beside the canvas */
+@media (min-width: 820px) {
   #gameLegend { display: block; }
 }

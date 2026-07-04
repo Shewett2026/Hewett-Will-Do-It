@@ -4,7 +4,7 @@
 // ================================================================
 
 // ── FIXED CONSTANTS ──────────────────────────────────────────────
-const JUMP_DURATION           = 42;
+const JUMP_DURATION           = 56;
 const JUMP_SCALE_PEAK         = 1.45;
 const PIXELS_PER_MILE         = 900;
 const SCORE_PER_FRAME         = 2;
@@ -126,6 +126,7 @@ let endingPhase     = 0;
 let endingTimer     = 0;
 let endingSpeedMult = 1.0;
 let dustParticles   = [];
+let startAnimTime   = 0;
 
 // ── PLAYER ───────────────────────────────────────────────────────
 const player = {
@@ -1100,6 +1101,7 @@ function update() {
     if (player.jumpFrame >= JUMP_DURATION) {
       player.isJumping = false; player.jumpFrame = 0;
       player.jumpScale = 1.0;  player.shadowScale = 1.0;
+      spawnSplash(player.x, player.y + 8);
     }
   }
 
@@ -1193,7 +1195,7 @@ function gameLoop() {
       else                   drawDialog2();
     }
 
-  } else if (gameState === 'start')   { drawStartScreen(); }
+  } else if (gameState === 'start')   { startAnimTime++; drawStartScreen(); }
   else if (gameState === 'howtoplay') { drawHowToPlay(); }
   else if (gameState === 'itemguide') { drawItemGuide(); }
   else if (gameState === 'gameover')  { drawGameOver(); }
@@ -1226,25 +1228,69 @@ function startGame() {
   gameState = 'playing';
 }
 
+// ── HELPER: draw image with cover-crop (no stretch), optional horizontal pan ─
+function drawImageCover(img, dx, dy, dw, dh, panPx) {
+  if (!img.naturalWidth) return;
+  const imgR = img.naturalWidth / img.naturalHeight;
+  const dstR = dw / dh;
+  let sx, sy, sw, sh;
+  if (imgR > dstR) {
+    // image is wider than destination — crop sides, pan horizontally
+    sh = img.naturalHeight;
+    sw = sh * dstR;
+    const maxPan = img.naturalWidth - sw;
+    const centerX = (img.naturalWidth - sw) / 2;
+    sx = Math.max(0, Math.min(maxPan, centerX + (panPx || 0) * (img.naturalWidth / dw)));
+    sy = 0;
+  } else {
+    // image is taller than destination — crop top/bottom
+    sw = img.naturalWidth;
+    sh = sw / dstR;
+    sx = 0;
+    sy = (img.naturalHeight - sh) / 2;
+  }
+  ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+}
+
+// ── START SCREEN SPARKLE POSITIONS (as fractions of bg area) ─────
+const START_SPARKLES = [
+  [0.10,0.38],[0.64,0.45],[0.36,0.55],[0.52,0.32],[0.80,0.52],
+  [0.20,0.68],[0.88,0.40],[0.44,0.74],[0.72,0.62],[0.28,0.48],
+];
+
 // ── SCREEN: START ────────────────────────────────────────────────
 function drawStartScreen() {
   const W = canvas.width, H = canvas.height;
 
-  // Base gradient
+  // Base navy gradient behind everything
   const bg = ctx.createLinearGradient(0, 0, 0, H);
   bg.addColorStop(0, '#0B1F3A'); bg.addColorStop(0.55, '#0B2D4F'); bg.addColorStop(1, '#1A3D5C');
   ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
 
-  // Sierra Nevada background image — fills lower 58% of screen
-  const bgY = H * 0.36;
+  // Sierra Nevada photo — cover-cropped, slow horizontal drift
+  const bgY   = H * 0.36;
+  const drift = Math.sin(startAnimTime * 0.0006) * W * 0.012;
   if (bgSceneLoaded) {
-    ctx.drawImage(bgSceneImg, 0, bgY, W, H - bgY);
-    // Fade the top edge of the image to blend with gradient above
+    drawImageCover(bgSceneImg, 0, bgY, W, H - bgY, drift);
+    // Blend top edge into gradient
     const fadeH = H * 0.16;
     const fade  = ctx.createLinearGradient(0, bgY, 0, bgY + fadeH);
     fade.addColorStop(0, '#0B2D4F');
     fade.addColorStop(1, 'rgba(11,45,79,0)');
     ctx.fillStyle = fade; ctx.fillRect(0, bgY, W, fadeH);
+    // Subtle sparkles over photo area
+    for (let i = 0; i < START_SPARKLES.length; i++) {
+      const [fx, fy] = START_SPARKLES[i];
+      const phase = (startAnimTime * 0.016 + i * 1.4) % (Math.PI * 2);
+      const alpha = Math.max(0, Math.sin(phase)) * 0.45;
+      if (alpha < 0.02) continue;
+      const r = 1.0 + Math.sin(startAnimTime * 0.022 + i * 0.9) * 0.35;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = '#EFF6FF';
+      ctx.beginPath(); ctx.arc(fx * W, bgY + fy * (H - bgY), r, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
   } else {
     drawStartScenerFallback(W, H);
   }
@@ -1259,14 +1305,19 @@ function drawStartScreen() {
   ctx.fillStyle = 'rgba(245,240,232,0.40)'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   ctx.fillText('< BACK TO CAMPAIGN', 12, 10);
 
-  // Logo with 'screen' blend mode to remove baked-in black background
+  // Logo — draw dark navy rect first so 'screen' blend always composites cleanly
   const logoW = Math.min(W * 0.76, 300);
+  const logoX = (W - logoW) / 2;
+  const logoY = H * 0.05;
   if (logoLoaded && logoImg.naturalWidth > 0) {
     const logoH = logoW * (logoImg.naturalHeight / logoImg.naturalWidth);
+    // Dark backing ensures screen blend removes black regardless of bg content
     ctx.save();
+    ctx.fillStyle = '#0B1F3A';
+    ctx.fillRect(logoX - 6, logoY - 6, logoW + 12, logoH + 12);
     ctx.globalCompositeOperation = 'screen';
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(logoImg, (W - logoW) / 2, H * 0.05, logoW, logoH);
+    ctx.drawImage(logoImg, logoX, logoY, logoW, logoH);
     ctx.restore();
   } else {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1275,13 +1326,16 @@ function drawStartScreen() {
     ctx.fillStyle = '#F5F0E8'; ctx.fillText('RUN', W/2, H*0.14+60);
   }
 
-  // Subtitle — scaled up significantly (9px, was 6px)
+  // Subtitle — 13px with drop shadow for legibility over photo
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = '9px "Press Start 2P", monospace'; ctx.fillStyle = '#BAE6FD';
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.75)'; ctx.shadowBlur = 6;
+  ctx.font = '13px "Press Start 2P", monospace'; ctx.fillStyle = '#BAE6FD';
   ctx.fillText('Can you follow the Kern River', W/2, H*0.46);
-  ctx.fillText('all 165 miles to Bakersfield?', W/2, H*0.46 + 17);
+  ctx.fillText('all 165 miles to Bakersfield?', W/2, H*0.46 + 22);
+  ctx.restore();
 
-  // Buttons (labels drawn at 9px via drawBtn)
+  // Buttons
   drawBtn('START RUN',   W/2, H*0.60,      W*0.66, 46, '#2D6A4F', '#F5F0E8');
   drawBtn('HOW TO PLAY', W/2, H*0.60 + 62, W*0.66, 46, '#1E3A5F', '#C9883A');
 }
@@ -1418,17 +1472,17 @@ function drawGameOver() {
   const W = canvas.width, H = canvas.height;
   ctx.fillStyle = 'rgba(11,31,58,0.92)'; ctx.fillRect(0,0,W,H);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#EF4444'; ctx.font = '11px "Press Start 2P", monospace';
+  ctx.fillStyle = '#EF4444'; ctx.font = '18px "Press Start 2P", monospace';
   ctx.fillText('RUN ENDED', W/2, H*0.22);
   const stg = STAGES[currentStageIdx];
-  ctx.font = '7px "Press Start 2P", monospace'; ctx.fillStyle = '#F5F0E8';
-  ctx.fillText('Wiped out on ' + stg.name, W/2, H*0.32);
-  ctx.fillText('Mile ' + currentMile + ' / 165', W/2, H*0.32+18);
-  ctx.font = '7px "Press Start 2P", monospace';
-  ctx.fillStyle = '#C9883A'; ctx.fillText('SCORE  ' + Math.floor(score),     W/2, H*0.52);
-  ctx.fillStyle = '#93C5FD'; ctx.fillText('BEST   ' + Math.floor(highScore), W/2, H*0.52+22);
-  drawBtn('TRY AGAIN', W/2, H*0.68,      W*0.62, 42, '#2D6A4F', '#F5F0E8');
-  drawBtn('MAIN MENU', W/2, H*0.68 + 56, W*0.62, 42, '#1E3A5F', '#C9883A');
+  ctx.font = '11px "Press Start 2P", monospace'; ctx.fillStyle = '#F5F0E8';
+  ctx.fillText('Wiped out on ' + stg.name, W/2, H*0.34);
+  ctx.fillText('Mile ' + currentMile + ' / 165',  W/2, H*0.34 + 24);
+  ctx.font = '11px "Press Start 2P", monospace';
+  ctx.fillStyle = '#C9883A'; ctx.fillText('SCORE  ' + Math.floor(score),     W/2, H*0.54);
+  ctx.fillStyle = '#93C5FD'; ctx.fillText('BEST   ' + Math.floor(highScore), W/2, H*0.54 + 26);
+  drawBtn('TRY AGAIN', W/2, H*0.70,      W*0.62, 42, '#2D6A4F', '#F5F0E8');
+  drawBtn('MAIN MENU', W/2, H*0.70 + 56, W*0.62, 42, '#1E3A5F', '#C9883A');
 }
 
 // ── SCREEN: PAUSED ───────────────────────────────────────────────
