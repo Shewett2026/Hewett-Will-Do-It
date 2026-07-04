@@ -10,9 +10,7 @@ html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  /* Campaign navy as page background behind the canvas */
   background: #0B1F3A;
-  /* Prevent elastic scroll on iOS */
   overscroll-behavior: none;
   touch-action: none;
 }
@@ -32,10 +30,77 @@ body {
 
 #gameCanvas {
   display: block;
-  /* Keeps pixel art crisp when CSS-scaled */
   image-rendering: pixelated;
   image-rendering: crisp-edges;
-  /* Canvas fills viewport; game.js drives actual pixel dimensions */
   max-width: 100vw;
   max-height: 100vh;
+}
+
+/* ── GAME LEGEND ─────────────────────────────────────────────── */
+#gameLegend {
+  display: none; /* hidden by default; revealed on wide screens */
+  position: fixed;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 108px;
+  background: rgba(11,31,58,0.88);
+  border: 1px solid rgba(201,136,58,0.50);
+  border-radius: 6px;
+  padding: 10px 8px 12px;
+  font-family: 'Press Start 2P', monospace;
+  color: #F5F0E8;
+  user-select: none;
+  pointer-events: none; /* decorative only */
+}
+
+.legend-title {
+  font-size: 6px;
+  color: #C9883A;
+  text-align: center;
+  letter-spacing: 0.12em;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(201,136,58,0.35);
+  padding-bottom: 6px;
+}
+
+.legend-section {
+  font-size: 5px;
+  letter-spacing: 0.10em;
+  text-align: center;
+  margin: 8px 0 4px;
+}
+
+.avoid-label   { color: #EF4444; }
+.collect-label { color: #34D399; }
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 5px 0;
+  padding: 2px 0;
+}
+
+.legend-row svg {
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.55));
+  width: 32px;
+  height: auto;
+}
+
+.legend-row span {
+  font-size: 5px;
+  color: #F5F0E8;
+  line-height: 1.55;
+}
+
+.legend-row span em {
+  font-style: normal;
+  color: #C9883A;
+}
+
+/* Show legend only when viewport has room beside the canvas (430px canvas + 2×108px legend margin) */
+@media (min-width: 680px) {
+  #gameLegend { display: block; }
 }

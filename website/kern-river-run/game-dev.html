@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#0B1F3A">
   <title>Kern River Run — Hewett Will Do It 2026</title>
-  <!-- Press Start 2P: pixel/retro font for game UI -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
@@ -13,9 +12,93 @@
 </head>
 <body>
   <div id="gameWrapper">
-    <!-- Portrait canvas — primary game surface. All rendering is done in game.js. -->
     <canvas id="gameCanvas"></canvas>
   </div>
+
+  <!-- Legend: shown in margin on wide screens, hidden on mobile -->
+  <aside id="gameLegend" aria-label="Item guide">
+    <p class="legend-title">ITEMS</p>
+
+    <p class="legend-section avoid-label">AVOID</p>
+
+    <div class="legend-row">
+      <!-- Rock -->
+      <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
+        <path d="M13,2 L23,8 L21,22 L5,22 L3,8 Z" fill="#5D6875"/>
+        <path d="M7,5 L15,9 L10,13 Z" fill="#9CA3AF" opacity="0.55"/>
+      </svg>
+      <span>Rock</span>
+    </div>
+
+    <div class="legend-row">
+      <!-- Boulder (darker, bigger) -->
+      <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
+        <path d="M13,1 L24,7 L22,24 L4,24 L2,7 Z" fill="#7C2D12"/>
+        <path d="M6,4 L15,8 L10,13 Z" fill="#A16207" opacity="0.70"/>
+      </svg>
+      <span>Boulder</span>
+    </div>
+
+    <div class="legend-row">
+      <!-- Bridge (JUMP) -->
+      <svg width="32" height="20" viewBox="0 0 32 20" aria-hidden="true">
+        <rect x="3" y="2" width="4" height="18" fill="#5C2D0A"/>
+        <rect x="25" y="2" width="4" height="18" fill="#5C2D0A"/>
+        <rect x="1" y="4" width="30" height="3" fill="#5C2D0A"/>
+        <rect x="3" y="7" width="26" height="11" fill="#92400E"/>
+        <rect x="3" y="7" width="26" height="3" fill="#B45309"/>
+        <rect x="3" y="15" width="26" height="3" fill="#78350F"/>
+      </svg>
+      <span>Bridge<br><em>(JUMP!)</em></span>
+    </div>
+
+    <div class="legend-row">
+      <!-- Tube / procession hint -->
+      <svg width="32" height="20" viewBox="0 0 32 20" aria-hidden="true">
+        <line x1="2" y1="10" x2="30" y2="10" stroke="#92400E" stroke-width="2"/>
+        <circle cx="8"  cy="10" r="6" fill="none" stroke="#F97316" stroke-width="4"/>
+        <circle cx="8"  cy="10" r="2" fill="#3B82F6"/>
+        <circle cx="24" cy="10" r="6" fill="none" stroke="#F97316" stroke-width="4"/>
+        <circle cx="24" cy="10" r="2" fill="#3B82F6"/>
+      </svg>
+      <span>Tubes<br><em>(JUMP!)</em></span>
+    </div>
+
+    <p class="legend-section collect-label">COLLECT</p>
+
+    <div class="legend-row">
+      <!-- Water drop -->
+      <svg width="22" height="28" viewBox="0 0 22 28" aria-hidden="true">
+        <path d="M11,2 C16,8 19,16 11,26 C3,16 6,8 11,2 Z" fill="#38BDF8"/>
+        <ellipse cx="9" cy="12" rx="2.5" ry="4" fill="#BAE6FD" opacity="0.65"/>
+      </svg>
+      <span>Drop<br><em>+50 pts</em></span>
+    </div>
+
+    <div class="legend-row">
+      <!-- Fish -->
+      <svg width="28" height="18" viewBox="0 0 28 18" aria-hidden="true">
+        <ellipse cx="11" cy="9" rx="9" ry="5" fill="#34D399"/>
+        <polygon points="20,9 28,4 28,14" fill="#34D399"/>
+        <circle cx="5" cy="7" r="1.5" fill="#0B1F3A"/>
+      </svg>
+      <span>Fish<br><em>+50 pts</em></span>
+    </div>
+
+    <div class="legend-row">
+      <!-- Poppy -->
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+        <ellipse cx="14" cy="7"  rx="4" ry="7"  fill="#F97316"/>
+        <ellipse cx="14" cy="21" rx="4" ry="7"  fill="#FB923C"/>
+        <ellipse cx="7"  cy="14" rx="7" ry="4"  fill="#F97316"/>
+        <ellipse cx="21" cy="14" rx="7" ry="4"  fill="#FB923C"/>
+        <circle  cx="14" cy="14" r="4"           fill="#FBBF24"/>
+        <circle  cx="14" cy="14" r="1.8"         fill="#78350F"/>
+      </svg>
+      <span>Poppy<br><em>+50 pts</em></span>
+    </div>
+  </aside>
+
   <script src="game.js"></script>
 </body>
 </html>
