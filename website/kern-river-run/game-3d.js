@@ -1,5 +1,5 @@
 // ================================================================
-// KERN RIVER RUN — game-3d.js  (Visual Upgrade)
+// KERN RIVER RUN - game-3d.js  (Visual Upgrade)
 // Isolated Three.js 3D experiment. game-2d-backup.html / game.js untouched.
 // ================================================================
 
@@ -22,31 +22,31 @@ const CAM_LOOK_Z = -8.0;
 const STAGES3 = [
   {
     num:1, name:'HEADWATERS', endMile:33, lanes:7, speed:1.48, obsFreq:0.011, fwFreq:0.11,
-    waterColor:0x1D4ED8, bankColor:0x374151,
+    waterColor:0x38BDF8, bankColor:0x374151,
     obsTypes:['deadfall_log','deadfall_log','boulder','boulder','river_wash'],
     fwType:'fallen_sequoia', collA:'golden_trout', collB:'mountain_crystal',
   },
   {
     num:2, name:'UPPER KERN', endMile:66, lanes:6, speed:1.65, obsFreq:0.012, fwFreq:0.12,
-    waterColor:0x1C3A8A, bankColor:0x7C2D12,
+    waterColor:0x0EA5E9, bankColor:0x7C2D12,
     obsTypes:['capsized_raft','capsized_raft','boulder','boulder','river_wash'],
     fwType:'raft_train', collA:'fishing_lure', collB:'golden_eagle_feather',
   },
   {
     num:3, name:'LAKE ISABELLA', endMile:99, lanes:5, speed:1.78, obsFreq:0.012, fwFreq:0.10,
-    waterColor:0x1E6CB5, bankColor:0x78716C,
+    waterColor:0x0891B2, bankColor:0x78716C,
     obsTypes:['drifting_sailboat','drifting_sailboat','boulder','boulder','river_wash'],
     fwType:'pontoon_party', collA:'beach_ball', collB:'cooler',
   },
   {
     num:4, name:'KERN CANYON', endMile:132, lanes:4, speed:1.91, obsFreq:0.013, fwFreq:0.12,
-    waterColor:0x1E3A5F, bankColor:0x1C1917,
+    waterColor:0x0369A1, bankColor:0x1C1917,
     obsTypes:['mine_cart','mine_cart','boulder','boulder','river_wash'],
     fwType:'old_mining_bridge', collA:'gold_nugget', collB:'treasure_chest',
   },
   {
     num:5, name:'BAKERSFIELD', endMile:165, lanes:3, speed:2.00, obsFreq:0.012, fwFreq:0.09,
-    waterColor:0x1D4ED8, bankColor:0xD97706,
+    waterColor:0x22D3EE, bankColor:0xD97706,
     obsTypes:['shopping_cart','shopping_cart','boulder','boulder','river_wash'],
     fwType:'tube_float_parade', collA:'fox_theater_ticket', collB:'city_seal_medallion',
     subNarrow:[
@@ -64,8 +64,8 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
 
 const scene  = new THREE.Scene();
-scene.background = new THREE.Color(0x0B2D4F);
-scene.fog        = new THREE.Fog(0x0B1F3A, 40, 110);
+scene.background = new THREE.Color(0x87CEEB);
+scene.fog        = new THREE.Fog(0x87CEEB, 60, 135);
 
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 160);
 
@@ -80,24 +80,112 @@ window.addEventListener('resize', resizeRenderer);
 resizeRenderer();
 
 // ── LIGHTING ─────────────────────────────────────────────────────
-scene.add(new THREE.AmbientLight(0x334155, 0.85));
-const sun = new THREE.DirectionalLight(0xFBBF24, 1.05);
-sun.position.set(-5, 10, 3);
+// Warm bright ambient fill so low-poly shapes read clearly in daylight
+scene.add(new THREE.AmbientLight(0xFFF7ED, 1.20));
+// Directional sun: warm white, angled from up-left-ahead
+const sun = new THREE.DirectionalLight(0xFFFBEB, 2.20);
+sun.position.set(-5, 18, 2);
 sun.castShadow = true;
 sun.shadow.mapSize.set(512, 512);
 sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 80;
 sun.shadow.camera.left = sun.shadow.camera.bottom = -22;
 sun.shadow.camera.right = sun.shadow.camera.top   =  22;
 scene.add(sun);
-scene.add(new THREE.HemisphereLight(0x1E3A5F, 0x2D4A1E, 0.50));
-const rimLight = new THREE.DirectionalLight(0x93C5FD, 0.35);
+// Hemisphere: sky blue above, warm earth below
+scene.add(new THREE.HemisphereLight(0x87CEEB, 0xA3805A, 0.55));
+// Rim: subtle blue accent from behind
+const rimLight = new THREE.DirectionalLight(0x93C5FD, 0.28);
 rimLight.position.set(3, 5, -10);
 scene.add(rimLight);
+
+// ── SKY DOME ─────────────────────────────────────────────────────
+// Large sphere rendered from the inside; vertex colors fade from
+// light sky blue at the horizon up to deep blue at the zenith.
+const skyDome = new THREE.Mesh(
+  new THREE.SphereGeometry(140, 20, 10),
+  new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })
+);
+(function() {
+  var pos  = skyDome.geometry.attributes.position;
+  var cols = new Float32Array(pos.count * 3);
+  var deep = new THREE.Color(0x1565C0);
+  var hor  = new THREE.Color(0x87CEEB);
+  for (var si = 0; si < pos.count; si++) {
+    var t = Math.max(0, pos.getY(si) / 140);
+    var c = hor.clone().lerp(deep, t * t);
+    cols[si * 3]     = c.r;
+    cols[si * 3 + 1] = c.g;
+    cols[si * 3 + 2] = c.b;
+  }
+  skyDome.geometry.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+})();
+scene.add(skyDome);
+
+// ── CLOUDS ───────────────────────────────────────────────────────
+// Low-poly puffy white clouds: clusters of overlapping spheres,
+// sitting high above the play area, drifting slowly downstream.
+const clouds3 = [];
+(function() {
+  var cMat = new THREE.MeshLambertMaterial({ color: 0xFFFFFF });
+
+  function makeCloud(blobs) {
+    var grp = new THREE.Group();
+    for (var bi = 0; bi < blobs.length; bi++) {
+      var b = blobs[bi];
+      var m = new THREE.Mesh(new THREE.SphereGeometry(b.r, 7, 5), cMat);
+      m.position.set(b.x, b.y, b.z);
+      grp.add(m);
+    }
+    return grp;
+  }
+
+  var s0 = [
+    { x:0,    y:0,    z:0,    r:3.5 },
+    { x:3.2,  y:-0.7, z:0.4,  r:2.6 },
+    { x:-3.0, y:-0.8, z:-0.3, r:2.4 },
+    { x:1.5,  y:0.8,  z:1.1,  r:2.8 },
+    { x:-1.2, y:0.6,  z:-1.0, r:2.1 },
+  ];
+  var s1 = [
+    { x:0,    y:0,    z:0,   r:2.8 },
+    { x:2.7,  y:-0.5, z:0.3, r:2.2 },
+    { x:-2.4, y:-0.6, z:0.2, r:2.0 },
+    { x:0.9,  y:0.9,  z:0.8, r:2.3 },
+  ];
+  var s2 = [
+    { x:0,    y:0,    z:0,    r:4.2 },
+    { x:4.0,  y:-0.8, z:0.6,  r:3.1 },
+    { x:-3.7, y:-0.8, z:-0.5, r:2.9 },
+    { x:1.8,  y:1.1,  z:1.4,  r:3.3 },
+    { x:-1.7, y:0.8,  z:-1.3, r:2.6 },
+    { x:5.2,  y:-1.2, z:0.2,  r:2.0 },
+  ];
+
+  var placements = [
+    { x:-16, y:22, z:-84, s:s0, spd:0.013 },
+    { x:  9, y:24, z:-70, s:s1, spd:0.010 },
+    { x: 22, y:21, z:-58, s:s2, spd:0.015 },
+    { x:-25, y:23, z:-76, s:s1, spd:0.011 },
+    { x: 15, y:25, z:-92, s:s0, spd:0.014 },
+    { x: -5, y:22, z:-64, s:s2, spd:0.009 },
+    { x: 20, y:23, z:-80, s:s1, spd:0.012 },
+  ];
+
+  for (var pi = 0; pi < placements.length; pi++) {
+    var p  = placements[pi];
+    var cl = makeCloud(p.s);
+    cl.position.set(p.x, p.y, p.z);
+    cl.userData.spd = p.spd;
+    scene.add(cl);
+    clouds3.push(cl);
+  }
+})();
 
 // ── WORLD GEOMETRY ───────────────────────────────────────────────
 let riverGroup  = null;
 let flowLines3d = [];
 let horizonGrp  = null;
+let waterMesh   = null;
 let stageIdx    = 0;
 let curLanes    = STAGES3[0].lanes;
 
@@ -106,6 +194,7 @@ function laneXPos(l)   { return (l - (curLanes - 1) / 2) * LANE_W; }
 
 function buildWorld() {
   if (riverGroup) {
+    waterMesh = null;
     riverGroup.traverse(c => { if (c.geometry) c.geometry.dispose(); });
     scene.remove(riverGroup);
   }
@@ -123,10 +212,11 @@ function buildWorld() {
   riverGroup.add(gnd);
 
   // River surface
-  const wMat = new THREE.MeshPhongMaterial({ color: stg.waterColor, shininess: 65, specular: 0x3B82F6 });
-  const water = new THREE.Mesh(new THREE.PlaneGeometry(rw, 155), wMat);
+  const wMat = new THREE.MeshPhongMaterial({ color: stg.waterColor, shininess: 90, specular: 0x7DD3FC });
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(rw, 155, 12, 32), wMat);
   water.rotation.x = -Math.PI / 2; water.position.set(0, 0.01, -55); water.receiveShadow = true;
   riverGroup.add(water);
+  waterMesh = water;
 
   // Banks
   const bkW = 5.5;
@@ -914,6 +1004,29 @@ function updateVisuals3() {
     document.getElementById('hud3-stageNum').textContent = 'STAGE ' + stg.num + '/5';
     document.getElementById('hud3-score').textContent    = 'SCORE ' + Math.floor(score3);
     document.getElementById('hud3-best').textContent     = 'BEST '  + Math.floor(highScore3);
+  }
+
+  // Animate water surface -- two overlapping sine waves traveling downstream (+world z).
+  // PlaneGeometry is rotated -PI/2 on X, so local Y maps to world Z.
+  // Wave sin(t - localY * k) travels in +localY = +worldZ = downstream direction.
+  if (waterMesh && waterMesh.geometry) {
+    var wPos = waterMesh.geometry.attributes.position;
+    var wt   = frameN * 0.038;
+    for (var wvi = 0; wvi < wPos.count; wvi++) {
+      var wly = wPos.getY(wvi);
+      var wlx = wPos.getX(wvi);
+      wPos.setZ(wvi,
+        Math.sin(wt - wly * 0.15 + wlx * 0.20) * 0.10 +
+        Math.sin(wt * 1.65 - wly * 0.27) * 0.045
+      );
+    }
+    wPos.needsUpdate = true;
+  }
+
+  // Drift clouds slowly downstream; loop back to the far end when they pass the threshold.
+  for (var ci = 0; ci < clouds3.length; ci++) {
+    clouds3[ci].position.z += clouds3[ci].userData.spd;
+    if (clouds3[ci].position.z > -38) clouds3[ci].position.z = -96;
   }
 }
 
