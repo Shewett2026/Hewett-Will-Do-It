@@ -785,7 +785,7 @@
     };
 
     var voteFetch = function () {
-      fetch(VOTES_API)
+      fetch(VOTES_API, { cache: 'no-store' })
         .then(function (r) {
           if (!r.ok) { console.warn('[HWDI] GET /votes status:', r.status); return null; }
           return r.json();
