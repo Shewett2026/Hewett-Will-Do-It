@@ -240,6 +240,43 @@ new THREE.TextureLoader().load(
     console.error('[KRR] Preload FAILED: sierra-nevada-bg.png.png', err);
   }
 );
+// Stage 1 pixel-art textures (water, banks, tree sprites)
+var waterStageTex = null;
+var bankStageTex  = null;
+var treeTex = [null, null, null, null];  // pine-tall, broadleaf-tall, round-med, bush-short
+var treeTexNames = ['tree-pine-tall.png', 'tree-broadleaf-tall.png', 'tree-round-med.png', 'tree-bush-short.png'];
+
+(function preloadStage1Tex() {
+  var loader = new THREE.TextureLoader();
+
+  loader.load('water-stage1.png', function(tex) {
+    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    waterStageTex = tex;
+    if (waterMesh && waterMesh.material && !waterMesh.material.map) {
+      waterMesh.material.map = tex; waterMesh.material.needsUpdate = true;
+    }
+  }, undefined, function(e) { console.error('[KRR] water-stage1.png FAILED', e); });
+
+  loader.load('bank-stage1.png', function(tex) {
+    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    bankStageTex = tex;
+  }, undefined, function(e) { console.error('[KRR] bank-stage1.png FAILED', e); });
+
+  for (var ti = 0; ti < treeTexNames.length; ti++) {
+    (function(idx) {
+      loader.load(treeTexNames[idx], function(tex) {
+        tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false; tex.needsUpdate = true;
+        treeTex[idx] = tex;
+      }, undefined, function(e) { console.error('[KRR] ' + treeTexNames[idx] + ' FAILED', e); });
+    })(ti);
+  }
+})();
+
 let stageIdx    = 0;
 let curLanes    = STAGES3[0].lanes;
 
@@ -269,6 +306,15 @@ function buildWorld() {
 
   // River surface
   const wMat = new THREE.MeshPhongMaterial({ color: stg.waterColor, shininess: 120, specular: 0x93C5FD });
+  if (stg.backdrop && waterStageTex) {
+    var wt = waterStageTex.clone(); wt.needsUpdate = true;
+    wt.wrapS = THREE.RepeatWrapping; wt.wrapT = THREE.RepeatWrapping;
+    wt.magFilter = THREE.NearestFilter; wt.minFilter = THREE.NearestFilter;
+    wt.generateMipmaps = false;
+    // Tile: ~2 repeats wide, ~12 repeats along the 155-unit length
+    wt.repeat.set(2, 12);
+    wMat.map = wt; wMat.needsUpdate = true;
+  }
   const water = new THREE.Mesh(new THREE.PlaneGeometry(rw, 155, 12, 32), wMat);
   water.rotation.x = -Math.PI / 2; water.position.set(0, 0.01, -55); water.receiveShadow = true;
   riverGroup.add(water);
@@ -294,9 +340,20 @@ function buildWorld() {
       if (segW < 2.2) segW = 2.2;
       // xCenter formula guarantees inner edge = bkSide * rw/2 regardless of segW
       const bkXCtr = bkSide * (rw / 2 + segW / 2);
+      var bkSegMat;
+      if (stg.backdrop && bankStageTex) {
+        var bt = bankStageTex.clone(); bt.needsUpdate = true;
+        bt.wrapS = THREE.RepeatWrapping; bt.wrapT = THREE.RepeatWrapping;
+        bt.magFilter = THREE.NearestFilter; bt.minFilter = THREE.NearestFilter;
+        bt.generateMipmaps = false;
+        bt.repeat.set(Math.ceil(segW / 2), 1);
+        bkSegMat = new THREE.MeshLambertMaterial({ map: bt });
+      } else {
+        bkSegMat = bkBaseMat.clone();
+      }
       const bkSeg  = new THREE.Mesh(
         new THREE.BoxGeometry(segW, 0.60, BK_SEG_Z + 0.25),
-        bkBaseMat.clone()
+        bkSegMat
       );
       bkSeg.position.set(bkXCtr, 0.30, bkZCtr);
       bkSeg.castShadow = true; bkSeg.receiveShadow = true;
@@ -365,76 +422,29 @@ function addBankDecor(group, rw, stg) {
       rock.position.set(xBase, 2.0, z); rock.castShadow = true; group.add(rock);
 
     } else if (bd) {
-      // Stage 1 / backdrop stages: 3 tree types with rounded blob canopies.
-      // tType 0 = tall layered (3 stacked flattened spheres)
-      // tType 1 = round medium (wide dome + upper cap)
-      // tType 2 = short bushy (squat wide blobs, shrub silhouette)
-      var treeH  = 1.5 + (i % 3) * 0.85;
-      var trunkH = treeH * 0.22;
-      var tType  = i % 3;
-      var cA = bd.treeColors[i % bd.treeColors.length];
-      var cB = bd.treeColors[(i + 1) % bd.treeColors.length];
-      var cC = bd.treeColors[(i + 2) % bd.treeColors.length];
-
-      var trk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.08, 0.14, trunkH, 5),
-        trunkMat
-      );
-      trk.position.set(xBase, trunkH / 2, z);
-      group.add(trk);
-
-      if (tType === 0) {
-        // Tall layered: 3 stacked flattened spheres, each tier smaller and higher
-        for (var t = 0; t < 3; t++) {
-          var bR   = (0.88 - t * 0.22) * treeH * 0.30;
-          var bY   = trunkH + t * treeH * 0.27 + bR * 0.55;
-          var bCol = t === 0 ? cA : t === 1 ? cB : cC;
-          var blob = new THREE.Mesh(
-            new THREE.SphereGeometry(bR, 7, 5),
-            new THREE.MeshLambertMaterial({ color: bCol })
-          );
-          blob.scale.set(1.20, 0.72, 1.10);
-          blob.position.set(xBase, bY, z);
-          blob.castShadow = true;
-          group.add(blob);
-        }
-
-      } else if (tType === 1) {
-        // Round medium: wide flattened lower dome + tighter upper cap
-        var r0  = treeH * 0.29;
-        var r1  = treeH * 0.19;
-        var lo  = new THREE.Mesh(
-          new THREE.SphereGeometry(r0, 7, 5),
-          new THREE.MeshLambertMaterial({ color: cA })
-        );
-        lo.scale.set(1.30, 0.68, 1.20);
-        lo.position.set(xBase, trunkH + r0 * 0.65, z);
-        lo.castShadow = true; group.add(lo);
-        var hi  = new THREE.Mesh(
-          new THREE.SphereGeometry(r1, 7, 5),
-          new THREE.MeshLambertMaterial({ color: cB })
-        );
-        hi.scale.set(1.10, 0.82, 1.05);
-        hi.position.set(xBase, trunkH + r0 * 1.15 + r1, z);
-        hi.castShadow = true; group.add(hi);
-
+      // Stage 1 billboard sprite trees using pixel-art PNGs.
+      // Four varieties: 0=pine-tall, 1=broadleaf-tall, 2=round-med, 3=bush-short
+      // Fallback to colored blob if texture hasn't loaded yet.
+      var treeVariety = i % 4;
+      var sprTex = treeTex[treeVariety];
+      if (sprTex) {
+        // Scale: tall trees (0,1) about 3.5 units high; others shorter
+        var sprH  = (treeVariety <= 1) ? 3.5 : (treeVariety === 2 ? 2.8 : 2.0);
+        // Slight random-ish size variation using index
+        sprH *= (0.88 + (i % 5) * 0.065);
+        var sprMat = new THREE.SpriteMaterial({ map: sprTex, transparent: true, alphaTest: 0.08 });
+        var spr    = new THREE.Sprite(sprMat);
+        spr.center.set(0.5, 0);  // anchor at base
+        // width inferred from typical 1:1.5 aspect; keep proportional
+        spr.scale.set(sprH * 0.72, sprH, 1);
+        spr.position.set(xBase, 0.30, z);
+        group.add(spr);
       } else {
-        // Short bushy: two overlapping wide squat blobs at low height
-        var rb  = treeH * 0.28;
-        var sh0 = new THREE.Mesh(
-          new THREE.SphereGeometry(rb, 6, 4),
-          new THREE.MeshLambertMaterial({ color: cA })
-        );
-        sh0.scale.set(1.40, 0.55, 1.30);
-        sh0.position.set(xBase, trunkH + rb * 0.45, z);
-        sh0.castShadow = true; group.add(sh0);
-        var sh1 = new THREE.Mesh(
-          new THREE.SphereGeometry(rb * 0.72, 6, 4),
-          new THREE.MeshLambertMaterial({ color: cB })
-        );
-        sh1.scale.set(1.20, 0.60, 1.20);
-        sh1.position.set(xBase + 0.28, trunkH + rb * 0.55, z);
-        sh1.castShadow = true; group.add(sh1);
+        // Fallback blob if texture not yet loaded
+        var fbH = 1.5 + (i % 3) * 0.85;
+        var fbMat = new THREE.MeshLambertMaterial({ color: bd.treeColors[i % bd.treeColors.length] });
+        var fb = new THREE.Mesh(new THREE.SphereGeometry(fbH * 0.30, 7, 5), fbMat);
+        fb.position.set(xBase, fbH * 0.55, z); fb.castShadow = true; group.add(fb);
       }
 
     } else {
@@ -1283,6 +1293,11 @@ function updateVisuals3() {
       );
     }
     wPos.needsUpdate = true;
+  }
+
+  // Scroll the water pixel-art texture downstream (texture V axis = along river)
+  if (waterMesh && waterMesh.material && waterMesh.material.map) {
+    waterMesh.material.map.offset.y -= 0.0022;
   }
 
   // Drift clouds slowly downstream; loop back to the far end when they pass the threshold.
