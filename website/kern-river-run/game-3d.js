@@ -961,13 +961,13 @@ for (var wcI = 0; wcI < 10; wcI++) {
   });
 }
 
-// Water droplet pool -- 20 reusable small cubes for paddle-blade arcs and jump-landing bursts.
+// Water droplet pool -- 60 reusable tiny cubes for fine-spray arcs from paddle strokes and landings.
 // Physics: gravity DROPLET_GRAV applied to vy each frame; world-scroll at curSpd3 each frame.
 const DROPLET_GRAV = 0.016;
 const dropletPool3 = [];
-for (var dpI3 = 0; dpI3 < 20; dpI3++) {
+for (var dpI3 = 0; dpI3 < 60; dpI3++) {
   var dpMesh3 = new THREE.Mesh(
-    new THREE.BoxGeometry(0.22, 0.22, 0.22),
+    new THREE.BoxGeometry(0.10, 0.10, 0.10),
     new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0, depthWrite: false })
   );
   dpMesh3.renderOrder = 5;
@@ -1374,12 +1374,12 @@ function activateDroplets3(cx, cz, count, vScale) {
         dp3.active  = true;
         dp3.life    = 0;
         dp3.maxLife = 16 + Math.floor(Math.random() * 10);
-        dp3.x  = cx + (Math.random() - 0.5) * 0.40;
-        dp3.y  = 0.28;
-        dp3.z  = cz + (Math.random() - 0.5) * 0.30;
-        dp3.vx = (Math.random() - 0.5) * 0.09 * vScale;
-        dp3.vy = (0.06 + Math.random() * 0.06) * vScale;
-        dp3.vz = (Math.random() - 0.5) * 0.07 * vScale;
+        dp3.x  = cx + (Math.random() - 0.5) * 0.50;
+        dp3.y  = 0.30;
+        dp3.z  = cz + (Math.random() - 0.5) * 0.40;
+        dp3.vx = (Math.random() - 0.5) * 0.13 * vScale;
+        dp3.vy = (0.04 + Math.random() * 0.09) * vScale;
+        dp3.vz = (Math.random() - 0.5) * 0.11 * vScale;
         dp3.mesh.material.opacity = 0.75;
         break;
       }
@@ -1535,10 +1535,11 @@ function update3() {
           wcNew.life      = 0;
           wcNew.maxLife   = 45;
           wcNew.worldX    = player3.x;
-          wcNew.worldZ    = -0.65;
+          wcNew.worldZ    = 0.65;
           wcNew.spread    = 0.60 + Math.random() * 0.40;
           wcNew.zTail     = 0.90 + Math.random() * 0.40;
           wcNew.swayPhase = Math.random() * Math.PI * 2;
+          if (frameN < 120) console.log('[KRR] chevron worldZ:', wcNew.worldZ.toFixed(3), '| arm bz3 start ~0.40');
           break;
         }
       }
@@ -1548,9 +1549,9 @@ function update3() {
     var wcE = wakeChevrons3[wcUi];
     if (!wcE.active) continue;
     wcE.life++;
-    wcE.worldZ -= spd;
+    wcE.worldZ += spd;
     wcE.grp.position.set(wcE.worldX, 0.16, wcE.worldZ);
-    if (wcE.life > wcE.maxLife || wcE.worldZ < -12) {
+    if (wcE.life > wcE.maxLife || wcE.worldZ > DESPAWN_Z) {
       wcE.active = false;
     }
   }
@@ -1693,11 +1694,11 @@ function updateVisuals3() {
   if (!player3.isJumping && gameState3 === 'playing') {
     if (paddleSplashPrev3 <= 0 && pSin3 > 0) {
       activateSplash3(player3.x - 0.97, 0, 1.2, 16);
-      activateDroplets3(player3.x - 0.97, 0, 4, 1.0);
+      activateDroplets3(player3.x - 0.97, 0, 10, 1.0);
       console.log('[KRR] paddle splash LEFT x:', (player3.x - 0.97).toFixed(2));
     } else if (paddleSplashPrev3 >= 0 && pSin3 < 0) {
       activateSplash3(player3.x + 0.97, 0, 1.2, 16);
-      activateDroplets3(player3.x + 0.97, 0, 4, 1.0);
+      activateDroplets3(player3.x + 0.97, 0, 10, 1.0);
       console.log('[KRR] paddle splash RIGHT x:', (player3.x + 0.97).toFixed(2));
     }
   }
@@ -1815,7 +1816,7 @@ function updateVisuals3() {
   if (!jumpingNow3 && splashWasJumping3) {
     activateSplash3(player3.x, 0, 2.5, 28);
     activateSplash3(player3.x, 0, 4.0, 36);
-    activateDroplets3(player3.x, 0, 10, 1.4);
+    activateDroplets3(player3.x, 0, 18, 1.4);
     console.log('[KRR] jump LANDING splash x:', player3.x.toFixed(2));
   }
   splashWasJumping3 = jumpingNow3;
@@ -1886,8 +1887,8 @@ function updateVisuals3() {
     var wcSway = Math.sin(wcV.swayPhase + wcV.life * 0.11) * 0.055;
     var lxMid = -(wcV.spread * 0.60) + wcSway;
     var lxEnd = -(wcV.spread) + wcSway * 0.4;
-    var lzMid = -(wcV.zTail * 0.50);
-    var lzEnd = -(wcV.zTail);
+    var lzMid = wcV.zTail * 0.50;
+    var lzEnd = wcV.zTail;
     wcV.attrL.setXYZ(0, 0, 0, 0);
     wcV.attrL.setXYZ(1, lxMid, 0, lzMid);
     wcV.attrL.setXYZ(2, lxEnd, 0, lzEnd);
