@@ -226,6 +226,7 @@ let paddleSplashPrev3 = 0;     // Refinement 2: previous sin value for paddle st
 let wakeChevronTimer3 = 0;     // Refinement 3: frames since last wake chevron spawn
 let turnHoldFrames3   = 0;     // frames remaining in post-snap turn hold
 let turnDirSign3      = 0;     // sign of active turn: -1 = nose-right, +1 = nose-left
+let kayakTurnVel3     = 0;     // angular velocity for spring-damper easing
 let curSpd3           = 0;     // last computed scroll speed (shared with updateVisuals3 for droplet physics)
 
 // ── TEXTURE PRELOAD ───────────────────────────────────────────────
@@ -935,7 +936,7 @@ for (var wcI = 0; wcI < 10; wcI++) {
   wcAttrL.usage = THREE.DynamicDrawUsage;
   var wcGeoL = new THREE.BufferGeometry();
   wcGeoL.setAttribute('position', wcAttrL);
-  var wcMatL = new THREE.LineBasicMaterial({ color: 0xCCEEFF, transparent: true, opacity: 0, depthWrite: false });
+  var wcMatL = new THREE.LineBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0, depthWrite: false });
   var wcLineL = new THREE.Line(wcGeoL, wcMatL);
   wcLineL.renderOrder = 3;
   wcGrp.add(wcLineL);
@@ -945,7 +946,7 @@ for (var wcI = 0; wcI < 10; wcI++) {
   wcAttrR.usage = THREE.DynamicDrawUsage;
   var wcGeoR = new THREE.BufferGeometry();
   wcGeoR.setAttribute('position', wcAttrR);
-  var wcMatR = new THREE.LineBasicMaterial({ color: 0xCCEEFF, transparent: true, opacity: 0, depthWrite: false });
+  var wcMatR = new THREE.LineBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0, depthWrite: false });
   var wcLineR = new THREE.Line(wcGeoR, wcMatR);
   wcLineR.renderOrder = 3;
   wcGrp.add(wcLineR);
@@ -966,8 +967,8 @@ const DROPLET_GRAV = 0.016;
 const dropletPool3 = [];
 for (var dpI3 = 0; dpI3 < 20; dpI3++) {
   var dpMesh3 = new THREE.Mesh(
-    new THREE.BoxGeometry(0.055, 0.055, 0.055),
-    new THREE.MeshBasicMaterial({ color: 0xAADDFF, transparent: true, opacity: 0, depthWrite: false })
+    new THREE.BoxGeometry(0.22, 0.22, 0.22),
+    new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0, depthWrite: false })
   );
   dpMesh3.renderOrder = 5;
   dpMesh3.position.set(0, -9999, 0);
@@ -1365,6 +1366,7 @@ function activateSplash3(x, z, maxScale, dur) {
 // Spawn count water droplets with arcing physics from world position (cx, 0, cz).
 // vScale: 1.0 = paddle stroke, 1.4 = jump landing burst.
 function activateDroplets3(cx, cz, count, vScale) {
+  console.log('[KRR] DROPLETS spawn x:', cx.toFixed(2), 'z:', cz.toFixed(2), 'count:', count);
   for (var dpAi = 0; dpAi < count; dpAi++) {
     for (var dpFi = 0; dpFi < dropletPool3.length; dpFi++) {
       if (!dropletPool3[dpFi].active) {
@@ -1533,7 +1535,7 @@ function update3() {
           wcNew.life      = 0;
           wcNew.maxLife   = 45;
           wcNew.worldX    = player3.x;
-          wcNew.worldZ    = 0.30;
+          wcNew.worldZ    = -0.65;
           wcNew.spread    = 0.60 + Math.random() * 0.40;
           wcNew.zTail     = 0.90 + Math.random() * 0.40;
           wcNew.swayPhase = Math.random() * Math.PI * 2;
@@ -1649,7 +1651,7 @@ function updateVisuals3() {
   if (player3.spinoutFrames > 0) {
     playerGroup.rotation.y += 0.18;
     kayakWasSpinning3 = true;
-    kayakTurnY3 = 0;
+    kayakTurnY3 = 0; kayakTurnVel3 = 0;
   } else if (kayakWasSpinning3) {
     playerGroup.rotation.y *= 0.75;
     if (Math.abs(playerGroup.rotation.y) < 0.01) {
@@ -1669,8 +1671,11 @@ function updateVisuals3() {
     var lcWant3 = ((Math.abs(lcDx3) > 0.02 || turnHoldFrames3 > 0) && !player3.isJumping)
       ? turnDirSign3 * 0.70
       : 0;
-    kayakTurnY3 += (lcWant3 - kayakTurnY3) * 0.35;
-    if (Math.abs(kayakTurnY3) < 0.008) kayakTurnY3 = 0;
+    var turnError3 = lcWant3 - kayakTurnY3;
+    kayakTurnVel3 += turnError3 * 0.06;
+    kayakTurnVel3 *= 0.80;
+    kayakTurnY3   += kayakTurnVel3;
+    if (Math.abs(kayakTurnY3) < 0.008) { kayakTurnY3 = 0; kayakTurnVel3 = 0; }
     playerGroup.rotation.y = kayakTurnY3;
     var dbgTurnEl = document.getElementById('dbg3-turn');
     if (dbgTurnEl) dbgTurnEl.textContent = 'YAW: ' + (kayakTurnY3 * 180 / Math.PI).toFixed(1) + 'deg  hold:' + turnHoldFrames3;
@@ -1875,7 +1880,7 @@ function updateVisuals3() {
       wcV.grp.children[1].material.opacity = 0;
       continue;
     }
-    var wcOp = (1 - wcV.life / wcV.maxLife) * 0.35;
+    var wcOp = (1 - wcV.life / wcV.maxLife) * 0.55;
     wcV.grp.children[0].material.opacity = wcOp;
     wcV.grp.children[1].material.opacity = wcOp;
     var wcSway = Math.sin(wcV.swayPhase + wcV.life * 0.11) * 0.055;
@@ -1928,7 +1933,7 @@ function startGame3() {
   playerGroup.rotation.y = 0; playerGroup.position.y = 0;
   kayakTurnY3 = 0; kayakWasSpinning3 = false; splashWasJumping3 = false;
   paddleSplashPrev3 = 0; wakeChevronTimer3 = 0;
-  turnHoldFrames3 = 0; turnDirSign3 = 0;
+  turnHoldFrames3 = 0; turnDirSign3 = 0; kayakTurnVel3 = 0;
   for (var dpR3 = 0; dpR3 < dropletPool3.length; dpR3++) {
     dropletPool3[dpR3].active = false;
     dropletPool3[dpR3].mesh.material.opacity = 0;
