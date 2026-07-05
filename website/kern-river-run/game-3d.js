@@ -24,6 +24,7 @@ const WATER_OPACITY = 0.60;   // tune here: 0=invisible 1=solid; 0.60 = clear sh
 const DEV_STAGE_JUMP = true;  // flip to false or delete this whole block to disable
 // ===== END TEMP DEV STAGE JUMP =====
 
+
 // ── STAGE DATA (full roster matching game.js) ─────────────────────
 const STAGES3 = [
   {
@@ -45,12 +46,12 @@ const STAGES3 = [
   },
   {
     num:2, name:'UPPER KERN', endMile:66, lanes:6, speed:1.65, obsFreq:0.012, fwFreq:0.12,
-    waterColor:0x0EA5E9, bankColor:0x7C2D12,
+    waterColor:0x185761, bankColor:0x7C2D12,
     obsTypes:['capsized_raft','capsized_raft','boulder','boulder','river_wash'],
     fwType:'raft_train', collA:'fishing_lure', collB:'golden_eagle_feather',
     backdrop: {
-      img:        'upper-kern-bg.png',
-      bankGrass:  0x8B7435,
+      img:        'stage2-bg.png',
+      bankGrass:  0x7A6E5C,
       bankEarth:  0x6B3A1E,
       treeColors: [0x4A6728, 0x5C7A1E, 0x3D5C1A, 0x6B7A2E],
       trunkColor: 0x7A4A28,
@@ -267,6 +268,7 @@ new THREE.TextureLoader().load(
 );
 // Stage 1 pixel-art textures (water, banks, tree sprites, riverbed)
 var waterStageTex    = null;
+var waterStageTex2   = null;
 var bankStageTex     = null;
 var riverbedStageTex = null;
 var riverbedMesh     = null;   // module-level ref for late-patching texture after async load
@@ -286,6 +288,22 @@ var treeTexNames = ['tree-pine-tall.png', 'tree-broadleaf-tall.png', 'tree-round
       waterMesh.material.map = tex; waterMesh.material.needsUpdate = true;
     }
   }, undefined, function(e) { console.error('[KRR] water-stage1.png FAILED', e); });
+
+  loader.load('water-stage2.png', function(tex) {
+    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.repeat.set(20, 16);
+    tex.needsUpdate = true;
+    waterStageTex2 = tex;
+    // Late-patch: apply if Stage 2 water mesh already built before this callback fired
+    if (waterMesh && waterMesh.material && stageIdx === 1 && !waterMesh.material.map) {
+      waterMesh.material.color.setHex(0xFFEDF2);
+      waterMesh.material.map = tex;
+      waterMesh.material.needsUpdate = true;
+      console.log('[KRR] Stage 2 water (late-patch) | TEX_AVG #155660 | TARGET #16505B | TINT_COMPUTED 0xFFEDF2');
+    }
+  }, undefined, function(e) { console.error('[KRR] water-stage2.png FAILED', e); });
 
   loader.load('bank-stage1.png', function(tex) {
     tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
@@ -385,13 +403,19 @@ function buildWorld() {
 
   // Ground -- widened to 200 units so grass fills past screen edges on all sides
   var gndMat;
-  if (stg.backdrop && bankStageTex) {
+  if (stg.num === 1 && bankStageTex) {
+    // Stage 1: pixel-art grass texture, no tint
     var gt = bankStageTex.clone(); gt.needsUpdate = true;
     gt.wrapS = THREE.RepeatWrapping; gt.wrapT = THREE.RepeatWrapping;
     gt.magFilter = THREE.NearestFilter; gt.minFilter = THREE.NearestFilter;
     gt.generateMipmaps = false;
     gt.repeat.set(40, 40);
     gndMat = new THREE.MeshLambertMaterial({ map: gt });
+  } else if (stg.num === 2 && riverbedStageTex) {
+    // Stage 2 wide water: BasicMaterial (no lighting) so pebble shows true color through water
+    var gt2 = riverbedStageTex.clone(); gt2.needsUpdate = true;
+    gt2.repeat.set(40, 40);
+    gndMat = new THREE.MeshBasicMaterial({ color: 0xA0988A, map: gt2 });
   } else {
     gndMat = new THREE.MeshLambertMaterial({ color: stg.bankColor });
   }
@@ -424,16 +448,33 @@ function buildWorld() {
     console.log('[KRR] Riverbed mesh | y=' + rbMesh.position.y + ' renderOrder=' + rbMesh.renderOrder + ' texture=' + (riverbedStageTex ? 'applied' : 'pending'));
   }
 
-  // River surface
-  const wMat = new THREE.MeshPhongMaterial({ color: stg.waterColor, shininess: 14, specular: 0x111a22 });
-  if (stg.backdrop && waterStageTex) {
-    var wt = waterStageTex.clone(); wt.needsUpdate = true;
-    wt.wrapS = THREE.RepeatWrapping; wt.wrapT = THREE.RepeatWrapping;
-    wt.magFilter = THREE.NearestFilter; wt.minFilter = THREE.NearestFilter;
-    wt.generateMipmaps = false;
-    // Tile: ~2 repeats wide, ~12 repeats along the 155-unit length
-    wt.repeat.set(2, 12);
-    wMat.map = wt; wMat.needsUpdate = true;
+  // River surface. Stage 2 uses MeshBasicMaterial so the sampled backdrop color
+  // renders at exactly the specified hex without the scene lights amplifying it.
+  // All other stages use MeshPhongMaterial for shininess and specular glints.
+  var wMat;
+  if (stg.num === 2) {
+    wMat = new THREE.MeshBasicMaterial({ color: stg.waterColor });
+    if (waterStageTex2) {
+      waterStageTex2.offset.set(0, 0);
+      // TEX_AVG #155660 (R=21 G=86 B=96) | TARGET #16505B (R=22 G=80 B=91)
+      // tint = target/tex_avg per channel, clamped to 255
+      // R: floor(22/21*255)=255 | G: floor(80/86*255)=237 | B: floor(91/96*255)=242
+      wMat.color.setHex(0xFFEDF2);
+      wMat.map = waterStageTex2;
+      wMat.needsUpdate = true;
+      console.log('[KRR] Stage 2 water | TEX_AVG #155660 | TARGET #16505B | TINT_COMPUTED 0xFFEDF2');
+    }
+  } else {
+    wMat = new THREE.MeshPhongMaterial({ color: stg.waterColor, shininess: 14, specular: 0x111a22 });
+    if (stg.num === 1 && waterStageTex) {
+      var wt = waterStageTex.clone(); wt.needsUpdate = true;
+      wt.wrapS = THREE.RepeatWrapping; wt.wrapT = THREE.RepeatWrapping;
+      wt.magFilter = THREE.NearestFilter; wt.minFilter = THREE.NearestFilter;
+      wt.generateMipmaps = false;
+      // Tile: ~2 repeats wide, ~12 repeats along the 155-unit length
+      wt.repeat.set(2, 12);
+      wMat.map = wt; wMat.needsUpdate = true;
+    }
   }
   // Transparent so the riverbed shows through.
   // y=0.15: a 0.15-unit gap above the riverbed (y=0.0) eliminates z-fighting at all
@@ -444,53 +485,58 @@ function buildWorld() {
   wMat.transparent = true;
   wMat.opacity     = WATER_OPACITY;
   wMat.depthWrite  = false;
-  const water = new THREE.Mesh(new THREE.PlaneGeometry(rw, 155, 12, 32), wMat);
+  var waterPW = (stg.num === 2) ? 200 : rw;
+  var waterPX = (stg.num === 2) ? 8   : 12;
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(waterPW, 155, waterPX, 32), wMat);
   water.rotation.x = -Math.PI / 2; water.position.set(0, 0.15, -55); water.receiveShadow = true;
   water.renderOrder = 2;
   riverGroup.add(water);
   waterMesh = water;
   console.log('[KRR] Water mesh   | y=' + water.position.y + ' renderOrder=' + water.renderOrder + ' (water above riverbed: ' + (water.renderOrder > (riverbedMesh ? riverbedMesh.renderOrder : -1)) + ')');
 
-  // Banks -- segmented curved geometry.
+  // Banks -- segmented curved geometry. Stage 2 skips banks entirely (wide-water design).
   // Inner edge of every segment stays exactly at side * rw/2 (flush with play area).
   // Outer edge follows a slow sine so the bank appears to meander.
   // Play lanes, water surface, lane dividers, spawns, and collision are all untouched.
-  const bkColor   = stg.backdrop ? stg.backdrop.bankGrass : stg.bankColor;
-  const bkBaseMat = new THREE.MeshLambertMaterial({ color: bkColor });
-  // BANK_AMP raised to 2.8 for more organic outer-edge meander (inner edge invariant unchanged)
-  const BANK_W0   = 5.0;
-  const BANK_AMP  = 2.8;
-  const BANK_FREQ = 0.048;
-  const BK_SEG_Z  = 5.5;
-  const BK_SEG_N  = 18;
-  const BK_Z0     = -70.0;
-  for (const bkSide of [-1, 1]) {
-    const bkPhase = bkSide === 1 ? 0 : Math.PI * 0.55;
-    for (let bkSi = 0; bkSi < BK_SEG_N; bkSi++) {
-      const bkZCtr = BK_Z0 + bkSi * BK_SEG_Z + BK_SEG_Z * 0.5;
-      let   segW   = BANK_W0 + BANK_AMP * Math.sin(bkZCtr * BANK_FREQ + bkPhase);
-      if (segW < 2.2) segW = 2.2;
-      // Inner edge invariant: bkXCtr = side*(rw/2 + segW/2) keeps edge exactly at side*rw/2
-      const bkXCtr = bkSide * (rw / 2 + segW / 2);
-      var bkSegMat;
-      if (stg.backdrop && bankStageTex) {
-        var bkTex = bankStageTex.clone(); bkTex.needsUpdate = true;
-        bkTex.wrapS = THREE.RepeatWrapping; bkTex.wrapT = THREE.RepeatWrapping;
-        bkTex.magFilter = THREE.NearestFilter; bkTex.minFilter = THREE.NearestFilter;
-        bkTex.generateMipmaps = false;
-        bkTex.repeat.set(Math.ceil(segW / 2), 1);
-        bkSegMat = new THREE.MeshLambertMaterial({ map: bkTex });
-        bankSegMats3.push(bkTex);  // store ref for per-frame scroll
-      } else {
-        bkSegMat = bkBaseMat.clone();
+  if (stg.num !== 2) {
+    const bkColor   = stg.backdrop ? stg.backdrop.bankGrass : stg.bankColor;
+    const bkBaseMat = new THREE.MeshLambertMaterial({ color: bkColor });
+    // BANK_AMP raised to 2.8 for more organic outer-edge meander (inner edge invariant unchanged)
+    const BANK_W0   = 5.0;
+    const BANK_AMP  = 2.8;
+    const BANK_FREQ = 0.048;
+    const BK_SEG_Z  = 5.5;
+    const BK_SEG_N  = 18;
+    const BK_Z0     = -70.0;
+    for (const bkSide of [-1, 1]) {
+      const bkPhase = bkSide === 1 ? 0 : Math.PI * 0.55;
+      for (let bkSi = 0; bkSi < BK_SEG_N; bkSi++) {
+        const bkZCtr = BK_Z0 + bkSi * BK_SEG_Z + BK_SEG_Z * 0.5;
+        let   segW   = BANK_W0 + BANK_AMP * Math.sin(bkZCtr * BANK_FREQ + bkPhase);
+        if (segW < 2.2) segW = 2.2;
+        // Inner edge invariant: bkXCtr = side*(rw/2 + segW/2) keeps edge exactly at side*rw/2
+        const bkXCtr = bkSide * (rw / 2 + segW / 2);
+        var bkSegMat;
+        if (stg.num === 1 && bankStageTex) {
+          // Stage 1: pixel-art grass texture
+          var bkTex = bankStageTex.clone(); bkTex.needsUpdate = true;
+          bkTex.wrapS = THREE.RepeatWrapping; bkTex.wrapT = THREE.RepeatWrapping;
+          bkTex.magFilter = THREE.NearestFilter; bkTex.minFilter = THREE.NearestFilter;
+          bkTex.generateMipmaps = false;
+          bkTex.repeat.set(Math.ceil(segW / 2), 1);
+          bkSegMat = new THREE.MeshLambertMaterial({ map: bkTex });
+          bankSegMats3.push(bkTex);
+        } else {
+          bkSegMat = bkBaseMat.clone();
+        }
+        const bkSeg  = new THREE.Mesh(
+          new THREE.BoxGeometry(segW, 0.60, BK_SEG_Z + 0.25),
+          bkSegMat
+        );
+        bkSeg.position.set(bkXCtr, 0.30, bkZCtr);
+        bkSeg.castShadow = true; bkSeg.receiveShadow = true;
+        riverGroup.add(bkSeg);
       }
-      const bkSeg  = new THREE.Mesh(
-        new THREE.BoxGeometry(segW, 0.60, BK_SEG_Z + 0.25),
-        bkSegMat
-      );
-      bkSeg.position.set(bkXCtr, 0.30, bkZCtr);
-      bkSeg.castShadow = true; bkSeg.receiveShadow = true;
-      riverGroup.add(bkSeg);
     }
   }
 
@@ -508,8 +554,9 @@ function buildWorld() {
   addBankDecor(riverGroup, rw, stg);
   addShoreline3(riverGroup, rw, stg);
   scene.add(riverGroup);
-  if (stg.backdrop) { initBankTrees3(rw, stg.backdrop); }
-  if (stg.num >= 2 && stg.num <= 4) { initBankBoulders3(rw); }
+  if (stg.backdrop && stg.num !== 2) { initBankTrees3(rw, stg.backdrop); }
+  if (stg.num === 2) { initStage2RockyShores(rw); }
+  else if (stg.num >= 3 && stg.num <= 4) { initBankBoulders3(rw); }
 
   // Part 1: Current flow streaks -- z-aligned lines above the water surface (y=0.16).
   // Each streak is a short segment at a random x position with a slight downstream drift,
@@ -609,14 +656,34 @@ function addBankDecor(group, rw, stg) {
 // Rocks: small opaque BoxGeometry pebbles at the shoreline, y=0.16 (above water y=0.15).
 // Nothing extends more than 0.22 units into the water: no collision impact.
 function addShoreline3(rg, rw, stg) {
+  if (stg.num === 2) return;
   for (var shSide = -1; shSide <= 1; shSide += 2) {
     var shX = shSide * rw / 2;
 
-    // Foam/wet-edge strip: 0.28-wide translucent band inside the water at the shore
-    var foamMat = new THREE.MeshBasicMaterial({ color: 0xCCEEFF, transparent: true, opacity: 0.20, depthWrite: false });
-    var foamMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 150), foamMat);
+    // Sandy/rocky shallows strip: horizontal plane just below the water surface (y=0.02),
+    // 1.0 unit wide along each bank edge. Shows through the 60%-opaque water.
+    // Stage 2: pebble texture tinted grey-stone for rocky gravel shallows.
+    // Other stages: solid sandy tan.
+    var sandyMat;
+    if (stg.num === 2 && riverbedStageTex) {
+      var sTex = riverbedStageTex.clone(); sTex.needsUpdate = true;
+      sTex.repeat.set(1, 20);
+      sandyMat = new THREE.MeshLambertMaterial({ color: 0xA0988A, map: sTex });
+    } else {
+      var sandyColor = (stg.num === 2) ? 0x8E8070 : 0xC4A46B;
+      sandyMat = new THREE.MeshLambertMaterial({ color: sandyColor });
+    }
+    var sandyMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 155), sandyMat);
+    sandyMesh.rotation.x = -Math.PI / 2;
+    sandyMesh.position.set(shX - shSide * 0.5, 0.02, -55);
+    sandyMesh.renderOrder = 1;
+    rg.add(sandyMesh);
+
+    // Foam/wet-edge strip: widened to 0.55 and made more visible (opacity 0.45)
+    var foamMat = new THREE.MeshBasicMaterial({ color: 0xCCEEFF, transparent: true, opacity: 0.45, depthWrite: false });
+    var foamMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 150), foamMat);
     foamMesh.rotation.x = -Math.PI / 2;
-    foamMesh.position.set(shX - shSide * 0.14, 0.155, -55);
+    foamMesh.position.set(shX - shSide * 0.275, 0.155, -55);
     foamMesh.renderOrder = 3;
     rg.add(foamMesh);
 
@@ -708,6 +775,52 @@ function initBankBoulders3(rw) {
   }
 }
 
+// Stage 2 (Upper Kern) only: dense boulder shoreline using bankBoulderTex sprites.
+// Rocks cluster right at the water edge (xOff 0.15-3.05 from bank inner edge), much
+// larger than standard bank boulders (1.8-4.4 tall), and randomly horizontally flipped
+// so no two boulders look identical. Entries go into bankBoulders3 so the existing
+// update3() recycle loop drives them automatically.
+function initStage2RockyShores(rw) {
+  // 50 perimeter boulders: clustered at the channel boundary, submerged in water.
+  // 70 field boulders: scattered across the full non-playable side water, varied sizes.
+  // All use the same bankBoulders3 pool and recycle loop. No collision on any of these.
+  var PERIM_COUNT = 50;
+  var FIELD_COUNT = 70;
+  var TOTAL       = PERIM_COUNT + FIELD_COUNT;
+  for (var ri = 0; ri < TOTAL; ri++) {
+    var side    = ri % 2 === 0 ? -1 : 1;
+    var texIdx  = Math.floor(Math.random() * bankBoulderTex.length);
+    var isPerim = ri < PERIM_COUNT;
+    var xOff, bH, bY;
+    if (isPerim) {
+      xOff = Math.random() * 1.0;
+      bH   = 2.2 + Math.random() * 2.4;
+      bY   = -0.5 - Math.random() * 0.7;
+    } else {
+      xOff = 1.3 + Math.random() * 11.5;
+      bH   = 0.8 + Math.random() * 3.0;
+      bY   = -0.15 - Math.random() * 1.1;
+    }
+    var xBase  = side * (rw / 2 + xOff);
+    var zInit  = SPAWN_Z + (ri / TOTAL) * (Math.abs(SPAWN_Z) + 12) + (Math.random() - 0.5) * 1.8;
+    var bW     = bH * (0.75 + Math.random() * 0.85);
+    var flipX  = Math.random() < 0.5 ? -1 : 1;
+    var tex    = bankBoulderTex[texIdx];
+    var mat;
+    if (tex) {
+      mat = new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.08 });
+    } else {
+      mat = new THREE.SpriteMaterial({ color: 0x8A7060, transparent: true, opacity: 0.90 });
+    }
+    var spr = new THREE.Sprite(mat);
+    spr.center.set(0.5, 0);
+    spr.scale.set(bW * flipX, bH, 1);
+    spr.position.set(xBase, bY, zInit);
+    scene.add(spr);
+    bankBoulders3.push({ sprite: spr, side: side, z: zInit, spread: isPerim ? 'perimeter' : 'field' });
+  }
+}
+
 function buildHorizonArt(stg) {
   const grp = new THREE.Group();
   const mtData = [{ x:-18, h:15, r:8 }, { x:-7, h:20, r:7 }, { x:2, h:12, r:6 }, { x:11, h:17, r:9 }, { x:20, h:14, r:7 }, { x:-26, h:10, r:5 }];
@@ -734,9 +847,16 @@ function buildStageBackdrop(stg) {
 
   // Backdrop plane - start with sky-blue fallback so any load failure is invisible
   var bdMat = new THREE.MeshBasicMaterial({ color: 0x87CEEB, fog: false });
-  backdropMesh = new THREE.Mesh(new THREE.PlaneGeometry(78, 52), bdMat);
+  backdropMesh = new THREE.Mesh(new THREE.PlaneGeometry(160, 52), bdMat);
   backdropMesh.position.set(0, 26, -88);
   scene.add(backdropMesh);
+
+  // Stage 2: shift backdrop center down 3 units so the bottom edge (y=-3) overlaps
+  // below the water surface (y=0.15), closing the clear-color seam at the horizon.
+  // Stage 1 position is untouched (remains y=26 from the position.set call above).
+  if (stg.num === 2) {
+    backdropMesh.position.y = 23;
+  }
 
   // Capture current mesh so the async callback patches the RIGHT instance
   // even if buildWorld() is called again before the load finishes.
@@ -746,6 +866,16 @@ function buildStageBackdrop(stg) {
     tex.magFilter    = THREE.NearestFilter;
     tex.minFilter    = THREE.NearestFilter;
     tex.generateMipmaps = false;
+    // Stage 2: clamp wrapping + UV crop to skip the bright bottom pixel rows
+    if (stg.num === 2) {
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      var trimN = 6;
+      var trimH = (tex.image && tex.image.naturalHeight) ? tex.image.naturalHeight : 1024;
+      tex.offset.set(0, trimN / trimH);
+      tex.repeat.set(1, (trimH - trimN) / trimH);
+      console.log('[KRR BG TRIM] naturalHeight=' + trimH + ' N=' + trimN + ' offset.y=' + (trimN / trimH).toFixed(6) + ' repeat.y=' + ((trimH - trimN) / trimH).toFixed(6));
+    }
     tex.needsUpdate  = true;
     stageTexCache[bd.img] = tex;
     if (capMesh.material) {
@@ -1445,6 +1575,12 @@ function applyStage3(idx, msg) {
   curObsFreq3 = STAGES3[idx].obsFreq;
   endingSpeedMult = 1.0;
 
+  // Per-stage cloud count: Stage 2 shows 2 of 7. All others show all 7.
+  var STAGE2_CLOUD_VIS = 2;
+  for (var ci2 = 0; ci2 < clouds3.length; ci2++) {
+    clouds3[ci2].visible = (idx !== 1) || (ci2 < STAGE2_CLOUD_VIS);
+  }
+
   if (player3.targetLane >= curLanes) player3.targetLane = curLanes - 1;
   if (player3.lane       >= curLanes) player3.lane       = curLanes - 1;
   player3.x = laneXPos(player3.targetLane);
@@ -1716,12 +1852,36 @@ function update3() {
       bb3.z = SPAWN_Z - Math.random() * 8;
       var bbTexIdx = Math.floor(Math.random() * bankBoulderTex.length);
       var bbRw     = riverWidth();
-      var bbXOff   = Math.floor(Math.random() * 4) * 1.6 + 0.3;
-      bb3.sprite.position.x = bb3.side * (bbRw / 2 + 1.0 + bbXOff);
+      var bbXOff, bbH, bbW, bbXPos;
+      if (stageIdx === 1) {
+        var bbFlip = Math.random() < 0.5 ? -1 : 1;
+        if (bb3.spread === 'perimeter') {
+          // Perimeter: tight cluster at channel boundary, substantially submerged
+          bbXOff = Math.random() * 1.0;
+          bbH    = 2.2 + Math.random() * 2.4;
+          bbW    = bbH * (0.75 + Math.random() * 0.85);
+          bbXPos = bb3.side * (bbRw / 2 + bbXOff);
+          bb3.sprite.scale.set(bbW * bbFlip, bbH, 1);
+          bb3.sprite.position.y = -0.5 - Math.random() * 0.7;
+        } else {
+          // Field: scattered across non-playable side water, varied size and submersion
+          bbXOff = 1.3 + Math.random() * 11.5;
+          bbH    = 0.8 + Math.random() * 3.0;
+          bbW    = bbH * (0.75 + Math.random() * 0.85);
+          bbXPos = bb3.side * (bbRw / 2 + bbXOff);
+          bb3.sprite.scale.set(bbW * bbFlip, bbH, 1);
+          bb3.sprite.position.y = -0.15 - Math.random() * 1.1;
+        }
+      } else {
+        // Stages 3-4: normal bank boulder spread
+        bbXOff = Math.floor(Math.random() * 4) * 1.6 + 0.3;
+        bbH    = 1.2 + Math.random() * 1.6;
+        bbW    = bbH * (0.85 + Math.random() * 0.70);
+        bbXPos = bb3.side * (bbRw / 2 + 1.0 + bbXOff);
+        bb3.sprite.scale.set(bbW, bbH, 1);
+      }
+      bb3.sprite.position.x = bbXPos;
       bb3.sprite.position.z = bb3.z;
-      var bbH = 1.2 + Math.random() * 1.6;
-      var bbW = bbH * (0.85 + Math.random() * 0.70);
-      bb3.sprite.scale.set(bbW, bbH, 1);
       if (bankBoulderTex[bbTexIdx]) {
         bb3.sprite.material.map = bankBoulderTex[bbTexIdx];
         bb3.sprite.material.needsUpdate = true;
@@ -2174,6 +2334,7 @@ window.addEventListener('keydown', e => {
       devJumpToStage(parseInt(e.key, 10) - 1);
     }
     // ===== END TEMP DEV STAGE JUMP =====
+
   } else if (gameState3 === 'paused') {
     if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
       gameState3 = 'playing';
