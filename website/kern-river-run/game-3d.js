@@ -142,13 +142,23 @@ scene.add(skyDome);
 // sitting high above the play area, drifting slowly downstream.
 const clouds3 = [];
 (function() {
-  var cMat = new THREE.MeshLambertMaterial({ color: 0xFFFFFF });
+  // Per-blob shading: top blobs bright white, bottom blobs soft cool-grey.
+  // Blobs have y in roughly [-1.2, 1.1]; lerp maps that to [underside, sunlit top].
+  var cTopCol = new THREE.Color(0xFFFFFF);
+  var cBotCol = new THREE.Color(0xCFDCEB);
+  var C_Y_MIN = -1.2;
+  var C_Y_RNG =  2.3;
 
   function makeCloud(blobs) {
     var grp = new THREE.Group();
     for (var bi = 0; bi < blobs.length; bi++) {
-      var b = blobs[bi];
-      var m = new THREE.Mesh(new THREE.SphereGeometry(b.r, 7, 5), cMat);
+      var b   = blobs[bi];
+      var t   = Math.max(0, Math.min(1, (b.y - C_Y_MIN) / C_Y_RNG));
+      var col = cBotCol.clone().lerp(cTopCol, t);
+      var m   = new THREE.Mesh(
+        new THREE.SphereGeometry(b.r, 7, 5),
+        new THREE.MeshLambertMaterial({ color: col })
+      );
       m.position.set(b.x, b.y, b.z);
       grp.add(m);
     }
@@ -264,16 +274,34 @@ function buildWorld() {
   riverGroup.add(water);
   waterMesh = water;
 
-  // Banks -- color from backdrop config when present, else plain bankColor
-  const bkW    = 5.5;
-  const bkColor = stg.backdrop ? stg.backdrop.bankGrass : stg.bankColor;
-  const bkMat  = new THREE.MeshLambertMaterial({ color: bkColor });
-  const bkGeo  = new THREE.BoxGeometry(bkW, 0.60, 145);
-  for (const side of [-1, 1]) {
-    const bk = new THREE.Mesh(bkGeo, bkMat.clone());
-    bk.position.set(side * (rw / 2 + bkW / 2), 0.30, -55);
-    bk.castShadow = true; bk.receiveShadow = true;
-    riverGroup.add(bk);
+  // Banks -- segmented curved geometry.
+  // Inner edge of every segment stays exactly at side * rw/2 (flush with play area).
+  // Outer edge follows a slow sine so the bank appears to meander.
+  // Play lanes, water surface, lane dividers, spawns, and collision are all untouched.
+  const bkColor   = stg.backdrop ? stg.backdrop.bankGrass : stg.bankColor;
+  const bkBaseMat = new THREE.MeshLambertMaterial({ color: bkColor });
+  const BANK_W0   = 5.0;    // base bank width
+  const BANK_AMP  = 1.6;    // sine amplitude for outer-edge variation
+  const BANK_FREQ = 0.040;  // spatial frequency (larger = more bends)
+  const BK_SEG_Z  = 5.5;    // depth of each segment
+  const BK_SEG_N  = 18;     // number of segments
+  const BK_Z0     = -70.0;  // start z
+  for (const bkSide of [-1, 1]) {
+    const bkPhase = bkSide === 1 ? 0 : Math.PI * 0.55;  // offset phases for natural meander
+    for (let bkSi = 0; bkSi < BK_SEG_N; bkSi++) {
+      const bkZCtr = BK_Z0 + bkSi * BK_SEG_Z + BK_SEG_Z * 0.5;
+      let   segW   = BANK_W0 + BANK_AMP * Math.sin(bkZCtr * BANK_FREQ + bkPhase);
+      if (segW < 2.2) segW = 2.2;
+      // xCenter formula guarantees inner edge = bkSide * rw/2 regardless of segW
+      const bkXCtr = bkSide * (rw / 2 + segW / 2);
+      const bkSeg  = new THREE.Mesh(
+        new THREE.BoxGeometry(segW, 0.60, BK_SEG_Z + 0.25),
+        bkBaseMat.clone()
+      );
+      bkSeg.position.set(bkXCtr, 0.30, bkZCtr);
+      bkSeg.castShadow = true; bkSeg.receiveShadow = true;
+      riverGroup.add(bkSeg);
+    }
   }
 
   // Lane dividers
@@ -337,9 +365,17 @@ function addBankDecor(group, rw, stg) {
       rock.position.set(xBase, 2.0, z); rock.castShadow = true; group.add(rock);
 
     } else if (bd) {
-      // Stage 1 (and future backdrop stages): layered low-poly pine
+      // Stage 1 / backdrop stages: 3 tree types with rounded blob canopies.
+      // tType 0 = tall layered (3 stacked flattened spheres)
+      // tType 1 = round medium (wide dome + upper cap)
+      // tType 2 = short bushy (squat wide blobs, shrub silhouette)
       var treeH  = 1.5 + (i % 3) * 0.85;
       var trunkH = treeH * 0.22;
+      var tType  = i % 3;
+      var cA = bd.treeColors[i % bd.treeColors.length];
+      var cB = bd.treeColors[(i + 1) % bd.treeColors.length];
+      var cC = bd.treeColors[(i + 2) % bd.treeColors.length];
+
       var trk = new THREE.Mesh(
         new THREE.CylinderGeometry(0.08, 0.14, trunkH, 5),
         trunkMat
@@ -347,19 +383,58 @@ function addBankDecor(group, rw, stg) {
       trk.position.set(xBase, trunkH / 2, z);
       group.add(trk);
 
-      // 3-tier cones: each tier overlaps the one below for a pine silhouette
-      for (var t = 0; t < 3; t++) {
-        var col   = bd.treeColors[(i * 3 + t) % bd.treeColors.length];
-        var tierR = (0.84 - t * 0.19) * treeH * 0.30;
-        var tierH = treeH * 0.44;
-        var tierY = trunkH + t * (treeH * 0.25);
-        var cone  = new THREE.Mesh(
-          new THREE.ConeGeometry(tierR, tierH, 6),
-          new THREE.MeshLambertMaterial({ color: col })
+      if (tType === 0) {
+        // Tall layered: 3 stacked flattened spheres, each tier smaller and higher
+        for (var t = 0; t < 3; t++) {
+          var bR   = (0.88 - t * 0.22) * treeH * 0.30;
+          var bY   = trunkH + t * treeH * 0.27 + bR * 0.55;
+          var bCol = t === 0 ? cA : t === 1 ? cB : cC;
+          var blob = new THREE.Mesh(
+            new THREE.SphereGeometry(bR, 7, 5),
+            new THREE.MeshLambertMaterial({ color: bCol })
+          );
+          blob.scale.set(1.20, 0.72, 1.10);
+          blob.position.set(xBase, bY, z);
+          blob.castShadow = true;
+          group.add(blob);
+        }
+
+      } else if (tType === 1) {
+        // Round medium: wide flattened lower dome + tighter upper cap
+        var r0  = treeH * 0.29;
+        var r1  = treeH * 0.19;
+        var lo  = new THREE.Mesh(
+          new THREE.SphereGeometry(r0, 7, 5),
+          new THREE.MeshLambertMaterial({ color: cA })
         );
-        cone.position.set(xBase, tierY + tierH / 2, z);
-        cone.castShadow = true;
-        group.add(cone);
+        lo.scale.set(1.30, 0.68, 1.20);
+        lo.position.set(xBase, trunkH + r0 * 0.65, z);
+        lo.castShadow = true; group.add(lo);
+        var hi  = new THREE.Mesh(
+          new THREE.SphereGeometry(r1, 7, 5),
+          new THREE.MeshLambertMaterial({ color: cB })
+        );
+        hi.scale.set(1.10, 0.82, 1.05);
+        hi.position.set(xBase, trunkH + r0 * 1.15 + r1, z);
+        hi.castShadow = true; group.add(hi);
+
+      } else {
+        // Short bushy: two overlapping wide squat blobs at low height
+        var rb  = treeH * 0.28;
+        var sh0 = new THREE.Mesh(
+          new THREE.SphereGeometry(rb, 6, 4),
+          new THREE.MeshLambertMaterial({ color: cA })
+        );
+        sh0.scale.set(1.40, 0.55, 1.30);
+        sh0.position.set(xBase, trunkH + rb * 0.45, z);
+        sh0.castShadow = true; group.add(sh0);
+        var sh1 = new THREE.Mesh(
+          new THREE.SphereGeometry(rb * 0.72, 6, 4),
+          new THREE.MeshLambertMaterial({ color: cB })
+        );
+        sh1.scale.set(1.20, 0.60, 1.20);
+        sh1.position.set(xBase + 0.28, trunkH + rb * 0.55, z);
+        sh1.castShadow = true; group.add(sh1);
       }
 
     } else {
