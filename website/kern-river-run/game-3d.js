@@ -351,13 +351,11 @@ function buildWorld() {
   // Width rw+2 gives a 1-unit bleed on each side so no grass shows at the water edges.
   riverbedTexRef = null;
   if (stg.backdrop) {
-    // MeshBasicMaterial: fog-immune so the sandy bed stays visible at far distances.
-    // polygonOffset pushes it slightly "closer" in the depth buffer to win over the
-    // ground plane (y=-0.02) at extreme view angles where z-fighting would otherwise hide it.
-    var rbMat = new THREE.MeshBasicMaterial({
-      color: 0xC4A46B,
-      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1
-    });
+    // MeshBasicMaterial: fog-immune so the sandy bed stays visible at far distances
+    // without being washed out by scene fog. No polygonOffset needed: the riverbed sits
+    // at y=0.005 (above the ground at y=-0.02), so it is geometrically closer to the
+    // camera and naturally passes the depth test against the ground.
+    var rbMat = new THREE.MeshBasicMaterial({ color: 0xC4A46B });
     if (riverbedStageTex) {
       riverbedStageTex.offset.set(0, 0);
       rbMat.map = riverbedStageTex;
@@ -370,7 +368,7 @@ function buildWorld() {
     rbMesh.renderOrder = 1;
     riverGroup.add(rbMesh);
     riverbedMesh = rbMesh;
-    console.log('[KRR] Riverbed mesh created | y=' + rbMesh.position.y + ' renderOrder=' + rbMesh.renderOrder + ' texture=' + (riverbedStageTex ? 'applied' : 'pending'));
+    console.log('[KRR] Riverbed mesh | y=' + rbMesh.position.y + ' renderOrder=' + rbMesh.renderOrder + ' texture=' + (riverbedStageTex ? 'applied' : 'pending'));
   }
 
   // River surface
@@ -396,6 +394,7 @@ function buildWorld() {
   water.renderOrder = 2;
   riverGroup.add(water);
   waterMesh = water;
+  console.log('[KRR] Water mesh   | y=' + water.position.y + ' renderOrder=' + water.renderOrder + ' (water above riverbed: ' + (water.renderOrder > (riverbedMesh ? riverbedMesh.renderOrder : -1)) + ')');
 
   // Banks -- segmented curved geometry.
   // Inner edge of every segment stays exactly at side * rw/2 (flush with play area).
