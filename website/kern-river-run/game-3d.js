@@ -904,49 +904,57 @@ for (var ripI = 0; ripI < 10; ripI++) {
   obsRipplePool3.push(ripMesh);
 }
 
-// Polish 2: Jump splash pool -- 4 reusable expanding ring meshes.
-// Landing uses 2 simultaneously (inner fast + outer slow); takeoff uses 1.
+// Splash pool -- 4 reusable expanding ring meshes for paddle and jump splashes.
+// ROOT CAUSE FIX: old rings were RingGeometry(0.05,0.18) at scale 0.25 = 0.09 world diameter = ~5px. Invisible.
+// New: outer radius 0.35, bright white, y=0.22 (above water wave peaks), renderOrder=4.
 const splashPool3 = [];
 for (var spI3 = 0; spI3 < 4; spI3++) {
   var spMesh3 = new THREE.Mesh(
-    new THREE.RingGeometry(0.05, 0.18, 12),
-    new THREE.MeshBasicMaterial({ color: 0xDEF5FF, transparent: true, opacity: 0, depthWrite: false })
+    new THREE.RingGeometry(0.08, 0.35, 12),
+    new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0, depthWrite: false })
   );
   spMesh3.rotation.x = -Math.PI / 2;
-  spMesh3.position.set(0, 0.16, 0);
-  spMesh3.renderOrder = 3;
+  spMesh3.position.set(0, 0.22, 0);
+  spMesh3.renderOrder = 4;
   scene.add(spMesh3);
   splashPool3.push({ mesh: spMesh3, active: false, frame: 0, dur: 20, maxScale: 1.0 });
 }
 
-// Refinement 3: Moving wake chevrons -- pool of 10 reusable V-shape line groups.
-// Each chevron spawns at the kayak stern, scrolls with the world (+z per frame), and fades out.
+// Moving wake chevrons -- pool of 10 reusable V-shape line groups.
+// 3-point arms (tip/mid/end) with DynamicDrawUsage for organic spread variation + sway per chevron.
+// Spawn assigns random spread (0.60-1.00) and zTail (0.90-1.30) so no two look identical.
 const wakeChevrons3 = [];
 for (var wcI = 0; wcI < 10; wcI++) {
   var wcGrp = new THREE.Group();
-  var wcMatL = new THREE.LineBasicMaterial({ color: 0xC4EEFF, transparent: true, opacity: 0, depthWrite: false });
-  var wcLineL = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0, 0, 0),
-      new THREE.Vector3(-0.80, 0, 1.10)
-    ]),
-    wcMatL
-  );
+
+  var wcPosL = new Float32Array(9);
+  var wcAttrL = new THREE.BufferAttribute(wcPosL, 3);
+  wcAttrL.usage = THREE.DynamicDrawUsage;
+  var wcGeoL = new THREE.BufferGeometry();
+  wcGeoL.setAttribute('position', wcAttrL);
+  var wcMatL = new THREE.LineBasicMaterial({ color: 0xCCEEFF, transparent: true, opacity: 0, depthWrite: false });
+  var wcLineL = new THREE.Line(wcGeoL, wcMatL);
   wcLineL.renderOrder = 3;
   wcGrp.add(wcLineL);
-  var wcMatR = new THREE.LineBasicMaterial({ color: 0xC4EEFF, transparent: true, opacity: 0, depthWrite: false });
-  var wcLineR = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0, 0, 0),
-      new THREE.Vector3(0.80, 0, 1.10)
-    ]),
-    wcMatR
-  );
+
+  var wcPosR = new Float32Array(9);
+  var wcAttrR = new THREE.BufferAttribute(wcPosR, 3);
+  wcAttrR.usage = THREE.DynamicDrawUsage;
+  var wcGeoR = new THREE.BufferGeometry();
+  wcGeoR.setAttribute('position', wcAttrR);
+  var wcMatR = new THREE.LineBasicMaterial({ color: 0xCCEEFF, transparent: true, opacity: 0, depthWrite: false });
+  var wcLineR = new THREE.Line(wcGeoR, wcMatR);
   wcLineR.renderOrder = 3;
   wcGrp.add(wcLineR);
+
   wcGrp.position.set(0, 0.16, -9999);
   scene.add(wcGrp);
-  wakeChevrons3.push({ grp: wcGrp, active: false, life: 0, maxLife: 35, worldX: 0, worldZ: 0 });
+  wakeChevrons3.push({
+    grp: wcGrp, attrL: wcAttrL, attrR: wcAttrR,
+    active: false, life: 0, maxLife: 45,
+    worldX: 0, worldZ: 0,
+    spread: 0.85, zTail: 1.10, swayPhase: 0
+  });
 }
 
 // Shield ring (animated torus)
@@ -1329,8 +1337,8 @@ function activateSplash3(x, z, maxScale, dur) {
       var sp3 = splashPool3[asi];
       sp3.active = true; sp3.frame = 0;
       sp3.dur = dur; sp3.maxScale = maxScale;
-      sp3.mesh.position.set(x, 0.16, z);
-      sp3.mesh.scale.set(0.25, 0.25, 1);
+      sp3.mesh.position.set(x, 0.22, z);
+      sp3.mesh.scale.set(0.40, 0.40, 1);
       break;
     }
   }
@@ -1470,18 +1478,23 @@ function update3() {
     if (sparkles3[spkSi].position.z > 6) sparkles3[spkSi].position.z = SPAWN_Z + 4;
   }
 
-  // Refinement 3: Wake chevron spawn every 8 frames + scroll all active chevrons.
+  // Refinement 3: Wake chevron spawn every 6 frames + scroll all active chevrons.
+  // Each chevron gets random spread/zTail/swayPhase for organic V-shape variation.
   if (!player3.isJumping) {
     wakeChevronTimer3++;
-    if (wakeChevronTimer3 >= 8) {
+    if (wakeChevronTimer3 >= 6) {
       wakeChevronTimer3 = 0;
       for (var wcSi = 0; wcSi < wakeChevrons3.length; wcSi++) {
         if (!wakeChevrons3[wcSi].active) {
-          wakeChevrons3[wcSi].active  = true;
-          wakeChevrons3[wcSi].life    = 0;
-          wakeChevrons3[wcSi].maxLife = 35;
-          wakeChevrons3[wcSi].worldX  = player3.x;
-          wakeChevrons3[wcSi].worldZ  = 0.65;
+          var wcNew = wakeChevrons3[wcSi];
+          wcNew.active    = true;
+          wcNew.life      = 0;
+          wcNew.maxLife   = 45;
+          wcNew.worldX    = player3.x;
+          wcNew.worldZ    = 0.65;
+          wcNew.spread    = 0.60 + Math.random() * 0.40;
+          wcNew.zTail     = 0.90 + Math.random() * 0.40;
+          wcNew.swayPhase = Math.random() * Math.PI * 2;
           break;
         }
       }
@@ -1605,11 +1618,12 @@ function updateVisuals3() {
     var lcTarget3 = laneXPos(player3.targetLane);
     var lcDx3     = lcTarget3 - player3.x;
     var lcWant3   = (Math.abs(lcDx3) > 0.15 && !player3.isJumping)
-      ? (lcDx3 > 0 ? -Math.PI / 3 : Math.PI / 3)
+      ? (lcDx3 > 0 ? -0.70 : 0.70)
       : 0;
-    kayakTurnY3 += (lcWant3 - kayakTurnY3) * 0.12;
+    kayakTurnY3 += (lcWant3 - kayakTurnY3) * 0.35;
     if (Math.abs(kayakTurnY3) < 0.008) kayakTurnY3 = 0;
     playerGroup.rotation.y = kayakTurnY3;
+    if (Math.abs(kayakTurnY3) > 0.01) console.log('[KRR] turn y:', kayakTurnY3.toFixed(3), 'dx:', lcDx3.toFixed(3));
   }
 
   // Paddle animation: Z tilt + subtle X dive
@@ -1622,9 +1636,11 @@ function updateVisuals3() {
   var pSin3 = Math.sin(frameN * 0.095);
   if (!player3.isJumping && gameState3 === 'playing') {
     if (paddleSplashPrev3 <= 0 && pSin3 > 0) {
-      activateSplash3(player3.x - 0.97, 0, 0.40, 12);
+      activateSplash3(player3.x - 0.97, 0, 1.2, 16);
+      console.log('[KRR] paddle splash LEFT x:', (player3.x - 0.97).toFixed(2));
     } else if (paddleSplashPrev3 >= 0 && pSin3 < 0) {
-      activateSplash3(player3.x + 0.97, 0, 0.40, 12);
+      activateSplash3(player3.x + 0.97, 0, 1.2, 16);
+      console.log('[KRR] paddle splash RIGHT x:', (player3.x + 0.97).toFixed(2));
     }
   }
   paddleSplashPrev3 = pSin3;
@@ -1735,11 +1751,13 @@ function updateVisuals3() {
   // Polish 2: Jump splash -- detect takeoff/landing, activate pool rings
   var jumpingNow3 = player3.isJumping;
   if (jumpingNow3 && !splashWasJumping3) {
-    activateSplash3(player3.x, 0, 0.9, 18);                    // takeoff: one ring
+    activateSplash3(player3.x, 0, 2.2, 22);
+    console.log('[KRR] jump TAKEOFF splash x:', player3.x.toFixed(2));
   }
   if (!jumpingNow3 && splashWasJumping3) {
-    activateSplash3(player3.x, 0, 1.1, 22);                    // landing: inner ring
-    activateSplash3(player3.x, 0, 1.8, 30);                    // landing: outer ring
+    activateSplash3(player3.x, 0, 2.5, 28);
+    activateSplash3(player3.x, 0, 4.0, 36);
+    console.log('[KRR] jump LANDING splash x:', player3.x.toFixed(2));
   }
   splashWasJumping3 = jumpingNow3;
   // Animate active splash rings (expand + fade)
@@ -1749,8 +1767,8 @@ function updateVisuals3() {
     spE.frame++;
     if (spE.frame > spE.dur) { spE.active = false; spE.mesh.material.opacity = 0; continue; }
     var spT = spE.frame / spE.dur;
-    spE.mesh.material.opacity = (1 - spT) * 0.55;
-    var spSc = 0.25 + spT * spE.maxScale;
+    spE.mesh.material.opacity = (1 - spT) * 0.88;
+    var spSc = 0.40 + spT * spE.maxScale;
     spE.mesh.scale.set(spSc, spSc, 1);
   }
 
@@ -1775,12 +1793,31 @@ function updateVisuals3() {
     obsRipplePool3[ripIdx].position.z = -9999;
   }
 
-  // Refinement 3: Wake chevron fade -- opacity falls linearly from 0.28 at spawn to 0 at expiry.
+  // Refinement 3: Wake chevrons -- curved 3-point arms with organic sway, fade 0.35 to 0.
+  // Arms curve outward (mid-x = 60% of spread) giving a rounded-V instead of rigid V.
   for (var wcVi = 0; wcVi < wakeChevrons3.length; wcVi++) {
     var wcV = wakeChevrons3[wcVi];
-    var wcOp = wcV.active ? (1 - wcV.life / wcV.maxLife) * 0.28 : 0;
+    if (!wcV.active) {
+      wcV.grp.children[0].material.opacity = 0;
+      wcV.grp.children[1].material.opacity = 0;
+      continue;
+    }
+    var wcOp = (1 - wcV.life / wcV.maxLife) * 0.35;
     wcV.grp.children[0].material.opacity = wcOp;
     wcV.grp.children[1].material.opacity = wcOp;
+    var wcSway = Math.sin(wcV.swayPhase + wcV.life * 0.11) * 0.055;
+    var lxMid = -(wcV.spread * 0.60) + wcSway;
+    var lxEnd = -(wcV.spread) + wcSway * 0.4;
+    var lzMid = wcV.zTail * 0.50;
+    var lzEnd = wcV.zTail;
+    wcV.attrL.setXYZ(0, 0, 0, 0);
+    wcV.attrL.setXYZ(1, lxMid, 0, lzMid);
+    wcV.attrL.setXYZ(2, lxEnd, 0, lzEnd);
+    wcV.attrL.needsUpdate = true;
+    wcV.attrR.setXYZ(0, 0, 0, 0);
+    wcV.attrR.setXYZ(1, -lxMid, 0, lzMid);
+    wcV.attrR.setXYZ(2, -lxEnd, 0, lzEnd);
+    wcV.attrR.needsUpdate = true;
   }
 }
 
