@@ -341,6 +341,7 @@ function buildWorld() {
   }
   const gnd = new THREE.Mesh(new THREE.PlaneGeometry(200, 170), gndMat);
   gnd.rotation.x = -Math.PI / 2; gnd.position.set(0, -0.02, -55); gnd.receiveShadow = true;
+  gnd.renderOrder = 0;
   riverGroup.add(gnd);
 
   // Riverbed -- always created for Stage 1 (backdrop stages) so the mesh exists before
@@ -350,18 +351,26 @@ function buildWorld() {
   // Width rw+2 gives a 1-unit bleed on each side so no grass shows at the water edges.
   riverbedTexRef = null;
   if (stg.backdrop) {
-    var rbMat = new THREE.MeshLambertMaterial({ color: 0xC4A46B });
+    // MeshBasicMaterial: fog-immune so the sandy bed stays visible at far distances.
+    // polygonOffset pushes it slightly "closer" in the depth buffer to win over the
+    // ground plane (y=-0.02) at extreme view angles where z-fighting would otherwise hide it.
+    var rbMat = new THREE.MeshBasicMaterial({
+      color: 0xC4A46B,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1
+    });
     if (riverbedStageTex) {
-      riverbedStageTex.offset.set(0, 0);  // reset scroll from any previous run
-      rbMat = new THREE.MeshLambertMaterial({ map: riverbedStageTex });
+      riverbedStageTex.offset.set(0, 0);
+      rbMat.map = riverbedStageTex;
+      rbMat.needsUpdate = true;
       riverbedTexRef = riverbedStageTex;
     }
     var rbMesh = new THREE.Mesh(new THREE.PlaneGeometry(rw + 2, 155, 1, 1), rbMat);
     rbMesh.rotation.x = -Math.PI / 2;
     rbMesh.position.set(0, 0.005, -55);
+    rbMesh.renderOrder = 1;
     riverGroup.add(rbMesh);
     riverbedMesh = rbMesh;
-    console.log('[KRR] Riverbed mesh created, texture:', riverbedStageTex ? 'applied' : 'pending (fallback color)');
+    console.log('[KRR] Riverbed mesh created | y=' + rbMesh.position.y + ' renderOrder=' + rbMesh.renderOrder + ' texture=' + (riverbedStageTex ? 'applied' : 'pending'));
   }
 
   // River surface
@@ -384,6 +393,7 @@ function buildWorld() {
   wMat.depthWrite  = false;
   const water = new THREE.Mesh(new THREE.PlaneGeometry(rw, 155, 12, 32), wMat);
   water.rotation.x = -Math.PI / 2; water.position.set(0, 0.01, -55); water.receiveShadow = true;
+  water.renderOrder = 2;
   riverGroup.add(water);
   waterMesh = water;
 
