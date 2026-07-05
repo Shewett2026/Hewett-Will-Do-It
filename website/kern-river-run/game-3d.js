@@ -218,6 +218,7 @@ let wfGroup     = null;
 let wfStrips    = [];
 let bankTrees3   = [];   // scrolling tree sprite pool (not riverGroup children)
 let bankSegMats3 = [];   // bank segment texture refs for per-frame scroll
+let sparkles3    = [];   // Part 2: water sparkle glints (rebuilt each buildWorld)
 
 // ── TEXTURE PRELOAD ───────────────────────────────────────────────
 // Warms the cache before the player clicks START so buildStageBackdrop
@@ -314,6 +315,8 @@ function buildWorld() {
   }
   flowLines3d.forEach(l => { l.geometry.dispose(); scene.remove(l); });
   flowLines3d = [];
+  sparkles3.forEach(function(sp) { sp.geometry.dispose(); sp.material.dispose(); scene.remove(sp); });
+  sparkles3 = [];
   bankTrees3.forEach(function(bt) { scene.remove(bt.sprite); if (bt.sprite.material) bt.sprite.material.dispose(); });
   bankTrees3 = [];
   bankSegMats3 = [];
@@ -453,16 +456,45 @@ function buildWorld() {
   scene.add(riverGroup);
   if (stg.backdrop) { initBankTrees3(rw, stg.backdrop); }
 
-  // Animated flow lines
-  const flMat = new THREE.LineBasicMaterial({ color: 0x60A5FA, transparent: true, opacity: 0.16 });
-  for (let i = 0; i < 22; i++) {
-    const fl = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-rw / 2 + 0.3, 0.05, 0), new THREE.Vector3(rw / 2 - 0.3, 0.05, 0)]),
-      flMat.clone()
+  // Part 1: Current flow streaks -- z-aligned lines above the water surface (y=0.16).
+  // Each streak is a short segment at a random x position with a slight downstream drift,
+  // giving the surface a sense of flowing current rather than static horizontal bands.
+  // renderOrder=3 places them above water (renderOrder=2). depthWrite:false avoids artifacts.
+  var flWc = new THREE.Color(stg.waterColor).lerp(new THREE.Color(0xFFFFFF), 0.42);
+  var flBaseMat = new THREE.LineBasicMaterial({ color: flWc, transparent: true, opacity: 0.19, depthWrite: false });
+  for (var fli = 0; fli < 36; fli++) {
+    var flX   = -rw / 2 + 0.5 + Math.random() * (rw - 1.0);
+    var flLen = 1.0 + Math.random() * 4.2;
+    var flDrift = (Math.random() - 0.5) * 0.36;
+    var flLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(flX,           0.16, -flLen * 0.5),
+        new THREE.Vector3(flX + flDrift, 0.16,  flLen * 0.5)
+      ]),
+      flBaseMat.clone()
     );
-    fl.position.z = SPAWN_Z + i * (Math.abs(SPAWN_Z) / 22);
-    scene.add(fl);
-    flowLines3d.push(fl);
+    flLine.renderOrder = 3;
+    flLine.position.z = SPAWN_Z + fli * (Math.abs(SPAWN_Z) / 36);
+    scene.add(flLine);
+    flowLines3d.push(flLine);
+  }
+
+  // Part 2: Water surface sparkle glints -- small bright quads scattered across the water.
+  // Each has a unique shimmer phase so they twinkle independently. Scrolled in update3()
+  // like the flow lines. renderOrder=3, depthWrite:false, max opacity ~0.30 for subtlety.
+  var spkBaseMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0, depthWrite: false });
+  for (var spkI = 0; spkI < 28; spkI++) {
+    var spkX = -rw / 2 + 0.5 + Math.random() * (rw - 1.0);
+    var spkZ = SPAWN_Z + Math.random() * (Math.abs(SPAWN_Z) + 8);
+    var spkMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.07, 0.07), spkBaseMat.clone());
+    spkMesh.rotation.x = -Math.PI / 2;
+    spkMesh.position.set(spkX, 0.16, spkZ);
+    spkMesh.renderOrder = 3;
+    spkMesh.userData.phase = Math.random() * Math.PI * 2;
+    spkMesh.userData.rate  = 0.035 + Math.random() * 0.055;
+    spkMesh.userData.peak  = 0.12  + Math.random() * 0.18;
+    scene.add(spkMesh);
+    sparkles3.push(spkMesh);
   }
 
   // Use the backdrop image for Stage 1; fall back to procedural cone mountains otherwise
@@ -769,6 +801,59 @@ const playerShadow = new THREE.Mesh(new THREE.CircleGeometry(0.58, 12), shadowMa
 playerShadow.rotation.x = -Math.PI / 2;
 playerShadow.position.set(0, 0.02, 0);
 scene.add(playerShadow);
+
+// ── WATER LIFE: KAYAK WAKE + OBSTACLE RIPPLES (Part 3) ────────────
+// Created once at module level like playerGroup. Positioned each frame in updateVisuals3.
+// renderOrder=3 places them above the water surface (renderOrder=2).
+// depthWrite:false on all so they do not compete with each other in the depth buffer.
+
+const wakeGroup3 = new THREE.Group();
+scene.add(wakeGroup3);
+const wkLineMat = new THREE.LineBasicMaterial({ color: 0xC4EEFF, transparent: true, opacity: 0, depthWrite: false });
+// V-wake: two arms going from near the stern outward and behind (+z = downstream/behind kayak)
+const wakeL3 = new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-0.15, 0, 0.4),
+    new THREE.Vector3(-1.55, 0, 2.5)
+  ]),
+  wkLineMat.clone()
+);
+wakeL3.renderOrder = 3;
+wakeGroup3.add(wakeL3);
+const wakeR3 = new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0.15, 0, 0.4),
+    new THREE.Vector3(1.55, 0, 2.5)
+  ]),
+  wkLineMat.clone()
+);
+wakeR3.renderOrder = 3;
+wakeGroup3.add(wakeR3);
+// Bow ripple ring: at the front of the kayak (-z = upstream / into the current)
+const bowRipple3 = new THREE.Mesh(
+  new THREE.RingGeometry(0.20, 0.32, 14),
+  new THREE.MeshBasicMaterial({ color: 0xC4EEFF, transparent: true, opacity: 0, depthWrite: false })
+);
+bowRipple3.rotation.x = -Math.PI / 2;
+bowRipple3.position.set(0, 0, -1.1);
+bowRipple3.renderOrder = 3;
+wakeGroup3.add(bowRipple3);
+const kayakWake3 = { group: wakeGroup3, lineL: wakeL3, lineR: wakeR3, bow: bowRipple3 };
+
+// Obstacle upstream parting-ripple pool: 10 reusable flat rings.
+// Each frame the nearest active obstacles claim rings from the front of the pool.
+const obsRipplePool3 = [];
+for (var ripI = 0; ripI < 10; ripI++) {
+  var ripMesh = new THREE.Mesh(
+    new THREE.RingGeometry(0.32, 0.50, 12),
+    new THREE.MeshBasicMaterial({ color: 0xC4EEFF, transparent: true, opacity: 0, depthWrite: false })
+  );
+  ripMesh.rotation.x = -Math.PI / 2;
+  ripMesh.position.set(0, 0.16, -9999);
+  ripMesh.renderOrder = 3;
+  scene.add(ripMesh);
+  obsRipplePool3.push(ripMesh);
+}
 
 // Shield ring (animated torus)
 const shieldMat3 = new THREE.MeshBasicMaterial({ color: 0xF97316, transparent: true, opacity: 0, depthWrite: false });
@@ -1265,10 +1350,16 @@ function update3() {
     return true;
   });
 
-  // Scroll flow lines
+  // Scroll flow lines (Part 1: current streaks)
   for (const fl of flowLines3d) {
     fl.position.z += spd;
     if (fl.position.z > 6) fl.position.z = SPAWN_Z + 4;
+  }
+
+  // Scroll sparkles at the same rate (Part 2: glints travel with the current)
+  for (var spkSi = 0; spkSi < sparkles3.length; spkSi++) {
+    sparkles3[spkSi].position.z += spd;
+    if (sparkles3[spkSi].position.z > 6) sparkles3[spkSi].position.z = SPAWN_Z + 4;
   }
 
   // Scroll bank tree sprites; recycle past-camera trees with new random params
@@ -1448,6 +1539,43 @@ function updateVisuals3() {
         }
       }
     }
+  }
+
+  // Part 2: Sparkle shimmer -- each glint pulses on its own sine phase
+  for (var spkVi = 0; spkVi < sparkles3.length; spkVi++) {
+    var sp = sparkles3[spkVi];
+    var spA = Math.max(0, Math.sin(frameN * sp.userData.rate + sp.userData.phase));
+    sp.material.opacity = spA * sp.userData.peak;
+  }
+
+  // Part 3a: Kayak V-wake and bow ripple
+  // The group is placed at the kayak's current world x, y=0.16 (above water), z=0.
+  // Wake arms trail behind (+z = downstream/stern). Bow ripple pulsates at the bow (-z).
+  kayakWake3.group.position.set(player3.x, 0.16, 0);
+  var wkOp = player3.isJumping ? 0 : 0.30;
+  kayakWake3.lineL.material.opacity = wkOp;
+  kayakWake3.lineR.material.opacity = wkOp;
+  kayakWake3.bow.material.opacity   = player3.isJumping ? 0 : Math.max(0, 0.18 + Math.sin(frameN * 0.16) * 0.10);
+
+  // Part 3b: Obstacle upstream parting ripples (pool of 10 reusable rings).
+  // Rings are assigned each frame to the first N visible active obstacles.
+  // Upstream side = negative z from the obstacle (water flows from -z toward +z).
+  var ripIdx = 0;
+  for (var ri3 = 0; ri3 < obstacles3.length; ri3++) {
+    if (ripIdx >= obsRipplePool3.length) break;
+    var obs3 = obstacles3[ri3];
+    if (!obs3.mesh) continue;
+    if (obs3.z < SPAWN_Z + 5 || obs3.z > DESPAWN_Z - 1) continue;
+    var ripR = obsRipplePool3[ripIdx++];
+    var ripScale = 0.88 + Math.sin(frameN * 0.07 + ri3 * 2.1) * 0.12;
+    ripR.position.set(obs3.mesh.position.x, 0.16, obs3.mesh.position.z - 0.65);
+    ripR.scale.set(ripScale, ripScale, 1);
+    ripR.material.opacity = 0.15 + Math.sin(frameN * 0.11 + ri3 * 1.8) * 0.07;
+  }
+  // Hide all unused pool slots this frame
+  for (; ripIdx < obsRipplePool3.length; ripIdx++) {
+    obsRipplePool3[ripIdx].material.opacity = 0;
+    obsRipplePool3[ripIdx].position.z = -9999;
   }
 }
 
