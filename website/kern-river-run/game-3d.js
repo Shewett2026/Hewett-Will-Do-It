@@ -12,7 +12,8 @@ const JUMP_H    = 2.6;
 const SPF       = 2;
 const MIN_GAP   = 135;
 const MI_PER_PX = 900;
-const COLL_FREQ = 0.006;
+const COLL_FREQ  = 0.006;
+const COLL_DRIFT = 0.60;  // collectibles float at 60% of obstacle speed (river-current feel)
 const SPD_SCALE = 0.070;
 const CAM_Y     = 4.8;
 const CAM_Z_BK  = 8.5;
@@ -257,7 +258,7 @@ function buildWorld() {
   riverGroup.add(gnd);
 
   // River surface
-  const wMat = new THREE.MeshPhongMaterial({ color: stg.waterColor, shininess: 90, specular: 0x7DD3FC });
+  const wMat = new THREE.MeshPhongMaterial({ color: stg.waterColor, shininess: 120, specular: 0x93C5FD });
   const water = new THREE.Mesh(new THREE.PlaneGeometry(rw, 155, 12, 32), wMat);
   water.rotation.x = -Math.PI / 2; water.position.set(0, 0.01, -55); water.receiveShadow = true;
   riverGroup.add(water);
@@ -1074,7 +1075,7 @@ function update3() {
   });
 
   for (const c of collectibles3) {
-    c.z += spd; c.mesh.position.z = c.z;
+    c.z += spd * COLL_DRIFT; c.mesh.position.z = c.z;
     c.mesh.position.y = c.baseY + Math.sin(frameN * 0.11 + c.lane * 1.3) * 0.14;
     c.mesh.rotation.y += 0.028;  // gentle rotation
   }
@@ -1189,18 +1190,21 @@ function updateVisuals3() {
     document.getElementById('hud3-best').textContent     = 'BEST '  + Math.floor(highScore3);
   }
 
-  // Animate water surface -- two overlapping sine waves traveling downstream (+world z).
+  // Animate water surface -- three overlapping sine waves traveling downstream (+world z).
   // PlaneGeometry is rotated -PI/2 on X, so local Y maps to world Z.
   // Wave sin(t - localY * k) travels in +localY = +worldZ = downstream direction.
+  // wt multiplier 0.013 is roughly 1/3 of the original 0.038 for calm, gently flowing look.
+  // Third wave adds a cross-current ripple at a different spatial angle for organic depth.
   if (waterMesh && waterMesh.geometry) {
     var wPos = waterMesh.geometry.attributes.position;
-    var wt   = frameN * 0.038;
+    var wt   = frameN * 0.013;
     for (var wvi = 0; wvi < wPos.count; wvi++) {
       var wly = wPos.getY(wvi);
       var wlx = wPos.getX(wvi);
       wPos.setZ(wvi,
-        Math.sin(wt - wly * 0.15 + wlx * 0.20) * 0.10 +
-        Math.sin(wt * 1.65 - wly * 0.27) * 0.045
+        Math.sin(wt        - wly * 0.15 + wlx * 0.20) * 0.11 +
+        Math.sin(wt * 1.65 - wly * 0.27)               * 0.048 +
+        Math.sin(wt * 0.45 + wly * 0.09 - wlx * 0.26) * 0.028
       );
     }
     wPos.needsUpdate = true;
