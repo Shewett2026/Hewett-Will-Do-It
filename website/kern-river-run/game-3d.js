@@ -1366,7 +1366,6 @@ function activateSplash3(x, z, maxScale, dur) {
 // Spawn count water droplets with arcing physics from world position (cx, 0, cz).
 // vScale: 1.0 = paddle stroke, 1.4 = jump landing burst.
 function activateDroplets3(cx, cz, count, vScale) {
-  console.log('[KRR] DROPLETS spawn x:', cx.toFixed(2), 'z:', cz.toFixed(2), 'count:', count);
   for (var dpAi = 0; dpAi < count; dpAi++) {
     for (var dpFi = 0; dpFi < dropletPool3.length; dpFi++) {
       if (!dropletPool3[dpFi].active) {
@@ -1539,7 +1538,6 @@ function update3() {
           wcNew.spread    = 0.60 + Math.random() * 0.40;
           wcNew.zTail     = 0.90 + Math.random() * 0.40;
           wcNew.swayPhase = Math.random() * Math.PI * 2;
-          if (frameN < 120) console.log('[KRR] chevron worldZ:', wcNew.worldZ.toFixed(3), '| arm bz3 start ~0.40');
           break;
         }
       }
@@ -1549,7 +1547,7 @@ function update3() {
     var wcE = wakeChevrons3[wcUi];
     if (!wcE.active) continue;
     wcE.life++;
-    wcE.worldZ += spd;
+    wcE.worldZ += spd * 0.5;
     wcE.grp.position.set(wcE.worldX, 0.16, wcE.worldZ);
     if (wcE.life > wcE.maxLife || wcE.worldZ > DESPAWN_Z) {
       wcE.active = false;
@@ -1678,9 +1676,6 @@ function updateVisuals3() {
     kayakTurnY3   += kayakTurnVel3;
     if (Math.abs(kayakTurnY3) < 0.008) { kayakTurnY3 = 0; kayakTurnVel3 = 0; }
     playerGroup.rotation.y = kayakTurnY3;
-    var dbgTurnEl = document.getElementById('dbg3-turn');
-    if (dbgTurnEl) dbgTurnEl.textContent = 'YAW: ' + (kayakTurnY3 * 180 / Math.PI).toFixed(1) + 'deg  hold:' + turnHoldFrames3;
-    if (Math.abs(kayakTurnY3) > 0.01) console.log('[KRR] turn y:', kayakTurnY3.toFixed(3), 'dx:', lcDx3.toFixed(3), 'hold:', turnHoldFrames3);
   }
 
   // Paddle animation: Z tilt + subtle X dive
@@ -1695,11 +1690,9 @@ function updateVisuals3() {
     if (paddleSplashPrev3 <= 0 && pSin3 > 0) {
       activateSplash3(player3.x - 0.97, 0, 1.2, 16);
       activateDroplets3(player3.x - 0.97, 0, 10, 1.0);
-      console.log('[KRR] paddle splash LEFT x:', (player3.x - 0.97).toFixed(2));
     } else if (paddleSplashPrev3 >= 0 && pSin3 < 0) {
       activateSplash3(player3.x + 0.97, 0, 1.2, 16);
       activateDroplets3(player3.x + 0.97, 0, 10, 1.0);
-      console.log('[KRR] paddle splash RIGHT x:', (player3.x + 0.97).toFixed(2));
     }
   }
   paddleSplashPrev3 = pSin3;
@@ -1811,13 +1804,11 @@ function updateVisuals3() {
   var jumpingNow3 = player3.isJumping;
   if (jumpingNow3 && !splashWasJumping3) {
     activateSplash3(player3.x, 0, 2.2, 22);
-    console.log('[KRR] jump TAKEOFF splash x:', player3.x.toFixed(2));
   }
   if (!jumpingNow3 && splashWasJumping3) {
     activateSplash3(player3.x, 0, 2.5, 28);
     activateSplash3(player3.x, 0, 4.0, 36);
     activateDroplets3(player3.x, 0, 18, 1.4);
-    console.log('[KRR] jump LANDING splash x:', player3.x.toFixed(2));
   }
   splashWasJumping3 = jumpingNow3;
   // Animate active splash rings (expand + fade)
