@@ -218,7 +218,10 @@ let wfGroup     = null;
 let wfStrips    = [];
 let bankTrees3   = [];   // scrolling tree sprite pool (not riverGroup children)
 let bankSegMats3 = [];   // bank segment texture refs for per-frame scroll
-let sparkles3    = [];   // Part 2: water sparkle glints (rebuilt each buildWorld)
+let sparkles3         = [];   // Part 2: water sparkle glints (rebuilt each buildWorld)
+let kayakTurnY3       = 0;    // Polish 3: lane-change tilt angle (radians)
+let kayakWasSpinning3 = false; // Polish 3: spinout-exit guard for smooth rotation handoff
+let splashWasJumping3 = false; // Polish 2: previous-frame jump state for takeoff/landing detection
 
 // ── TEXTURE PRELOAD ───────────────────────────────────────────────
 // Warms the cache before the player clicks START so buildStageBackdrop
@@ -453,6 +456,7 @@ function buildWorld() {
   }
 
   addBankDecor(riverGroup, rw, stg);
+  addShoreline3(riverGroup, rw, stg);
   scene.add(riverGroup);
   if (stg.backdrop) { initBankTrees3(rw, stg.backdrop); }
 
@@ -544,6 +548,40 @@ function addBankDecor(group, rw, stg) {
         new THREE.MeshLambertMaterial({ color: foliageCol })
       );
       can.position.set(xBase, 1.95, z); can.castShadow = true; group.add(can);
+    }
+  }
+}
+
+// ── SHORELINE BAND (Polish 4) ─────────────────────────────────────
+// Foam strip + scattered rocks at each bank-water boundary inside riverGroup.
+// Foam: transparent strip just inside the water edge, renderOrder=3.
+// Rocks: small opaque BoxGeometry pebbles at the shoreline, y=0.16 (above water y=0.15).
+// Nothing extends more than 0.22 units into the water: no collision impact.
+function addShoreline3(rg, rw, stg) {
+  for (var shSide = -1; shSide <= 1; shSide += 2) {
+    var shX = shSide * rw / 2;
+
+    // Foam/wet-edge strip: 0.28-wide translucent band inside the water at the shore
+    var foamMat = new THREE.MeshBasicMaterial({ color: 0xCCEEFF, transparent: true, opacity: 0.20, depthWrite: false });
+    var foamMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 150), foamMat);
+    foamMesh.rotation.x = -Math.PI / 2;
+    foamMesh.position.set(shX - shSide * 0.14, 0.155, -55);
+    foamMesh.renderOrder = 3;
+    rg.add(foamMesh);
+
+    // Rocks scattered along the shoreline: 20 per side, random size + orientation
+    for (var rki = 0; rki < 20; rki++) {
+      var rkZ  = -65 + rki * 3.6 + (Math.random() - 0.5) * 2.8;
+      var rkX  = shX - shSide * (0.04 + Math.random() * 0.18);
+      var rkS  = 0.05 + Math.random() * 0.08;
+      var rkV  = Math.floor(Math.random() * 32);
+      var rkC  = 0x7A6955 + rkV * 0x010101;
+      var rkMt = new THREE.MeshLambertMaterial({ color: rkC });
+      var rkG  = new THREE.BoxGeometry(rkS, rkS * 0.55, rkS * (0.75 + Math.random() * 0.5));
+      var rkM  = new THREE.Mesh(rkG, rkMt);
+      rkM.position.set(rkX, 0.16, rkZ);
+      rkM.rotation.y = Math.random() * Math.PI;
+      rg.add(rkM);
     }
   }
 }
@@ -809,26 +847,35 @@ scene.add(playerShadow);
 
 const wakeGroup3 = new THREE.Group();
 scene.add(wakeGroup3);
-const wkLineMat = new THREE.LineBasicMaterial({ color: 0xC4EEFF, transparent: true, opacity: 0, depthWrite: false });
-// V-wake: two arms going from near the stern outward and behind (+z = downstream/behind kayak)
-const wakeL3 = new THREE.Line(
-  new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(-0.15, 0, 0.4),
-    new THREE.Vector3(-1.55, 0, 2.5)
-  ]),
-  wkLineMat.clone()
-);
-wakeL3.renderOrder = 3;
-wakeGroup3.add(wakeL3);
-const wakeR3 = new THREE.Line(
-  new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(0.15, 0, 0.4),
-    new THREE.Vector3(1.55, 0, 2.5)
-  ]),
-  wkLineMat.clone()
-);
-wakeR3.renderOrder = 3;
-wakeGroup3.add(wakeR3);
+
+// Animated V-wake: 3 segments per arm (root/mid/tail) with decreasing opacity.
+// Vertex x-positions are updated every frame in updateVisuals3 for undulation.
+// DynamicDrawUsage hints the GPU driver that these buffers update every frame.
+const wakeSegs3 = [];
+function initWakeSeg3(sign, t0, t1, baseOp) {
+  var pos  = new Float32Array([
+    sign * (0.12 + t0 * 1.42), 0, 0.40 + t0 * 2.10,
+    sign * (0.12 + t1 * 1.42), 0, 0.40 + t1 * 2.10
+  ]);
+  var attr = new THREE.BufferAttribute(pos, 3);
+  attr.usage = THREE.DynamicDrawUsage;
+  var geo  = new THREE.BufferGeometry();
+  geo.setAttribute('position', attr);
+  var mat  = new THREE.LineBasicMaterial({ color: 0xC4EEFF, transparent: true, opacity: 0, depthWrite: false });
+  var ln   = new THREE.Line(geo, mat);
+  ln.renderOrder = 3;
+  wakeGroup3.add(ln);
+  wakeSegs3.push({ ln: ln, attr: attr, sign: sign, t0: t0, t1: t1, baseOp: baseOp });
+}
+// Left arm: root (strong) -> mid -> tail (faint)
+initWakeSeg3(-1, 0,    0.40, 0.32);
+initWakeSeg3(-1, 0.40, 0.72, 0.20);
+initWakeSeg3(-1, 0.72, 1.00, 0.10);
+// Right arm
+initWakeSeg3( 1, 0,    0.40, 0.32);
+initWakeSeg3( 1, 0.40, 0.72, 0.20);
+initWakeSeg3( 1, 0.72, 1.00, 0.10);
+
 // Bow ripple ring: at the front of the kayak (-z = upstream / into the current)
 const bowRipple3 = new THREE.Mesh(
   new THREE.RingGeometry(0.20, 0.32, 14),
@@ -838,7 +885,7 @@ bowRipple3.rotation.x = -Math.PI / 2;
 bowRipple3.position.set(0, 0, -1.1);
 bowRipple3.renderOrder = 3;
 wakeGroup3.add(bowRipple3);
-const kayakWake3 = { group: wakeGroup3, lineL: wakeL3, lineR: wakeR3, bow: bowRipple3 };
+const kayakWake3 = { group: wakeGroup3, bow: bowRipple3 };
 
 // Obstacle upstream parting-ripple pool: 10 reusable flat rings.
 // Each frame the nearest active obstacles claim rings from the front of the pool.
@@ -853,6 +900,21 @@ for (var ripI = 0; ripI < 10; ripI++) {
   ripMesh.renderOrder = 3;
   scene.add(ripMesh);
   obsRipplePool3.push(ripMesh);
+}
+
+// Polish 2: Jump splash pool -- 4 reusable expanding ring meshes.
+// Landing uses 2 simultaneously (inner fast + outer slow); takeoff uses 1.
+const splashPool3 = [];
+for (var spI3 = 0; spI3 < 4; spI3++) {
+  var spMesh3 = new THREE.Mesh(
+    new THREE.RingGeometry(0.05, 0.18, 12),
+    new THREE.MeshBasicMaterial({ color: 0xDEF5FF, transparent: true, opacity: 0, depthWrite: false })
+  );
+  spMesh3.rotation.x = -Math.PI / 2;
+  spMesh3.position.set(0, 0.16, 0);
+  spMesh3.renderOrder = 3;
+  scene.add(spMesh3);
+  splashPool3.push({ mesh: spMesh3, active: false, frame: 0, dur: 20, maxScale: 1.0 });
 }
 
 // Shield ring (animated torus)
@@ -1228,6 +1290,20 @@ function clearActive() {
   obstacles3 = []; collectibles3 = [];
 }
 
+// Polish 2: Claim an idle pool slot and start a splash ring animation.
+function activateSplash3(x, z, maxScale, dur) {
+  for (var asi = 0; asi < splashPool3.length; asi++) {
+    if (!splashPool3[asi].active) {
+      var sp3 = splashPool3[asi];
+      sp3.active = true; sp3.frame = 0;
+      sp3.dur = dur; sp3.maxScale = maxScale;
+      sp3.mesh.position.set(x, 0.16, z);
+      sp3.mesh.scale.set(0.25, 0.25, 1);
+      break;
+    }
+  }
+}
+
 function flash3(text, life) {
   transMsg3 = { text, life, maxLife: life };
   const el = document.getElementById('transitionMsg3');
@@ -1451,12 +1527,29 @@ function updateVisuals3() {
   playerShadow.scale.set(sScale, sScale, sScale);
   shadowMat.opacity = player3.isJumping ? 0.10 : 0.28;
 
-  // Spinout
+  // Spinout + lane-change tilt (share rotation.y, handled in three phases).
+  // Phase 1: active spinout -- accumulate full rotation, suppress turn.
+  // Phase 2: spinout-exit decay -- preserve the original decay feel before handing off.
+  // Phase 3: normal paddling -- tilt kayak 45 deg toward target lane, snap back when settled.
   if (player3.spinoutFrames > 0) {
     playerGroup.rotation.y += 0.18;
-  } else {
+    kayakWasSpinning3 = true;
+    kayakTurnY3 = 0;
+  } else if (kayakWasSpinning3) {
     playerGroup.rotation.y *= 0.75;
-    if (Math.abs(playerGroup.rotation.y) < 0.01) playerGroup.rotation.y = 0;
+    if (Math.abs(playerGroup.rotation.y) < 0.01) {
+      playerGroup.rotation.y = 0;
+      kayakWasSpinning3 = false;
+    }
+  } else {
+    var lcTarget3 = laneXPos(player3.targetLane);
+    var lcDx3     = lcTarget3 - player3.x;
+    var lcWant3   = (Math.abs(lcDx3) > 0.15 && !player3.isJumping)
+      ? (lcDx3 > 0 ? -Math.PI / 4 : Math.PI / 4)
+      : 0;
+    kayakTurnY3 += (lcWant3 - kayakTurnY3) * 0.22;
+    if (Math.abs(kayakTurnY3) < 0.008) kayakTurnY3 = 0;
+    playerGroup.rotation.y = kayakTurnY3;
   }
 
   // Paddle animation: Z tilt + subtle X dive
@@ -1548,14 +1641,45 @@ function updateVisuals3() {
     sp.material.opacity = spA * sp.userData.peak;
   }
 
-  // Part 3a: Kayak V-wake and bow ripple
-  // The group is placed at the kayak's current world x, y=0.16 (above water), z=0.
-  // Wake arms trail behind (+z = downstream/stern). Bow ripple pulsates at the bow (-z).
+  // Polish 1: Animated V-wake -- per-vertex x-offset creates lateral undulation.
+  // Wave amplitude grows toward the tail (t), travels downstream via time phase.
   kayakWake3.group.position.set(player3.x, 0.16, 0);
-  var wkOp = player3.isJumping ? 0 : 0.30;
-  kayakWake3.lineL.material.opacity = wkOp;
-  kayakWake3.lineR.material.opacity = wkOp;
-  kayakWake3.bow.material.opacity   = player3.isJumping ? 0 : Math.max(0, 0.18 + Math.sin(frameN * 0.16) * 0.10);
+  var wkT3 = frameN * 0.09;
+  for (var wsi3 = 0; wsi3 < wakeSegs3.length; wsi3++) {
+    var wseg = wakeSegs3[wsi3];
+    for (var wvi3 = 0; wvi3 < 2; wvi3++) {
+      var wt3  = wvi3 === 0 ? wseg.t0 : wseg.t1;
+      var bx3  = wseg.sign * (0.12 + wt3 * 1.42);
+      var bz3  = 0.40 + wt3 * 2.10;
+      var xW3  = Math.sin(wkT3 - bz3 * 1.6) * 0.15 * wt3;
+      wseg.attr.setXYZ(wvi3, bx3 + xW3, 0, bz3);
+    }
+    wseg.attr.needsUpdate = true;
+    wseg.ln.material.opacity = player3.isJumping ? 0 : wseg.baseOp;
+  }
+  kayakWake3.bow.material.opacity = player3.isJumping ? 0 : Math.max(0, 0.18 + Math.sin(frameN * 0.16) * 0.10);
+
+  // Polish 2: Jump splash -- detect takeoff/landing, activate pool rings
+  var jumpingNow3 = player3.isJumping;
+  if (jumpingNow3 && !splashWasJumping3) {
+    activateSplash3(player3.x, 0, 0.9, 18);                    // takeoff: one ring
+  }
+  if (!jumpingNow3 && splashWasJumping3) {
+    activateSplash3(player3.x, 0, 1.1, 22);                    // landing: inner ring
+    activateSplash3(player3.x, 0, 1.8, 30);                    // landing: outer ring
+  }
+  splashWasJumping3 = jumpingNow3;
+  // Animate active splash rings (expand + fade)
+  for (var spAi = 0; spAi < splashPool3.length; spAi++) {
+    var spE = splashPool3[spAi];
+    if (!spE.active) { spE.mesh.material.opacity = 0; continue; }
+    spE.frame++;
+    if (spE.frame > spE.dur) { spE.active = false; spE.mesh.material.opacity = 0; continue; }
+    var spT = spE.frame / spE.dur;
+    spE.mesh.material.opacity = (1 - spT) * 0.55;
+    var spSc = 0.25 + spT * spE.maxScale;
+    spE.mesh.scale.set(spSc, spSc, 1);
+  }
 
   // Part 3b: Obstacle upstream parting ripples (pool of 10 reusable rings).
   // Rings are assigned each frame to the first N visible active obstacles.
@@ -1611,6 +1735,7 @@ function startGame3() {
   player3.isJumping = false; player3.jumpFrame  = 0;
   player3.dead      = false; player3.hasShield  = false; player3.spinoutFrames = 0;
   playerGroup.rotation.y = 0; playerGroup.position.y = 0;
+  kayakTurnY3 = 0; kayakWasSpinning3 = false; splashWasJumping3 = false;
 
   clearActive(); buildWorld();
 
