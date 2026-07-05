@@ -108,6 +108,19 @@
       width: 60px; height: 2px;
       background: #C9883A; border-radius: 1px;
     }
+
+    /* ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) ===== */
+    #dev-stage-label {
+      position: fixed; bottom: 8px; left: 50%;
+      transform: translateX(-50%);
+      font-family: 'Press Start 2P', monospace;
+      font-size: 5px; color: #F97316;
+      background: rgba(11,31,58,0.85);
+      padding: 4px 10px; border: 1px solid #F97316;
+      pointer-events: none; z-index: 25;
+      white-space: nowrap;
+    }
+    /* ===== END TEMP DEV STAGE JUMP ===== */
   </style>
 </head>
 <body>
@@ -209,6 +222,10 @@
     </div>
 
   </div>
+
+  <!-- ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) ===== -->
+  <div id="dev-stage-label">DEV: press 1-5 to jump stages</div>
+  <!-- ===== END TEMP DEV STAGE JUMP ===== -->
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
   <script src="game-3d.js"></script>

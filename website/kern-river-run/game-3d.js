@@ -20,6 +20,10 @@ const CAM_Z_BK  = 8.5;
 const CAM_LOOK_Z = -8.0;
 const WATER_OPACITY = 0.60;   // tune here: 0=invisible 1=solid; 0.60 = clear shallow river
 
+// ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) =====
+const DEV_STAGE_JUMP = true;  // flip to false or delete this whole block to disable
+// ===== END TEMP DEV STAGE JUMP =====
+
 // ── STAGE DATA (full roster matching game.js) ─────────────────────
 const STAGES3 = [
   {
@@ -44,7 +48,14 @@ const STAGES3 = [
     waterColor:0x0EA5E9, bankColor:0x7C2D12,
     obsTypes:['capsized_raft','capsized_raft','boulder','boulder','river_wash'],
     fwType:'raft_train', collA:'fishing_lure', collB:'golden_eagle_feather',
-    backdrop: null,
+    backdrop: {
+      img:        'upper-kern-bg.png',
+      bankGrass:  0x8B7435,
+      bankEarth:  0x6B3A1E,
+      treeColors: [0x4A6728, 0x5C7A1E, 0x3D5C1A, 0x6B7A2E],
+      trunkColor: 0x7A4A28,
+      wf:         null,
+    },
   },
   {
     num:3, name:'LAKE ISABELLA', endMile:99, lanes:5, speed:1.78, obsFreq:0.012, fwFreq:0.10,
@@ -217,6 +228,7 @@ let backdropMesh = null;
 let wfGroup     = null;
 let wfStrips    = [];
 let bankTrees3   = [];   // scrolling tree sprite pool (not riverGroup children)
+let bankBoulders3 = [];  // scrolling bank boulder sprite pool (stages 2-4, decoration only)
 let bankSegMats3 = [];   // bank segment texture refs for per-frame scroll
 let sparkles3         = [];   // Part 2: water sparkle glints (rebuilt each buildWorld)
 let kayakTurnY3       = 0;    // Polish 3: lane-change tilt angle (radians)
@@ -241,7 +253,7 @@ new THREE.TextureLoader().load(
     tex.minFilter    = THREE.NearestFilter;
     tex.generateMipmaps = false;
     tex.needsUpdate  = true;
-    stageTexCache['s1'] = tex;
+    stageTexCache['sierra-nevada-bg.png.png'] = tex;
     // Patch the start-screen backdrop if it was built before this fired
     if (backdropMesh && backdropMesh.material && !backdropMesh.material.map) {
       backdropMesh.material.map = tex;
@@ -310,6 +322,36 @@ var treeTexNames = ['tree-pine-tall.png', 'tree-broadleaf-tall.png', 'tree-round
   }
 })();
 
+// ── BOULDER TEXTURE PRELOAD ──────────────────────────────────────────
+// Bank decoration (stages 2-4): boulder-1, 4, 6, 7, 8 (bulky/rounded shapes)
+// Obstacle in-river (all stages): boulder-2, 3, 5 (more dramatic/blocky shapes)
+var bankBoulderTex      = [null, null, null, null, null];
+var bankBoulderTexNames = ['boulder-1.png', 'boulder-4.png', 'boulder-6.png', 'boulder-7.png', 'boulder-8.png'];
+var boulderObsTex      = [null, null, null];
+var boulderObsTexNames = ['boulder-2.png', 'boulder-3.png', 'boulder-5.png'];
+
+(function preloadBoulderTex() {
+  var loader = new THREE.TextureLoader();
+  for (var bai = 0; bai < bankBoulderTexNames.length; bai++) {
+    (function(idx) {
+      loader.load(bankBoulderTexNames[idx], function(tex) {
+        tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false; tex.needsUpdate = true;
+        bankBoulderTex[idx] = tex;
+      }, undefined, function(e) { console.error('[KRR] ' + bankBoulderTexNames[idx] + ' FAILED', e); });
+    })(bai);
+  }
+  for (var boi = 0; boi < boulderObsTexNames.length; boi++) {
+    (function(idx) {
+      loader.load(boulderObsTexNames[idx], function(tex) {
+        tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false; tex.needsUpdate = true;
+        boulderObsTex[idx] = tex;
+      }, undefined, function(e) { console.error('[KRR] ' + boulderObsTexNames[idx] + ' FAILED', e); });
+    })(boi);
+  }
+})();
+
 let stageIdx    = 0;
 let curLanes    = STAGES3[0].lanes;
 
@@ -328,6 +370,8 @@ function buildWorld() {
   sparkles3 = [];
   bankTrees3.forEach(function(bt) { scene.remove(bt.sprite); if (bt.sprite.material) bt.sprite.material.dispose(); });
   bankTrees3 = [];
+  bankBoulders3.forEach(function(bb) { scene.remove(bb.sprite); if (bb.sprite.material) bb.sprite.material.dispose(); });
+  bankBoulders3 = [];
   bankSegMats3 = [];
   riverbedMesh   = null;
   riverbedTexRef = null;
@@ -465,6 +509,7 @@ function buildWorld() {
   addShoreline3(riverGroup, rw, stg);
   scene.add(riverGroup);
   if (stg.backdrop) { initBankTrees3(rw, stg.backdrop); }
+  if (stg.num >= 2 && stg.num <= 4) { initBankBoulders3(rw); }
 
   // Part 1: Current flow streaks -- z-aligned lines above the water surface (y=0.16).
   // Each streak is a short segment at a random x position with a slight downstream drift,
@@ -633,6 +678,36 @@ function initBankTrees3(rw, bd) {
   }
 }
 
+// Scatter decorative boulder sprites along both banks for stages 2-4.
+// 14 sprites per stage call, evenly seeded, recycled in update3().
+// Sizes vary 0.7-1.8 world units tall with slight width variation.
+// center.y=0 anchors the sprite bottom at y=0 (ground level).
+function initBankBoulders3(rw) {
+  var BOULDER_COUNT = 22;
+  for (var bi = 0; bi < BOULDER_COUNT; bi++) {
+    var side   = bi % 2 === 0 ? -1 : 1;
+    var texIdx = Math.floor(Math.random() * bankBoulderTex.length);
+    var xOff   = Math.floor(Math.random() * 4) * 1.6 + 0.3;
+    var xBase  = side * (rw / 2 + 1.0 + xOff);
+    var zInit  = SPAWN_Z + (bi / BOULDER_COUNT) * (Math.abs(SPAWN_Z) + 12);
+    var bH     = 1.2 + Math.random() * 1.6;
+    var bW     = bH * (0.85 + Math.random() * 0.70);
+    var tex    = bankBoulderTex[texIdx];
+    var mat;
+    if (tex) {
+      mat = new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.08 });
+    } else {
+      mat = new THREE.SpriteMaterial({ color: 0x7C6050, transparent: true, opacity: 0.85 });
+    }
+    var spr = new THREE.Sprite(mat);
+    spr.center.set(0.5, 0);
+    spr.scale.set(bW, bH, 1);
+    spr.position.set(xBase, 0, zInit);
+    scene.add(spr);
+    bankBoulders3.push({ sprite: spr, side: side, z: zInit });
+  }
+}
+
 function buildHorizonArt(stg) {
   const grp = new THREE.Group();
   const mtData = [{ x:-18, h:15, r:8 }, { x:-7, h:20, r:7 }, { x:2, h:12, r:6 }, { x:11, h:17, r:9 }, { x:20, h:14, r:7 }, { x:-26, h:10, r:5 }];
@@ -672,7 +747,7 @@ function buildStageBackdrop(stg) {
     tex.minFilter    = THREE.NearestFilter;
     tex.generateMipmaps = false;
     tex.needsUpdate  = true;
-    stageTexCache['s1'] = tex;
+    stageTexCache[bd.img] = tex;
     if (capMesh.material) {
       capMesh.material.map   = tex;
       capMesh.material.color.set(0xFFFFFF);
@@ -680,9 +755,9 @@ function buildStageBackdrop(stg) {
     }
   }
 
-  if (stageTexCache['s1']) {
+  if (stageTexCache[bd.img]) {
     // Preload already finished - apply immediately, no async flash
-    applyBackdropTex(stageTexCache['s1']);
+    applyBackdropTex(stageTexCache[bd.img]);
   } else {
     // Preload not done yet (or failed) - load fresh with error visibility
     new THREE.TextureLoader().load(
@@ -698,43 +773,45 @@ function buildStageBackdrop(stg) {
     );
   }
 
-  // Animated waterfall strips
-  var wf  = bd.wf;
-  wfGroup  = new THREE.Group();
-  wfStrips = [];
-  var N        = 10;
-  var stripH   = wf.height / N;
-  var wfStripMat = new THREE.MeshBasicMaterial({
-    color: 0xC8E8F8, transparent: true, opacity: 0.72, fog: false, depthWrite: false
-  });
-  for (var wi = 0; wi < N; wi++) {
-    var strip = new THREE.Mesh(
-      new THREE.PlaneGeometry(wf.width, stripH * 0.60),
-      wfStripMat.clone()
-    );
-    strip.position.set(wf.x, wf.yTop - wi * stripH, wf.z);
-    wfGroup.add(strip);
-    wfStrips.push(strip);
-  }
+  // Animated waterfall strips (only when this stage has a waterfall defined)
+  if (bd.wf) {
+    var wf  = bd.wf;
+    wfGroup  = new THREE.Group();
+    wfStrips = [];
+    var N        = 10;
+    var stripH   = wf.height / N;
+    var wfStripMat = new THREE.MeshBasicMaterial({
+      color: 0xC8E8F8, transparent: true, opacity: 0.72, fog: false, depthWrite: false
+    });
+    for (var wi = 0; wi < N; wi++) {
+      var strip = new THREE.Mesh(
+        new THREE.PlaneGeometry(wf.width, stripH * 0.60),
+        wfStripMat.clone()
+      );
+      strip.position.set(wf.x, wf.yTop - wi * stripH, wf.z);
+      wfGroup.add(strip);
+      wfStrips.push(strip);
+    }
 
-  // Mist puffs at base of waterfall
-  var mistMat = new THREE.MeshBasicMaterial({
-    color: 0xE0F4FF, transparent: true, opacity: 0.30, fog: false, depthWrite: false
-  });
-  for (var mi = 0; mi < 3; mi++) {
-    var mist = new THREE.Mesh(
-      new THREE.SphereGeometry(0.65 + mi * 0.22, 6, 4),
-      mistMat.clone()
-    );
-    mist.position.set(
-      wf.x + (mi - 1) * 0.38,
-      wf.yTop - wf.height + 0.45 + mi * 0.18,
-      wf.z + 0.12
-    );
-    wfGroup.add(mist);
-  }
+    // Mist puffs at base of waterfall
+    var mistMat = new THREE.MeshBasicMaterial({
+      color: 0xE0F4FF, transparent: true, opacity: 0.30, fog: false, depthWrite: false
+    });
+    for (var mi = 0; mi < 3; mi++) {
+      var mist = new THREE.Mesh(
+        new THREE.SphereGeometry(0.65 + mi * 0.22, 6, 4),
+        mistMat.clone()
+      );
+      mist.position.set(
+        wf.x + (mi - 1) * 0.38,
+        wf.yTop - wf.height + 0.45 + mi * 0.18,
+        wf.z + 0.12
+      );
+      wfGroup.add(mist);
+    }
 
-  scene.add(wfGroup);
+    scene.add(wfGroup);
+  }
 }
 
 // ── KAYAK HULL GEOMETRY (custom hex-prism with pointed bow/stern) ─
@@ -1212,10 +1289,42 @@ function makeObsMesh(type, fullWidth) {
     return grp;
   }
   if (type === 'boulder') {
-    const m = new THREE.Mesh(new THREE.DodecahedronGeometry(0.52, 0), lm(0x7C2D12));
-    m.rotation.y = Math.random() * Math.PI * 2;
-    m.rotation.z = (Math.random() - 0.5) * 0.5;
-    m.castShadow = true; return m;
+    // scale(1.60, 1.60): ~73% of lane width (LANE_W=2.2), visually fills the lane.
+    // center(0.5, 0): bottom-anchored so yPos=0.08 puts the base just at the waterline.
+    // Collision is single-lane/z-range -- unchanged in checkCollisions3().
+    // renderOrder=3 renders above water (renderOrder=2).
+    var bIdx = Math.floor(Math.random() * boulderObsTex.length);
+    var bTex = boulderObsTex[bIdx];
+    var bMat;
+    if (bTex) {
+      bMat = new THREE.SpriteMaterial({ map: bTex, transparent: true, alphaTest: 0.05 });
+    } else {
+      bMat = new THREE.SpriteMaterial({ color: 0x7C2D12, transparent: true, opacity: 0.90 });
+    }
+    var bSpr = new THREE.Sprite(bMat);
+    bSpr.center.set(0.5, 0);
+    bSpr.scale.set(1.60, 1.60, 1);
+    bSpr.renderOrder = 3;
+    return bSpr;
+  }
+  if (type === 'boulder_wide') {
+    // 2-lane boulder: sprite spans two adjacent lanes (~LANE_W*1.85 wide, 1.9 tall).
+    // center(0.5, 0): bottom-anchored at yPos=0.08 so base sits at the waterline.
+    // Collision handled by lane + lane2 check in checkCollisions3().
+    // renderOrder=3 renders above water.
+    var bwIdx = Math.floor(Math.random() * boulderObsTex.length);
+    var bwTex = boulderObsTex[bwIdx];
+    var bwMat;
+    if (bwTex) {
+      bwMat = new THREE.SpriteMaterial({ map: bwTex, transparent: true, alphaTest: 0.05 });
+    } else {
+      bwMat = new THREE.SpriteMaterial({ color: 0x7C2D12, transparent: true, opacity: 0.90 });
+    }
+    var bwSpr = new THREE.Sprite(bwMat);
+    bwSpr.center.set(0.5, 0);
+    bwSpr.scale.set(LANE_W * 1.85, 1.9, 1);
+    bwSpr.renderOrder = 3;
+    return bwSpr;
   }
   if (type === 'deadfall_log') {
     const grp = new THREE.Group();
@@ -1403,25 +1512,48 @@ function pickCollType3() {
 
 // ── SPAWN ─────────────────────────────────────────────────────────
 function spawnObs3() {
-  const stg     = STAGES3[stageIdx];
-  const isFw    = Math.random() < stg.fwFreq;
-  const type    = isFw
+  const stg  = STAGES3[stageIdx];
+  const isFw = Math.random() < stg.fwFreq;
+  const type = isFw
     ? stg.fwType
     : stg.obsTypes[Math.floor(Math.random() * stg.obsTypes.length)];
-  const lane    = isFw ? -1 : Math.floor(Math.random() * curLanes);
-  const mesh    = makeObsMesh(type, isFw);
 
-  const xPos = isFw ? 0 : laneXPos(lane);
+  // Upgrade single boulder to 2-lane boulder 35% of the time when 3+ lanes exist.
+  // Fairness guard: boulder_wide requires curLanes >= 3 so at least 1 lane stays open.
+  var actualType = type;
+  if (!isFw && type === 'boulder' && curLanes >= 3 && Math.random() < 0.35) {
+    actualType = 'boulder_wide';
+  }
+
+  var lane, lane2, xPos;
+  if (isFw) {
+    lane  = -1;
+    lane2 = undefined;
+    xPos  = 0;
+  } else if (actualType === 'boulder_wide') {
+    // Pick a random pair of adjacent lanes; guaranteed < curLanes so 1+ lane stays free.
+    lane  = Math.floor(Math.random() * (curLanes - 1));
+    lane2 = lane + 1;
+    xPos  = (laneXPos(lane) + laneXPos(lane2)) / 2;
+  } else {
+    lane  = Math.floor(Math.random() * curLanes);
+    lane2 = undefined;
+    xPos  = laneXPos(lane);
+  }
+
+  const mesh = makeObsMesh(actualType, isFw);
+
   let yPos;
-  if (isFw)                       yPos = 0;
-  else if (type === 'boulder')    yPos = 0.52;
-  else if (type === 'river_wash') yPos = 0.52;
-  else                            yPos = 0;
+  if (isFw)                               yPos = 0;
+  else if (actualType === 'boulder')      yPos = 0.08;
+  else if (actualType === 'boulder_wide') yPos = 0.08;
+  else if (actualType === 'river_wash')   yPos = 0.52;
+  else                                    yPos = 0;
 
   mesh.position.set(xPos, yPos, SPAWN_Z);
   mesh.traverse(c => { if (c.isMesh) c.castShadow = true; });
   scene.add(mesh);
-  obstacles3.push({ mesh, lane, z: SPAWN_Z, resolved: false, fullWidth: isFw, type });
+  obstacles3.push({ mesh, lane, z: SPAWN_Z, resolved: false, fullWidth: isFw, type: actualType, lane2 });
 }
 
 function spawnColl3() {
@@ -1575,6 +1707,28 @@ function update3() {
     }
   }
 
+  // Scroll bank boulder sprites (stages 2-4); recycle with new random size + texture
+  for (var bbi = 0; bbi < bankBoulders3.length; bbi++) {
+    var bb3 = bankBoulders3[bbi];
+    bb3.z += spd;
+    bb3.sprite.position.z = bb3.z;
+    if (bb3.z > DESPAWN_Z + 2) {
+      bb3.z = SPAWN_Z - Math.random() * 8;
+      var bbTexIdx = Math.floor(Math.random() * bankBoulderTex.length);
+      var bbRw     = riverWidth();
+      var bbXOff   = Math.floor(Math.random() * 4) * 1.6 + 0.3;
+      bb3.sprite.position.x = bb3.side * (bbRw / 2 + 1.0 + bbXOff);
+      bb3.sprite.position.z = bb3.z;
+      var bbH = 1.2 + Math.random() * 1.6;
+      var bbW = bbH * (0.85 + Math.random() * 0.70);
+      bb3.sprite.scale.set(bbW, bbH, 1);
+      if (bankBoulderTex[bbTexIdx]) {
+        bb3.sprite.material.map = bankBoulderTex[bbTexIdx];
+        bb3.sprite.material.needsUpdate = true;
+      }
+    }
+  }
+
   // Transition flash
   if (transMsg3) {
     transMsg3.life--;
@@ -1604,7 +1758,10 @@ function checkCollisions3() {
     if (o.resolved) continue;
     if (o.z < COLL_FRONT || o.z > COLL_BACK) continue;
     o.resolved = true;
-    const safe = player3.isJumping || (!o.fullWidth && o.lane !== player3.targetLane);
+    // lane2 is set on boulder_wide: hit if player is in lane OR lane2.
+    const inHitLane = (o.lane === player3.targetLane) ||
+                      (o.lane2 !== undefined && o.lane2 === player3.targetLane);
+    const safe = player3.isJumping || (!o.fullWidth && !inHitLane);
     if (safe) continue;
     if (player3.hasShield) { player3.hasShield = false; continue; }
     if (o.type === 'river_wash') {
@@ -1980,6 +2137,19 @@ function showScreen3(which, _complete) {
   }
 }
 
+// ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) =====
+// Jump the player to any stage's start mile for fast local testing.
+// Stage start miles: 1=0, 2=33, 3=66, 4=99, 5=132.
+// To remove: delete this block, the DEV_STAGE_JUMP const above, the
+// key handler addition below, and the #dev-stage-label in game-dev.html.
+function devJumpToStage(idx) {
+  var startMile = (idx === 0) ? 0 : STAGES3[idx - 1].endMile;
+  distance3  = startMile * MI_PER_PX;
+  subsFired3 = new Set();
+  applyStage3(idx, 'DEV: ' + STAGES3[idx].name);
+}
+// ===== END TEMP DEV STAGE JUMP =====
+
 // ── INPUT ──────────────────────────────────────────────────────────
 function doLeft3()  { if (player3.spinoutFrames > 0) return; if (player3.targetLane > 0) player3.targetLane--; }
 function doRight3() { if (player3.spinoutFrames > 0) return; if (player3.targetLane < curLanes - 1) player3.targetLane++; }
@@ -1999,6 +2169,11 @@ window.addEventListener('keydown', e => {
         showScreen3('paused');
         break;
     }
+    // ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) =====
+    if (DEV_STAGE_JUMP && e.key >= '1' && e.key <= '5') {
+      devJumpToStage(parseInt(e.key, 10) - 1);
+    }
+    // ===== END TEMP DEV STAGE JUMP =====
   } else if (gameState3 === 'paused') {
     if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
       gameState3 = 'playing';
