@@ -247,6 +247,7 @@ new THREE.TextureLoader().load(
 var waterStageTex    = null;
 var bankStageTex     = null;
 var riverbedStageTex = null;
+var riverbedMesh     = null;   // module-level ref for late-patching texture after async load
 var riverbedTexRef   = null;   // live texture instance on the riverbed mesh; scrolled each frame
 var treeTex = [null, null, null, null];  // pine-tall, broadleaf-tall, round-med, bush-short
 var treeTexNames = ['tree-pine-tall.png', 'tree-broadleaf-tall.png', 'tree-round-med.png', 'tree-bush-short.png'];
@@ -272,10 +273,20 @@ var treeTexNames = ['tree-pine-tall.png', 'tree-broadleaf-tall.png', 'tree-round
   }, undefined, function(e) { console.error('[KRR] bank-stage1.png FAILED', e); });
 
   loader.load('riverbed-stage1.png', function(tex) {
+    console.log('[KRR] Preload OK: riverbed-stage1.png');
     tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
-    tex.generateMipmaps = false; tex.needsUpdate = true;
+    tex.generateMipmaps = false;
+    tex.repeat.set(6, 24);
+    tex.needsUpdate = true;
     riverbedStageTex = tex;
+    // Late-patch: if buildWorld already ran before this callback fired, apply texture now
+    if (riverbedMesh && riverbedMesh.material && !riverbedMesh.material.map) {
+      riverbedMesh.material.map = tex;
+      riverbedMesh.material.needsUpdate = true;
+      riverbedTexRef = tex;
+      console.log('[KRR] Riverbed texture late-patched onto existing mesh');
+    }
   }, undefined, function(e) { console.error('[KRR] riverbed-stage1.png FAILED', e); });
 
   for (var ti = 0; ti < treeTexNames.length; ti++) {
@@ -306,6 +317,7 @@ function buildWorld() {
   bankTrees3.forEach(function(bt) { scene.remove(bt.sprite); if (bt.sprite.material) bt.sprite.material.dispose(); });
   bankTrees3 = [];
   bankSegMats3 = [];
+  riverbedMesh   = null;
   riverbedTexRef = null;
   if (horizonGrp)   { scene.remove(horizonGrp); horizonGrp = null; }
   if (backdropMesh) { scene.remove(backdropMesh); backdropMesh.geometry.dispose(); backdropMesh = null; }
@@ -331,22 +343,25 @@ function buildWorld() {
   gnd.rotation.x = -Math.PI / 2; gnd.position.set(0, -0.02, -55); gnd.receiveShadow = true;
   riverGroup.add(gnd);
 
-  // Riverbed -- sits just above the grass ground, directly below the water surface.
-  // Width is rw+2 so it extends slightly past the water edge; no grass shows under river.
-  // Texture repeats 6 wide x 24 long for a natural sandy tile size (~2.9 x 6.5 world units).
+  // Riverbed -- always created for Stage 1 (backdrop stages) so the mesh exists before
+  // the async texture load completes. Fallback color 0xC4A46B (sandy tan) shows if the
+  // texture hasn't loaded yet; the load callback late-patches it onto this mesh.
+  // y=0.005: above the grass ground (y=-0.02), below the water surface (y=0.01).
+  // Width rw+2 gives a 1-unit bleed on each side so no grass shows at the water edges.
   riverbedTexRef = null;
-  if (stg.backdrop && riverbedStageTex) {
-    var rbt = riverbedStageTex.clone(); rbt.needsUpdate = true;
-    rbt.wrapS = THREE.RepeatWrapping; rbt.wrapT = THREE.RepeatWrapping;
-    rbt.magFilter = THREE.NearestFilter; rbt.minFilter = THREE.NearestFilter;
-    rbt.generateMipmaps = false;
-    rbt.repeat.set(6, 24);
-    var rbMat  = new THREE.MeshLambertMaterial({ map: rbt });
+  if (stg.backdrop) {
+    var rbMat = new THREE.MeshLambertMaterial({ color: 0xC4A46B });
+    if (riverbedStageTex) {
+      riverbedStageTex.offset.set(0, 0);  // reset scroll from any previous run
+      rbMat = new THREE.MeshLambertMaterial({ map: riverbedStageTex });
+      riverbedTexRef = riverbedStageTex;
+    }
     var rbMesh = new THREE.Mesh(new THREE.PlaneGeometry(rw + 2, 155, 1, 1), rbMat);
     rbMesh.rotation.x = -Math.PI / 2;
     rbMesh.position.set(0, 0.005, -55);
     riverGroup.add(rbMesh);
-    riverbedTexRef = rbt;
+    riverbedMesh = rbMesh;
+    console.log('[KRR] Riverbed mesh created, texture:', riverbedStageTex ? 'applied' : 'pending (fallback color)');
   }
 
   // River surface
