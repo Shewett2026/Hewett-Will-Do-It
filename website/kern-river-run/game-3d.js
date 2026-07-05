@@ -222,6 +222,8 @@ let sparkles3         = [];   // Part 2: water sparkle glints (rebuilt each buil
 let kayakTurnY3       = 0;    // Polish 3: lane-change tilt angle (radians)
 let kayakWasSpinning3 = false; // Polish 3: spinout-exit guard for smooth rotation handoff
 let splashWasJumping3 = false; // Polish 2: previous-frame jump state for takeoff/landing detection
+let paddleSplashPrev3 = 0;     // Refinement 2: previous sin value for paddle stroke zero-crossing detection
+let wakeChevronTimer3 = 0;     // Refinement 3: frames since last wake chevron spawn
 
 // ── TEXTURE PRELOAD ───────────────────────────────────────────────
 // Warms the cache before the player clicks START so buildStageBackdrop
@@ -917,6 +919,36 @@ for (var spI3 = 0; spI3 < 4; spI3++) {
   splashPool3.push({ mesh: spMesh3, active: false, frame: 0, dur: 20, maxScale: 1.0 });
 }
 
+// Refinement 3: Moving wake chevrons -- pool of 10 reusable V-shape line groups.
+// Each chevron spawns at the kayak stern, scrolls with the world (+z per frame), and fades out.
+const wakeChevrons3 = [];
+for (var wcI = 0; wcI < 10; wcI++) {
+  var wcGrp = new THREE.Group();
+  var wcMatL = new THREE.LineBasicMaterial({ color: 0xC4EEFF, transparent: true, opacity: 0, depthWrite: false });
+  var wcLineL = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(-0.80, 0, 1.10)
+    ]),
+    wcMatL
+  );
+  wcLineL.renderOrder = 3;
+  wcGrp.add(wcLineL);
+  var wcMatR = new THREE.LineBasicMaterial({ color: 0xC4EEFF, transparent: true, opacity: 0, depthWrite: false });
+  var wcLineR = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0.80, 0, 1.10)
+    ]),
+    wcMatR
+  );
+  wcLineR.renderOrder = 3;
+  wcGrp.add(wcLineR);
+  wcGrp.position.set(0, 0.16, -9999);
+  scene.add(wcGrp);
+  wakeChevrons3.push({ grp: wcGrp, active: false, life: 0, maxLife: 35, worldX: 0, worldZ: 0 });
+}
+
 // Shield ring (animated torus)
 const shieldMat3 = new THREE.MeshBasicMaterial({ color: 0xF97316, transparent: true, opacity: 0, depthWrite: false });
 const shieldRing = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.065, 8, 28), shieldMat3);
@@ -1438,6 +1470,34 @@ function update3() {
     if (sparkles3[spkSi].position.z > 6) sparkles3[spkSi].position.z = SPAWN_Z + 4;
   }
 
+  // Refinement 3: Wake chevron spawn every 8 frames + scroll all active chevrons.
+  if (!player3.isJumping) {
+    wakeChevronTimer3++;
+    if (wakeChevronTimer3 >= 8) {
+      wakeChevronTimer3 = 0;
+      for (var wcSi = 0; wcSi < wakeChevrons3.length; wcSi++) {
+        if (!wakeChevrons3[wcSi].active) {
+          wakeChevrons3[wcSi].active  = true;
+          wakeChevrons3[wcSi].life    = 0;
+          wakeChevrons3[wcSi].maxLife = 35;
+          wakeChevrons3[wcSi].worldX  = player3.x;
+          wakeChevrons3[wcSi].worldZ  = 0.65;
+          break;
+        }
+      }
+    }
+  }
+  for (var wcUi = 0; wcUi < wakeChevrons3.length; wcUi++) {
+    var wcE = wakeChevrons3[wcUi];
+    if (!wcE.active) continue;
+    wcE.life++;
+    wcE.worldZ += spd;
+    wcE.grp.position.set(wcE.worldX, 0.16, wcE.worldZ);
+    if (wcE.life > wcE.maxLife || wcE.worldZ > DESPAWN_Z) {
+      wcE.active = false;
+    }
+  }
+
   // Scroll bank tree sprites; recycle past-camera trees with new random params
   for (var bti = 0; bti < bankTrees3.length; bti++) {
     var bt3 = bankTrees3[bti];
@@ -1545,9 +1605,9 @@ function updateVisuals3() {
     var lcTarget3 = laneXPos(player3.targetLane);
     var lcDx3     = lcTarget3 - player3.x;
     var lcWant3   = (Math.abs(lcDx3) > 0.15 && !player3.isJumping)
-      ? (lcDx3 > 0 ? -Math.PI / 4 : Math.PI / 4)
+      ? (lcDx3 > 0 ? -Math.PI / 3 : Math.PI / 3)
       : 0;
-    kayakTurnY3 += (lcWant3 - kayakTurnY3) * 0.22;
+    kayakTurnY3 += (lcWant3 - kayakTurnY3) * 0.12;
     if (Math.abs(kayakTurnY3) < 0.008) kayakTurnY3 = 0;
     playerGroup.rotation.y = kayakTurnY3;
   }
@@ -1555,6 +1615,19 @@ function updateVisuals3() {
   // Paddle animation: Z tilt + subtle X dive
   paddleGroup.rotation.z = Math.sin(frameN * 0.095) * 0.42;
   paddleGroup.rotation.x = Math.cos(frameN * 0.095) * 0.12;
+
+  // Refinement 2: Alternating paddle splashes at blade water entry.
+  // rotation.z > 0 (sin positive) = left blade (-x) goes down toward water.
+  // Splash spawns at zero-crossing: left when sin crosses 0 going positive; right going negative.
+  var pSin3 = Math.sin(frameN * 0.095);
+  if (!player3.isJumping && gameState3 === 'playing') {
+    if (paddleSplashPrev3 <= 0 && pSin3 > 0) {
+      activateSplash3(player3.x - 0.97, 0, 0.40, 12);
+    } else if (paddleSplashPrev3 >= 0 && pSin3 < 0) {
+      activateSplash3(player3.x + 0.97, 0, 0.40, 12);
+    }
+  }
+  paddleSplashPrev3 = pSin3;
 
   // Shield ring pulse
   shieldMat3.opacity = player3.hasShield
@@ -1701,6 +1774,14 @@ function updateVisuals3() {
     obsRipplePool3[ripIdx].material.opacity = 0;
     obsRipplePool3[ripIdx].position.z = -9999;
   }
+
+  // Refinement 3: Wake chevron fade -- opacity falls linearly from 0.28 at spawn to 0 at expiry.
+  for (var wcVi = 0; wcVi < wakeChevrons3.length; wcVi++) {
+    var wcV = wakeChevrons3[wcVi];
+    var wcOp = wcV.active ? (1 - wcV.life / wcV.maxLife) * 0.28 : 0;
+    wcV.grp.children[0].material.opacity = wcOp;
+    wcV.grp.children[1].material.opacity = wcOp;
+  }
 }
 
 // ── ENDING SEQUENCE ────────────────────────────────────────────────
@@ -1736,6 +1817,13 @@ function startGame3() {
   player3.dead      = false; player3.hasShield  = false; player3.spinoutFrames = 0;
   playerGroup.rotation.y = 0; playerGroup.position.y = 0;
   kayakTurnY3 = 0; kayakWasSpinning3 = false; splashWasJumping3 = false;
+  paddleSplashPrev3 = 0; wakeChevronTimer3 = 0;
+  for (var wci0 = 0; wci0 < wakeChevrons3.length; wci0++) {
+    wakeChevrons3[wci0].active = false;
+    wakeChevrons3[wci0].grp.children[0].material.opacity = 0;
+    wakeChevrons3[wci0].grp.children[1].material.opacity = 0;
+    wakeChevrons3[wci0].grp.position.set(0, 0.16, -9999);
+  }
 
   clearActive(); buildWorld();
 
