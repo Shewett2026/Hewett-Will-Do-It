@@ -215,6 +215,8 @@ let waterMesh   = null;
 let backdropMesh = null;
 let wfGroup     = null;
 let wfStrips    = [];
+let bankTrees3   = [];   // scrolling tree sprite pool (not riverGroup children)
+let bankSegMats3 = [];   // bank segment texture refs for per-frame scroll
 
 // ── TEXTURE PRELOAD ───────────────────────────────────────────────
 // Warms the cache before the player clicks START so buildStageBackdrop
@@ -291,6 +293,9 @@ function buildWorld() {
   }
   flowLines3d.forEach(l => { l.geometry.dispose(); scene.remove(l); });
   flowLines3d = [];
+  bankTrees3.forEach(function(bt) { scene.remove(bt.sprite); if (bt.sprite.material) bt.sprite.material.dispose(); });
+  bankTrees3 = [];
+  bankSegMats3 = [];
   if (horizonGrp)   { scene.remove(horizonGrp); horizonGrp = null; }
   if (backdropMesh) { scene.remove(backdropMesh); backdropMesh.geometry.dispose(); backdropMesh = null; }
   if (wfGroup)      { scene.remove(wfGroup); wfGroup = null; wfStrips = []; }
@@ -299,13 +304,24 @@ function buildWorld() {
   const rw  = riverWidth();
   riverGroup = new THREE.Group();
 
-  // Ground
-  const gnd = new THREE.Mesh(new THREE.PlaneGeometry(130, 170), new THREE.MeshLambertMaterial({ color: stg.bankColor }));
+  // Ground -- widened to 200 units so grass fills past screen edges on all sides
+  var gndMat;
+  if (stg.backdrop && bankStageTex) {
+    var gt = bankStageTex.clone(); gt.needsUpdate = true;
+    gt.wrapS = THREE.RepeatWrapping; gt.wrapT = THREE.RepeatWrapping;
+    gt.magFilter = THREE.NearestFilter; gt.minFilter = THREE.NearestFilter;
+    gt.generateMipmaps = false;
+    gt.repeat.set(40, 40);
+    gndMat = new THREE.MeshLambertMaterial({ map: gt });
+  } else {
+    gndMat = new THREE.MeshLambertMaterial({ color: stg.bankColor });
+  }
+  const gnd = new THREE.Mesh(new THREE.PlaneGeometry(200, 170), gndMat);
   gnd.rotation.x = -Math.PI / 2; gnd.position.set(0, -0.02, -55); gnd.receiveShadow = true;
   riverGroup.add(gnd);
 
   // River surface
-  const wMat = new THREE.MeshPhongMaterial({ color: stg.waterColor, shininess: 120, specular: 0x93C5FD });
+  const wMat = new THREE.MeshPhongMaterial({ color: stg.waterColor, shininess: 14, specular: 0x111a22 });
   if (stg.backdrop && waterStageTex) {
     var wt = waterStageTex.clone(); wt.needsUpdate = true;
     wt.wrapS = THREE.RepeatWrapping; wt.wrapT = THREE.RepeatWrapping;
@@ -326,28 +342,30 @@ function buildWorld() {
   // Play lanes, water surface, lane dividers, spawns, and collision are all untouched.
   const bkColor   = stg.backdrop ? stg.backdrop.bankGrass : stg.bankColor;
   const bkBaseMat = new THREE.MeshLambertMaterial({ color: bkColor });
-  const BANK_W0   = 5.0;    // base bank width
-  const BANK_AMP  = 1.6;    // sine amplitude for outer-edge variation
-  const BANK_FREQ = 0.040;  // spatial frequency (larger = more bends)
-  const BK_SEG_Z  = 5.5;    // depth of each segment
-  const BK_SEG_N  = 18;     // number of segments
-  const BK_Z0     = -70.0;  // start z
+  // BANK_AMP raised to 2.8 for more organic outer-edge meander (inner edge invariant unchanged)
+  const BANK_W0   = 5.0;
+  const BANK_AMP  = 2.8;
+  const BANK_FREQ = 0.048;
+  const BK_SEG_Z  = 5.5;
+  const BK_SEG_N  = 18;
+  const BK_Z0     = -70.0;
   for (const bkSide of [-1, 1]) {
-    const bkPhase = bkSide === 1 ? 0 : Math.PI * 0.55;  // offset phases for natural meander
+    const bkPhase = bkSide === 1 ? 0 : Math.PI * 0.55;
     for (let bkSi = 0; bkSi < BK_SEG_N; bkSi++) {
       const bkZCtr = BK_Z0 + bkSi * BK_SEG_Z + BK_SEG_Z * 0.5;
       let   segW   = BANK_W0 + BANK_AMP * Math.sin(bkZCtr * BANK_FREQ + bkPhase);
       if (segW < 2.2) segW = 2.2;
-      // xCenter formula guarantees inner edge = bkSide * rw/2 regardless of segW
+      // Inner edge invariant: bkXCtr = side*(rw/2 + segW/2) keeps edge exactly at side*rw/2
       const bkXCtr = bkSide * (rw / 2 + segW / 2);
       var bkSegMat;
       if (stg.backdrop && bankStageTex) {
-        var bt = bankStageTex.clone(); bt.needsUpdate = true;
-        bt.wrapS = THREE.RepeatWrapping; bt.wrapT = THREE.RepeatWrapping;
-        bt.magFilter = THREE.NearestFilter; bt.minFilter = THREE.NearestFilter;
-        bt.generateMipmaps = false;
-        bt.repeat.set(Math.ceil(segW / 2), 1);
-        bkSegMat = new THREE.MeshLambertMaterial({ map: bt });
+        var bkTex = bankStageTex.clone(); bkTex.needsUpdate = true;
+        bkTex.wrapS = THREE.RepeatWrapping; bkTex.wrapT = THREE.RepeatWrapping;
+        bkTex.magFilter = THREE.NearestFilter; bkTex.minFilter = THREE.NearestFilter;
+        bkTex.generateMipmaps = false;
+        bkTex.repeat.set(Math.ceil(segW / 2), 1);
+        bkSegMat = new THREE.MeshLambertMaterial({ map: bkTex });
+        bankSegMats3.push(bkTex);  // store ref for per-frame scroll
       } else {
         bkSegMat = bkBaseMat.clone();
       }
@@ -374,6 +392,7 @@ function buildWorld() {
 
   addBankDecor(riverGroup, rw, stg);
   scene.add(riverGroup);
+  if (stg.backdrop) { initBankTrees3(rw, stg.backdrop); }
 
   // Animated flow lines
   const flMat = new THREE.LineBasicMaterial({ color: 0x60A5FA, transparent: true, opacity: 0.16 });
@@ -422,30 +441,7 @@ function addBankDecor(group, rw, stg) {
       rock.position.set(xBase, 2.0, z); rock.castShadow = true; group.add(rock);
 
     } else if (bd) {
-      // Stage 1 billboard sprite trees using pixel-art PNGs.
-      // Four varieties: 0=pine-tall, 1=broadleaf-tall, 2=round-med, 3=bush-short
-      // Fallback to colored blob if texture hasn't loaded yet.
-      var treeVariety = i % 4;
-      var sprTex = treeTex[treeVariety];
-      if (sprTex) {
-        // Scale: tall trees (0,1) about 3.5 units high; others shorter
-        var sprH  = (treeVariety <= 1) ? 3.5 : (treeVariety === 2 ? 2.8 : 2.0);
-        // Slight random-ish size variation using index
-        sprH *= (0.88 + (i % 5) * 0.065);
-        var sprMat = new THREE.SpriteMaterial({ map: sprTex, transparent: true, alphaTest: 0.08 });
-        var spr    = new THREE.Sprite(sprMat);
-        spr.center.set(0.5, 0);  // anchor at base
-        // width inferred from typical 1:1.5 aspect; keep proportional
-        spr.scale.set(sprH * 0.72, sprH, 1);
-        spr.position.set(xBase, 0.30, z);
-        group.add(spr);
-      } else {
-        // Fallback blob if texture not yet loaded
-        var fbH = 1.5 + (i % 3) * 0.85;
-        var fbMat = new THREE.MeshLambertMaterial({ color: bd.treeColors[i % bd.treeColors.length] });
-        var fb = new THREE.Mesh(new THREE.SphereGeometry(fbH * 0.30, 7, 5), fbMat);
-        fb.position.set(xBase, fbH * 0.55, z); fb.castShadow = true; group.add(fb);
-      }
+      // Tree sprites are now owned by initBankTrees3 (scrolling pool).
 
     } else {
       // Generic single-cone tree for stages 2-3 and 5
@@ -458,6 +454,47 @@ function addBankDecor(group, rw, stg) {
       );
       can.position.set(xBase, 1.95, z); can.castShadow = true; group.add(can);
     }
+  }
+}
+
+// ── SCROLLING TREE POOL ───────────────────────────────────────────
+// Trees for backdrop stages live outside riverGroup so they can scroll
+// toward the camera like obstacles/flow-lines and recycle seamlessly.
+function makeBankTreeHeight(variety) {
+  // Tall varieties about 5-6 units, shorter varieties 3-4 units
+  var base = (variety <= 1) ? 5.5 : (variety === 2 ? 4.5 : 3.2);
+  return base * (0.78 + Math.random() * 0.44);
+}
+
+function makeBankTreeSprite(variety, h) {
+  var tex = treeTex[variety];
+  var mat;
+  if (tex) {
+    mat = new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.08 });
+  } else {
+    var fallbackColors = [0x1B5E20, 0x2E7D32, 0x388E3C, 0x4A7C32];
+    mat = new THREE.SpriteMaterial({ color: fallbackColors[variety], transparent: true, opacity: 0.85 });
+  }
+  var spr = new THREE.Sprite(mat);
+  spr.center.set(0.5, 0);
+  spr.scale.set(h * 0.72, h, 1);
+  return spr;
+}
+
+function initBankTrees3(rw, bd) {
+  var TREE_COUNT = 32;
+  for (var ti = 0; ti < TREE_COUNT; ti++) {
+    var side    = ti % 2 === 0 ? -1 : 1;
+    var variety = Math.floor(Math.random() * 4);
+    var xOff    = Math.floor(Math.random() * 4) * 1.8;
+    var xBase   = side * (rw / 2 + 1.4 + xOff);
+    // Spread evenly across the full visible river length at start
+    var zInit   = SPAWN_Z + (ti / TREE_COUNT) * (Math.abs(SPAWN_Z) + 12);
+    var h       = makeBankTreeHeight(variety);
+    var spr     = makeBankTreeSprite(variety, h);
+    spr.position.set(xBase, 0.30, zInit);
+    scene.add(spr);
+    bankTrees3.push({ sprite: spr, side: side, z: zInit });
   }
 }
 
@@ -1175,6 +1212,27 @@ function update3() {
     if (fl.position.z > 6) fl.position.z = SPAWN_Z + 4;
   }
 
+  // Scroll bank tree sprites; recycle past-camera trees with new random params
+  for (var bti = 0; bti < bankTrees3.length; bti++) {
+    var bt3 = bankTrees3[bti];
+    bt3.z += spd;
+    bt3.sprite.position.z = bt3.z;
+    if (bt3.z > DESPAWN_Z + 2) {
+      bt3.z = SPAWN_Z - Math.random() * 8;
+      var v3    = Math.floor(Math.random() * 4);
+      var rw3   = riverWidth();
+      var xOff3 = Math.floor(Math.random() * 4) * 1.8;
+      bt3.sprite.position.x = bt3.side * (rw3 / 2 + 1.4 + xOff3);
+      bt3.sprite.position.z = bt3.z;
+      var h3 = makeBankTreeHeight(v3);
+      bt3.sprite.scale.set(h3 * 0.72, h3, 1);
+      if (treeTex[v3]) {
+        bt3.sprite.material.map = treeTex[v3];
+        bt3.sprite.material.needsUpdate = true;
+      }
+    }
+  }
+
   // Transition flash
   if (transMsg3) {
     transMsg3.life--;
@@ -1282,22 +1340,29 @@ function updateVisuals3() {
   // Third wave adds a cross-current ripple at a different spatial angle for organic depth.
   if (waterMesh && waterMesh.geometry) {
     var wPos = waterMesh.geometry.attributes.position;
-    var wt   = frameN * 0.013;
+    // Slowed to 0.008 base rate (was 0.013) for calmer motion
+    var wt   = frameN * 0.008;
     for (var wvi = 0; wvi < wPos.count; wvi++) {
       var wly = wPos.getY(wvi);
       var wlx = wPos.getX(wvi);
+      // Amplitudes halved: 0.045 / 0.018 / 0.010 (was 0.11 / 0.048 / 0.028)
       wPos.setZ(wvi,
-        Math.sin(wt        - wly * 0.15 + wlx * 0.20) * 0.11 +
-        Math.sin(wt * 1.65 - wly * 0.27)               * 0.048 +
-        Math.sin(wt * 0.45 + wly * 0.09 - wlx * 0.26) * 0.028
+        Math.sin(wt        - wly * 0.15 + wlx * 0.20) * 0.045 +
+        Math.sin(wt * 1.65 - wly * 0.27)               * 0.018 +
+        Math.sin(wt * 0.45 + wly * 0.09 - wlx * 0.26) * 0.010
       );
     }
     wPos.needsUpdate = true;
   }
 
-  // Scroll the water pixel-art texture downstream (texture V axis = along river)
+  // Scroll water texture downstream -- slowed to 0.0008 (was 0.0022) for subtle flow
   if (waterMesh && waterMesh.material && waterMesh.material.map) {
-    waterMesh.material.map.offset.y -= 0.0022;
+    waterMesh.material.map.offset.y -= 0.0008;
+  }
+
+  // Scroll bank segment textures to match the river-forward feel (Part 4)
+  for (var bsi = 0; bsi < bankSegMats3.length; bsi++) {
+    bankSegMats3[bsi].offset.y -= 0.0005;
   }
 
   // Drift clouds slowly downstream; loop back to the far end when they pass the threshold.
