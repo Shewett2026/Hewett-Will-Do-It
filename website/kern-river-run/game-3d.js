@@ -18,6 +18,7 @@ const SPD_SCALE = 0.070;
 const CAM_Y     = 4.8;
 const CAM_Z_BK  = 8.5;
 const CAM_LOOK_Z = -8.0;
+const WATER_OPACITY = 0.60;   // tune here: 0=invisible 1=solid; 0.60 = clear shallow river
 
 // ── STAGE DATA (full roster matching game.js) ─────────────────────
 const STAGES3 = [
@@ -242,9 +243,11 @@ new THREE.TextureLoader().load(
     console.error('[KRR] Preload FAILED: sierra-nevada-bg.png.png', err);
   }
 );
-// Stage 1 pixel-art textures (water, banks, tree sprites)
-var waterStageTex = null;
-var bankStageTex  = null;
+// Stage 1 pixel-art textures (water, banks, tree sprites, riverbed)
+var waterStageTex    = null;
+var bankStageTex     = null;
+var riverbedStageTex = null;
+var riverbedTexRef   = null;   // live texture instance on the riverbed mesh; scrolled each frame
 var treeTex = [null, null, null, null];  // pine-tall, broadleaf-tall, round-med, bush-short
 var treeTexNames = ['tree-pine-tall.png', 'tree-broadleaf-tall.png', 'tree-round-med.png', 'tree-bush-short.png'];
 
@@ -267,6 +270,13 @@ var treeTexNames = ['tree-pine-tall.png', 'tree-broadleaf-tall.png', 'tree-round
     tex.generateMipmaps = false; tex.needsUpdate = true;
     bankStageTex = tex;
   }, undefined, function(e) { console.error('[KRR] bank-stage1.png FAILED', e); });
+
+  loader.load('riverbed-stage1.png', function(tex) {
+    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    riverbedStageTex = tex;
+  }, undefined, function(e) { console.error('[KRR] riverbed-stage1.png FAILED', e); });
 
   for (var ti = 0; ti < treeTexNames.length; ti++) {
     (function(idx) {
@@ -296,6 +306,7 @@ function buildWorld() {
   bankTrees3.forEach(function(bt) { scene.remove(bt.sprite); if (bt.sprite.material) bt.sprite.material.dispose(); });
   bankTrees3 = [];
   bankSegMats3 = [];
+  riverbedTexRef = null;
   if (horizonGrp)   { scene.remove(horizonGrp); horizonGrp = null; }
   if (backdropMesh) { scene.remove(backdropMesh); backdropMesh.geometry.dispose(); backdropMesh = null; }
   if (wfGroup)      { scene.remove(wfGroup); wfGroup = null; wfStrips = []; }
@@ -320,6 +331,24 @@ function buildWorld() {
   gnd.rotation.x = -Math.PI / 2; gnd.position.set(0, -0.02, -55); gnd.receiveShadow = true;
   riverGroup.add(gnd);
 
+  // Riverbed -- sits just above the grass ground, directly below the water surface.
+  // Width is rw+2 so it extends slightly past the water edge; no grass shows under river.
+  // Texture repeats 6 wide x 24 long for a natural sandy tile size (~2.9 x 6.5 world units).
+  riverbedTexRef = null;
+  if (stg.backdrop && riverbedStageTex) {
+    var rbt = riverbedStageTex.clone(); rbt.needsUpdate = true;
+    rbt.wrapS = THREE.RepeatWrapping; rbt.wrapT = THREE.RepeatWrapping;
+    rbt.magFilter = THREE.NearestFilter; rbt.minFilter = THREE.NearestFilter;
+    rbt.generateMipmaps = false;
+    rbt.repeat.set(6, 24);
+    var rbMat  = new THREE.MeshLambertMaterial({ map: rbt });
+    var rbMesh = new THREE.Mesh(new THREE.PlaneGeometry(rw + 2, 155, 1, 1), rbMat);
+    rbMesh.rotation.x = -Math.PI / 2;
+    rbMesh.position.set(0, 0.005, -55);
+    riverGroup.add(rbMesh);
+    riverbedTexRef = rbt;
+  }
+
   // River surface
   const wMat = new THREE.MeshPhongMaterial({ color: stg.waterColor, shininess: 14, specular: 0x111a22 });
   if (stg.backdrop && waterStageTex) {
@@ -331,6 +360,13 @@ function buildWorld() {
     wt.repeat.set(2, 12);
     wMat.map = wt; wMat.needsUpdate = true;
   }
+  // Transparent so the riverbed shows through.
+  // depthWrite:false lets the opaque riverbed (y=0.005) remain visible beneath the water.
+  // Opaque obstacles/player render before transparent objects and write depth, so they
+  // correctly appear on top of the water with no special render order needed.
+  wMat.transparent = true;
+  wMat.opacity     = WATER_OPACITY;
+  wMat.depthWrite  = false;
   const water = new THREE.Mesh(new THREE.PlaneGeometry(rw, 155, 12, 32), wMat);
   water.rotation.x = -Math.PI / 2; water.position.set(0, 0.01, -55); water.receiveShadow = true;
   riverGroup.add(water);
@@ -1358,6 +1394,11 @@ function updateVisuals3() {
   // Scroll water texture downstream -- slowed to 0.0008 (was 0.0022) for subtle flow
   if (waterMesh && waterMesh.material && waterMesh.material.map) {
     waterMesh.material.map.offset.y -= 0.0008;
+  }
+
+  // Scroll riverbed texture at the same rate so it visually matches the water
+  if (riverbedTexRef) {
+    riverbedTexRef.offset.y -= 0.0008;
   }
 
   // Scroll bank segment textures to match the river-forward feel (Part 4)
