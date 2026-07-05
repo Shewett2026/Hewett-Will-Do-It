@@ -224,6 +224,9 @@ let kayakWasSpinning3 = false; // Polish 3: spinout-exit guard for smooth rotati
 let splashWasJumping3 = false; // Polish 2: previous-frame jump state for takeoff/landing detection
 let paddleSplashPrev3 = 0;     // Refinement 2: previous sin value for paddle stroke zero-crossing detection
 let wakeChevronTimer3 = 0;     // Refinement 3: frames since last wake chevron spawn
+let turnHoldFrames3   = 0;     // frames remaining in post-snap turn hold
+let turnDirSign3      = 0;     // sign of active turn: -1 = nose-right, +1 = nose-left
+let curSpd3           = 0;     // last computed scroll speed (shared with updateVisuals3 for droplet physics)
 
 // ── TEXTURE PRELOAD ───────────────────────────────────────────────
 // Warms the cache before the player clicks START so buildStageBackdrop
@@ -957,6 +960,21 @@ for (var wcI = 0; wcI < 10; wcI++) {
   });
 }
 
+// Water droplet pool -- 20 reusable small cubes for paddle-blade arcs and jump-landing bursts.
+// Physics: gravity DROPLET_GRAV applied to vy each frame; world-scroll at curSpd3 each frame.
+const DROPLET_GRAV = 0.016;
+const dropletPool3 = [];
+for (var dpI3 = 0; dpI3 < 20; dpI3++) {
+  var dpMesh3 = new THREE.Mesh(
+    new THREE.BoxGeometry(0.055, 0.055, 0.055),
+    new THREE.MeshBasicMaterial({ color: 0xAADDFF, transparent: true, opacity: 0, depthWrite: false })
+  );
+  dpMesh3.renderOrder = 5;
+  dpMesh3.position.set(0, -9999, 0);
+  scene.add(dpMesh3);
+  dropletPool3.push({ mesh: dpMesh3, active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, maxLife: 0 });
+}
+
 // Shield ring (animated torus)
 const shieldMat3 = new THREE.MeshBasicMaterial({ color: 0xF97316, transparent: true, opacity: 0, depthWrite: false });
 const shieldRing = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.065, 8, 28), shieldMat3);
@@ -1344,6 +1362,29 @@ function activateSplash3(x, z, maxScale, dur) {
   }
 }
 
+// Spawn count water droplets with arcing physics from world position (cx, 0, cz).
+// vScale: 1.0 = paddle stroke, 1.4 = jump landing burst.
+function activateDroplets3(cx, cz, count, vScale) {
+  for (var dpAi = 0; dpAi < count; dpAi++) {
+    for (var dpFi = 0; dpFi < dropletPool3.length; dpFi++) {
+      if (!dropletPool3[dpFi].active) {
+        var dp3 = dropletPool3[dpFi];
+        dp3.active  = true;
+        dp3.life    = 0;
+        dp3.maxLife = 16 + Math.floor(Math.random() * 10);
+        dp3.x  = cx + (Math.random() - 0.5) * 0.40;
+        dp3.y  = 0.28;
+        dp3.z  = cz + (Math.random() - 0.5) * 0.30;
+        dp3.vx = (Math.random() - 0.5) * 0.09 * vScale;
+        dp3.vy = (0.06 + Math.random() * 0.06) * vScale;
+        dp3.vz = (Math.random() - 0.5) * 0.07 * vScale;
+        dp3.mesh.material.opacity = 0.75;
+        break;
+      }
+    }
+  }
+}
+
 function flash3(text, life) {
   transMsg3 = { text, life, maxLife: life };
   const el = document.getElementById('transitionMsg3');
@@ -1447,6 +1488,7 @@ function update3() {
 
   // Move items
   const spd = effectiveSpeed * SPD_SCALE;
+  curSpd3 = spd;
 
   for (const o of obstacles3) {
     o.z += spd; o.mesh.position.z = o.z;
@@ -1491,7 +1533,7 @@ function update3() {
           wcNew.life      = 0;
           wcNew.maxLife   = 45;
           wcNew.worldX    = player3.x;
-          wcNew.worldZ    = 0.65;
+          wcNew.worldZ    = 0.30;
           wcNew.spread    = 0.60 + Math.random() * 0.40;
           wcNew.zTail     = 0.90 + Math.random() * 0.40;
           wcNew.swayPhase = Math.random() * Math.PI * 2;
@@ -1504,9 +1546,9 @@ function update3() {
     var wcE = wakeChevrons3[wcUi];
     if (!wcE.active) continue;
     wcE.life++;
-    wcE.worldZ += spd;
+    wcE.worldZ -= spd;
     wcE.grp.position.set(wcE.worldX, 0.16, wcE.worldZ);
-    if (wcE.life > wcE.maxLife || wcE.worldZ > DESPAWN_Z) {
+    if (wcE.life > wcE.maxLife || wcE.worldZ < -12) {
       wcE.active = false;
     }
   }
@@ -1617,29 +1659,40 @@ function updateVisuals3() {
   } else {
     var lcTarget3 = laneXPos(player3.targetLane);
     var lcDx3     = lcTarget3 - player3.x;
-    var lcWant3   = (Math.abs(lcDx3) > 0.15 && !player3.isJumping)
-      ? (lcDx3 > 0 ? -0.70 : 0.70)
+    // Capture direction and reset hold timer whenever actively moving toward target
+    if (Math.abs(lcDx3) > 0.02 && !player3.isJumping) {
+      turnDirSign3    = lcDx3 > 0 ? -1 : 1;
+      turnHoldFrames3 = 22;
+    }
+    // Count down hold timer once settled (snapped within 0.02)
+    if (Math.abs(lcDx3) <= 0.02 && turnHoldFrames3 > 0) turnHoldFrames3--;
+    var lcWant3 = ((Math.abs(lcDx3) > 0.02 || turnHoldFrames3 > 0) && !player3.isJumping)
+      ? turnDirSign3 * 0.70
       : 0;
     kayakTurnY3 += (lcWant3 - kayakTurnY3) * 0.35;
     if (Math.abs(kayakTurnY3) < 0.008) kayakTurnY3 = 0;
     playerGroup.rotation.y = kayakTurnY3;
-    if (Math.abs(kayakTurnY3) > 0.01) console.log('[KRR] turn y:', kayakTurnY3.toFixed(3), 'dx:', lcDx3.toFixed(3));
+    var dbgTurnEl = document.getElementById('dbg3-turn');
+    if (dbgTurnEl) dbgTurnEl.textContent = 'YAW: ' + (kayakTurnY3 * 180 / Math.PI).toFixed(1) + 'deg  hold:' + turnHoldFrames3;
+    if (Math.abs(kayakTurnY3) > 0.01) console.log('[KRR] turn y:', kayakTurnY3.toFixed(3), 'dx:', lcDx3.toFixed(3), 'hold:', turnHoldFrames3);
   }
 
   // Paddle animation: Z tilt + subtle X dive
-  paddleGroup.rotation.z = Math.sin(frameN * 0.095) * 0.42;
-  paddleGroup.rotation.x = Math.cos(frameN * 0.095) * 0.12;
+  paddleGroup.rotation.z = Math.sin(frameN * 0.060) * 0.42;
+  paddleGroup.rotation.x = Math.cos(frameN * 0.060) * 0.12;
 
   // Refinement 2: Alternating paddle splashes at blade water entry.
   // rotation.z > 0 (sin positive) = left blade (-x) goes down toward water.
   // Splash spawns at zero-crossing: left when sin crosses 0 going positive; right going negative.
-  var pSin3 = Math.sin(frameN * 0.095);
+  var pSin3 = Math.sin(frameN * 0.060);
   if (!player3.isJumping && gameState3 === 'playing') {
     if (paddleSplashPrev3 <= 0 && pSin3 > 0) {
       activateSplash3(player3.x - 0.97, 0, 1.2, 16);
+      activateDroplets3(player3.x - 0.97, 0, 4, 1.0);
       console.log('[KRR] paddle splash LEFT x:', (player3.x - 0.97).toFixed(2));
     } else if (paddleSplashPrev3 >= 0 && pSin3 < 0) {
       activateSplash3(player3.x + 0.97, 0, 1.2, 16);
+      activateDroplets3(player3.x + 0.97, 0, 4, 1.0);
       console.log('[KRR] paddle splash RIGHT x:', (player3.x + 0.97).toFixed(2));
     }
   }
@@ -1757,6 +1810,7 @@ function updateVisuals3() {
   if (!jumpingNow3 && splashWasJumping3) {
     activateSplash3(player3.x, 0, 2.5, 28);
     activateSplash3(player3.x, 0, 4.0, 36);
+    activateDroplets3(player3.x, 0, 10, 1.4);
     console.log('[KRR] jump LANDING splash x:', player3.x.toFixed(2));
   }
   splashWasJumping3 = jumpingNow3;
@@ -1770,6 +1824,25 @@ function updateVisuals3() {
     spE.mesh.material.opacity = (1 - spT) * 0.88;
     var spSc = 0.40 + spT * spE.maxScale;
     spE.mesh.scale.set(spSc, spSc, 1);
+  }
+
+  // Water droplet arc physics -- gravity + world-scroll each frame, fade out on descent.
+  for (var dpVi = 0; dpVi < dropletPool3.length; dpVi++) {
+    var dpE = dropletPool3[dpVi];
+    if (!dpE.active) { dpE.mesh.material.opacity = 0; continue; }
+    dpE.life++;
+    dpE.vy -= DROPLET_GRAV;
+    dpE.x  += dpE.vx;
+    dpE.y  += dpE.vy;
+    dpE.z  += curSpd3;
+    dpE.mesh.position.set(dpE.x, Math.max(0.14, dpE.y), dpE.z);
+    if (dpE.y < 0.14 || dpE.life > dpE.maxLife) {
+      dpE.active = false;
+      dpE.mesh.material.opacity = 0;
+    } else {
+      var dpFade = 1 - dpE.life / dpE.maxLife;
+      dpE.mesh.material.opacity = dpFade * 0.80;
+    }
   }
 
   // Part 3b: Obstacle upstream parting ripples (pool of 10 reusable rings).
@@ -1808,8 +1881,8 @@ function updateVisuals3() {
     var wcSway = Math.sin(wcV.swayPhase + wcV.life * 0.11) * 0.055;
     var lxMid = -(wcV.spread * 0.60) + wcSway;
     var lxEnd = -(wcV.spread) + wcSway * 0.4;
-    var lzMid = wcV.zTail * 0.50;
-    var lzEnd = wcV.zTail;
+    var lzMid = -(wcV.zTail * 0.50);
+    var lzEnd = -(wcV.zTail);
     wcV.attrL.setXYZ(0, 0, 0, 0);
     wcV.attrL.setXYZ(1, lxMid, 0, lzMid);
     wcV.attrL.setXYZ(2, lxEnd, 0, lzEnd);
@@ -1855,6 +1928,12 @@ function startGame3() {
   playerGroup.rotation.y = 0; playerGroup.position.y = 0;
   kayakTurnY3 = 0; kayakWasSpinning3 = false; splashWasJumping3 = false;
   paddleSplashPrev3 = 0; wakeChevronTimer3 = 0;
+  turnHoldFrames3 = 0; turnDirSign3 = 0;
+  for (var dpR3 = 0; dpR3 < dropletPool3.length; dpR3++) {
+    dropletPool3[dpR3].active = false;
+    dropletPool3[dpR3].mesh.material.opacity = 0;
+    dropletPool3[dpR3].mesh.position.set(0, -9999, 0);
+  }
   for (var wci0 = 0; wci0 < wakeChevrons3.length; wci0++) {
     wakeChevrons3[wci0].active = false;
     wakeChevrons3[wci0].grp.children[0].material.opacity = 0;
