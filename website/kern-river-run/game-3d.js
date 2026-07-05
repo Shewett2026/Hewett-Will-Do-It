@@ -347,14 +347,11 @@ function buildWorld() {
   // Riverbed -- always created for Stage 1 (backdrop stages) so the mesh exists before
   // the async texture load completes. Fallback color 0xC4A46B (sandy tan) shows if the
   // texture hasn't loaded yet; the load callback late-patches it onto this mesh.
-  // y=0.005: above the grass ground (y=-0.02), below the water surface (y=0.01).
+  // y=0.0: above the grass ground (y=-0.02), below the water surface (y=0.15).
   // Width rw+2 gives a 1-unit bleed on each side so no grass shows at the water edges.
+  // MeshBasicMaterial: fog-immune so the sandy bed stays visible at far distances.
   riverbedTexRef = null;
   if (stg.backdrop) {
-    // MeshBasicMaterial: fog-immune so the sandy bed stays visible at far distances
-    // without being washed out by scene fog. No polygonOffset needed: the riverbed sits
-    // at y=0.005 (above the ground at y=-0.02), so it is geometrically closer to the
-    // camera and naturally passes the depth test against the ground.
     var rbMat = new THREE.MeshBasicMaterial({ color: 0xC4A46B });
     if (riverbedStageTex) {
       riverbedStageTex.offset.set(0, 0);
@@ -364,7 +361,7 @@ function buildWorld() {
     }
     var rbMesh = new THREE.Mesh(new THREE.PlaneGeometry(rw + 2, 155, 1, 1), rbMat);
     rbMesh.rotation.x = -Math.PI / 2;
-    rbMesh.position.set(0, 0.005, -55);
+    rbMesh.position.set(0, 0.0, -55);
     rbMesh.renderOrder = 1;
     riverGroup.add(rbMesh);
     riverbedMesh = rbMesh;
@@ -383,14 +380,16 @@ function buildWorld() {
     wMat.map = wt; wMat.needsUpdate = true;
   }
   // Transparent so the riverbed shows through.
-  // depthWrite:false lets the opaque riverbed (y=0.005) remain visible beneath the water.
-  // Opaque obstacles/player render before transparent objects and write depth, so they
-  // correctly appear on top of the water with no special render order needed.
+  // y=0.15: a 0.15-unit gap above the riverbed (y=0.0) eliminates z-fighting at all
+  // camera distances. The gap is imperceptible at the 15-degree chase-camera angle.
+  // depthWrite:false: the transparent water does not write depth, so it cannot occlude
+  // the opaque riverbed below it. Opaque obstacles/player (renderOrder 0) write depth
+  // and appear above the water (renderOrder 2) without any special ordering needed.
   wMat.transparent = true;
   wMat.opacity     = WATER_OPACITY;
   wMat.depthWrite  = false;
   const water = new THREE.Mesh(new THREE.PlaneGeometry(rw, 155, 12, 32), wMat);
-  water.rotation.x = -Math.PI / 2; water.position.set(0, 0.01, -55); water.receiveShadow = true;
+  water.rotation.x = -Math.PI / 2; water.position.set(0, 0.15, -55); water.receiveShadow = true;
   water.renderOrder = 2;
   riverGroup.add(water);
   waterMesh = water;
