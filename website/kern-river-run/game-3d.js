@@ -60,10 +60,17 @@ const STAGES3 = [
   },
   {
     num:3, name:'LAKE ISABELLA', endMile:99, lanes:5, speed:1.78, obsFreq:0.012, fwFreq:0.10,
-    waterColor:0x0891B2, bankColor:0x78716C,
+    waterColor:0x2878B8, bankColor:0x4A7D32,
     obsTypes:['drifting_sailboat','drifting_sailboat','boulder','boulder','river_wash'],
     fwType:'pontoon_party', collA:'beach_ball', collB:'cooler',
-    backdrop: null,
+    backdrop: {
+      img:        'lake-isabella-green-bg.png',
+      bankGrass:  0x5A9040,
+      bankEarth:  0x3A5C1E,
+      treeColors: [0x1B5E20, 0x2E7D32, 0x388E3C, 0x4A7C32],
+      trunkColor: 0x5D4037,
+      wf:         null,
+    },
   },
   {
     num:4, name:'KERN CANYON', endMile:132, lanes:4, speed:1.91, obsFreq:0.013, fwFreq:0.12,
@@ -151,70 +158,79 @@ const skyDome = new THREE.Mesh(
 scene.add(skyDome);
 
 // ── CLOUDS ───────────────────────────────────────────────────────
-// Low-poly puffy white clouds: clusters of overlapping spheres,
-// sitting high above the play area, drifting slowly downstream.
+// Pixel-art billboard sprites. Each of 7 instances independently picks one of
+// 3 cloud textures at random. Spawn positions, drift speed, per-stage visibility
+// counts, and per-stage y-lift offsets are unchanged.
+var cloudTex      = [null, null, null];
+var cloudTexNames = ['cloud-1.png', 'cloud-2.png', 'cloud-3.png'];
+
+(function preloadCloudTex() {
+  var loader = new THREE.TextureLoader();
+  for (var ci = 0; ci < cloudTexNames.length; ci++) {
+    (function(idx) {
+      loader.load(cloudTexNames[idx], function(tex) {
+        tex.magFilter = THREE.NearestFilter;
+        tex.minFilter = THREE.NearestFilter;
+        tex.wrapS = THREE.ClampToEdgeWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.generateMipmaps = false;
+        tex.needsUpdate = true;
+        cloudTex[idx] = tex;
+        console.log('[KRR CLOUD TEX] loaded cloud-' + (idx + 1) + '.png naturalW=' +
+          (tex.image ? tex.image.naturalWidth : '?') + ' naturalH=' +
+          (tex.image ? tex.image.naturalHeight : '?'));
+        // Late-patch any sprite created before this texture finished loading
+        for (var ci2 = 0; ci2 < clouds3.length; ci2++) {
+          if (clouds3[ci2].userData.cloudTexIdx === idx) {
+            clouds3[ci2].material.map = tex;
+            clouds3[ci2].material.needsUpdate = true;
+          }
+        }
+      }, undefined, function(e) { console.error('[KRR] cloud-' + (idx + 1) + '.png FAILED', e); });
+    })(ci);
+  }
+})();
+
+var CLOUD_BASE_W    = 20;
+var CLOUD_BASE_H    = 12;
+var CLOUD_START_SCALE = 0.80;
+var CLOUD_END_SCALE   = 1.15;
+
 const clouds3 = [];
 (function() {
-  // Per-blob shading: top blobs bright white, bottom blobs soft cool-grey.
-  // Blobs have y in roughly [-1.2, 1.1]; lerp maps that to [underside, sunlit top].
-  var cTopCol = new THREE.Color(0xFFFFFF);
-  var cBotCol = new THREE.Color(0xCFDCEB);
-  var C_Y_MIN = -1.2;
-  var C_Y_RNG =  2.3;
-
-  function makeCloud(blobs) {
-    var grp = new THREE.Group();
-    for (var bi = 0; bi < blobs.length; bi++) {
-      var b   = blobs[bi];
-      var t   = Math.max(0, Math.min(1, (b.y - C_Y_MIN) / C_Y_RNG));
-      var col = cBotCol.clone().lerp(cTopCol, t);
-      var m   = new THREE.Mesh(
-        new THREE.SphereGeometry(b.r, 7, 5),
-        new THREE.MeshLambertMaterial({ color: col })
-      );
-      m.position.set(b.x, b.y, b.z);
-      grp.add(m);
-    }
-    return grp;
+  function makeCloudSprite() {
+    var texIdx = Math.floor(Math.random() * 3);
+    var tex    = cloudTex[texIdx];
+    var mat    = new THREE.SpriteMaterial({
+      map:         tex || null,
+      color:       tex ? 0xFFFFFF : 0xEEEEEE,
+      transparent: true,
+      alphaTest:   0.05,
+    });
+    var spr = new THREE.Sprite(mat);
+    spr.center.set(0.5, 0.5);
+    spr.scale.set(CLOUD_BASE_W, CLOUD_BASE_H, 1);
+    spr.userData.cloudTexIdx = texIdx;
+    return spr;
   }
 
-  var s0 = [
-    { x:0,    y:0,    z:0,    r:3.5 },
-    { x:3.2,  y:-0.7, z:0.4,  r:2.6 },
-    { x:-3.0, y:-0.8, z:-0.3, r:2.4 },
-    { x:1.5,  y:0.8,  z:1.1,  r:2.8 },
-    { x:-1.2, y:0.6,  z:-1.0, r:2.1 },
-  ];
-  var s1 = [
-    { x:0,    y:0,    z:0,   r:2.8 },
-    { x:2.7,  y:-0.5, z:0.3, r:2.2 },
-    { x:-2.4, y:-0.6, z:0.2, r:2.0 },
-    { x:0.9,  y:0.9,  z:0.8, r:2.3 },
-  ];
-  var s2 = [
-    { x:0,    y:0,    z:0,    r:4.2 },
-    { x:4.0,  y:-0.8, z:0.6,  r:3.1 },
-    { x:-3.7, y:-0.8, z:-0.5, r:2.9 },
-    { x:1.8,  y:1.1,  z:1.4,  r:3.3 },
-    { x:-1.7, y:0.8,  z:-1.3, r:2.6 },
-    { x:5.2,  y:-1.2, z:0.2,  r:2.0 },
-  ];
-
   var placements = [
-    { x:-16, y:22, z:-84, s:s0, spd:0.013 },
-    { x:  9, y:24, z:-70, s:s1, spd:0.010 },
-    { x: 22, y:21, z:-58, s:s2, spd:0.015 },
-    { x:-25, y:23, z:-76, s:s1, spd:0.011 },
-    { x: 15, y:25, z:-92, s:s0, spd:0.014 },
-    { x: -5, y:22, z:-64, s:s2, spd:0.009 },
-    { x: 20, y:23, z:-80, s:s1, spd:0.012 },
+    { x:-16, y:22, z:-84, spd:0.013 },
+    { x:  9, y:24, z:-70, spd:0.010 },
+    { x: 22, y:21, z:-58, spd:0.015 },
+    { x:-25, y:23, z:-76, spd:0.011 },
+    { x: 15, y:25, z:-92, spd:0.014 },
+    { x: -5, y:22, z:-64, spd:0.009 },
+    { x: 20, y:23, z:-80, spd:0.012 },
   ];
+  console.log('[KRR CLOUD SIZE] baseW=' + CLOUD_BASE_W + ' baseH=' + CLOUD_BASE_H);
 
   for (var pi = 0; pi < placements.length; pi++) {
     var p  = placements[pi];
-    var cl = makeCloud(p.s);
+    var cl = makeCloudSprite();
     cl.position.set(p.x, p.y, p.z);
-    cl.userData.spd = p.spd;
+    cl.userData.spd   = p.spd;
+    cl.userData.baseY = p.y;
     scene.add(cl);
     clouds3.push(cl);
   }
@@ -416,6 +432,9 @@ function buildWorld() {
     var gt2 = riverbedStageTex.clone(); gt2.needsUpdate = true;
     gt2.repeat.set(40, 40);
     gndMat = new THREE.MeshBasicMaterial({ color: 0xA0988A, map: gt2 });
+  } else if (stg.num === 3) {
+    // Stage 3 lake: BasicMaterial bypasses Lambert blow-out; bankColor renders at exact hex
+    gndMat = new THREE.MeshBasicMaterial({ color: stg.bankColor });
   } else {
     gndMat = new THREE.MeshLambertMaterial({ color: stg.bankColor });
   }
@@ -464,6 +483,10 @@ function buildWorld() {
       wMat.needsUpdate = true;
       console.log('[KRR] Stage 2 water | TEX_AVG #155660 | TARGET #16505B | TINT_COMPUTED 0xFFEDF2');
     }
+  } else if (stg.num === 3) {
+    // Stage 3 (Lake Isabella): lighting-free flat color so the lake reads true-hued
+    // without the scene lights blowing out the blue channels (same reason as Stage 2).
+    wMat = new THREE.MeshBasicMaterial({ color: stg.waterColor });
   } else {
     wMat = new THREE.MeshPhongMaterial({ color: stg.waterColor, shininess: 14, specular: 0x111a22 });
     if (stg.num === 1 && waterStageTex) {
@@ -500,7 +523,10 @@ function buildWorld() {
   // Play lanes, water surface, lane dividers, spawns, and collision are all untouched.
   if (stg.num !== 2) {
     const bkColor   = stg.backdrop ? stg.backdrop.bankGrass : stg.bankColor;
-    const bkBaseMat = new THREE.MeshLambertMaterial({ color: bkColor });
+    // Stage 3: BasicMaterial so bankGrass renders at exact hex without Lambert blow-out
+    const bkBaseMat = (stg.num === 3)
+      ? new THREE.MeshBasicMaterial({ color: bkColor })
+      : new THREE.MeshLambertMaterial({ color: bkColor });
     // BANK_AMP raised to 2.8 for more organic outer-edge meander (inner edge invariant unchanged)
     const BANK_W0   = 5.0;
     const BANK_AMP  = 2.8;
@@ -554,9 +580,9 @@ function buildWorld() {
   addBankDecor(riverGroup, rw, stg);
   addShoreline3(riverGroup, rw, stg);
   scene.add(riverGroup);
-  if (stg.backdrop && stg.num !== 2) { initBankTrees3(rw, stg.backdrop); }
+  if (stg.backdrop && stg.num !== 2 && stg.num !== 3) { initBankTrees3(rw, stg.backdrop); }
   if (stg.num === 2) { initStage2RockyShores(rw); }
-  else if (stg.num >= 3 && stg.num <= 4) { initBankBoulders3(rw); }
+  else if (stg.num === 4) { initBankBoulders3(rw); }
 
   // Part 1: Current flow streaks -- z-aligned lines above the water surface (y=0.16).
   // Each streak is a short segment at a random x position with a slight downstream drift,
@@ -655,6 +681,9 @@ function addBankDecor(group, rw, stg) {
 // Foam: transparent strip just inside the water edge, renderOrder=3.
 // Rocks: small opaque BoxGeometry pebbles at the shoreline, y=0.16 (above water y=0.15).
 // Nothing extends more than 0.22 units into the water: no collision impact.
+var SHORE3_EDGE_COLOR   = 0x607848;  // Stage 3: damp green-brown bank edge (shows through water)
+var SHORE3_FOAM_COLOR   = 0xA8C490;  // Stage 3: muted green-tinted wet shoreline (no bright curb)
+var SHORE3_FOAM_OPACITY = 0.12;      // Stage 3: near-invisible foam so edge reads as natural lake
 function addShoreline3(rg, rw, stg) {
   if (stg.num === 2) return;
   for (var shSide = -1; shSide <= 1; shSide += 2) {
@@ -670,8 +699,8 @@ function addShoreline3(rg, rw, stg) {
       sTex.repeat.set(1, 20);
       sandyMat = new THREE.MeshLambertMaterial({ color: 0xA0988A, map: sTex });
     } else {
-      var sandyColor = (stg.num === 2) ? 0x8E8070 : 0xC4A46B;
-      sandyMat = new THREE.MeshLambertMaterial({ color: sandyColor });
+      var sandyColor = (stg.num === 3) ? SHORE3_EDGE_COLOR : (stg.num === 2) ? 0x8E8070 : 0xC4A46B;
+      sandyMat = new THREE.MeshBasicMaterial({ color: sandyColor });
     }
     var sandyMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 155), sandyMat);
     sandyMesh.rotation.x = -Math.PI / 2;
@@ -679,8 +708,10 @@ function addShoreline3(rg, rw, stg) {
     sandyMesh.renderOrder = 1;
     rg.add(sandyMesh);
 
-    // Foam/wet-edge strip: widened to 0.55 and made more visible (opacity 0.45)
-    var foamMat = new THREE.MeshBasicMaterial({ color: 0xCCEEFF, transparent: true, opacity: 0.45, depthWrite: false });
+    // Foam/wet-edge strip: Stage 3 uses muted lake color at near-zero opacity (no hard curb line)
+    var foamColor   = (stg.num === 3) ? SHORE3_FOAM_COLOR   : 0xCCEEFF;
+    var foamOpacity = (stg.num === 3) ? SHORE3_FOAM_OPACITY : 0.45;
+    var foamMat = new THREE.MeshBasicMaterial({ color: foamColor, transparent: true, opacity: foamOpacity, depthWrite: false });
     var foamMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 150), foamMat);
     foamMesh.rotation.x = -Math.PI / 2;
     foamMesh.position.set(shX - shSide * 0.275, 0.155, -55);
@@ -841,6 +872,7 @@ function buildHorizonArt(stg) {
 // so the bottom of the image aligns with ground (y=0) and the top
 // reaches y=52 well above the play area. fog:false keeps pixel art crisp.
 // To use for a future stage: set stg.backdrop.img + colors in STAGES3.
+var ZOOM3 = 1.08;  // Stage 3 UV zoom: show 1/ZOOM3 of image, centered horizontally
 function buildStageBackdrop(stg) {
   var bd = stg.backdrop;
   if (!bd) return;
@@ -851,10 +883,10 @@ function buildStageBackdrop(stg) {
   backdropMesh.position.set(0, 26, -88);
   scene.add(backdropMesh);
 
-  // Stage 2: shift backdrop center down 3 units so the bottom edge (y=-3) overlaps
+  // Stages 2 and 3: shift backdrop center down 3 units so the bottom edge (y=-3) overlaps
   // below the water surface (y=0.15), closing the clear-color seam at the horizon.
   // Stage 1 position is untouched (remains y=26 from the position.set call above).
-  if (stg.num === 2) {
+  if (stg.num === 2 || stg.num === 3) {
     backdropMesh.position.y = 23;
   }
 
@@ -866,7 +898,7 @@ function buildStageBackdrop(stg) {
     tex.magFilter    = THREE.NearestFilter;
     tex.minFilter    = THREE.NearestFilter;
     tex.generateMipmaps = false;
-    // Stage 2: clamp wrapping + UV crop to skip the bright bottom pixel rows
+    // Stage 2: clamp + bottom-row trim only
     if (stg.num === 2) {
       tex.wrapS = THREE.ClampToEdgeWrapping;
       tex.wrapT = THREE.ClampToEdgeWrapping;
@@ -875,6 +907,21 @@ function buildStageBackdrop(stg) {
       tex.offset.set(0, trimN / trimH);
       tex.repeat.set(1, (trimH - trimN) / trimH);
       console.log('[KRR BG TRIM] naturalHeight=' + trimH + ' N=' + trimN + ' offset.y=' + (trimN / trimH).toFixed(6) + ' repeat.y=' + ((trimH - trimN) / trimH).toFixed(6));
+    } else if (stg.num === 3) {
+      // Stage 3: clamp + bottom-row trim composed with ZOOM3 centered UV crop.
+      // Vertical: anchor at bottom (horizon stays), crop from top by ZOOM3.
+      // Horizontal: centered. One UV write; no stacking.
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      var trimN3 = 6;
+      var trimH3 = (tex.image && tex.image.naturalHeight) ? tex.image.naturalHeight : 1024;
+      var s3OffX = (1 - 1 / ZOOM3) / 2;
+      var s3RepX = 1 / ZOOM3;
+      var s3OffY = trimN3 / trimH3;
+      var s3RepY = (trimH3 - trimN3) / trimH3 / ZOOM3;
+      tex.offset.set(s3OffX, s3OffY);
+      tex.repeat.set(s3RepX, s3RepY);
+      console.log('[KRR BG ZOOM S3] ZOOM3=' + ZOOM3 + ' final offset=(' + s3OffX.toFixed(4) + ',' + s3OffY.toFixed(4) + ') repeat=(' + s3RepX.toFixed(4) + ',' + s3RepY.toFixed(4) + ')');
     }
     tex.needsUpdate  = true;
     stageTexCache[bd.img] = tex;
@@ -1581,6 +1628,16 @@ function applyStage3(idx, msg) {
     clouds3[ci2].visible = (idx !== 1) || (ci2 < STAGE2_CLOUD_VIS);
   }
 
+  // Stages 2 and 3: lift clouds 4 units so they clear the backdrop scenery.
+  // Stage 1 unchanged (offset 0). Log first and last y so eye-tuning is easy.
+  var CLOUD_Y_LIFT = (idx === 1 || idx === 2) ? 4 : 0;
+  for (var ci3 = 0; ci3 < clouds3.length; ci3++) {
+    clouds3[ci3].position.y = clouds3[ci3].userData.baseY + CLOUD_Y_LIFT;
+  }
+  console.log('[KRR CLOUD Y] stageIdx=' + idx + ' lift=' + CLOUD_Y_LIFT +
+    ' sample y=' + clouds3[0].position.y + '..' + clouds3[clouds3.length - 1].position.y +
+    ' (base range 21-25)');
+
   if (player3.targetLane >= curLanes) player3.targetLane = curLanes - 1;
   if (player3.lane       >= curLanes) player3.lane       = curLanes - 1;
   player3.x = laneXPos(player3.targetLane);
@@ -2072,9 +2129,15 @@ function updateVisuals3() {
   }
 
   // Drift clouds slowly downstream; loop back to the far end when they pass the threshold.
+  // Scale grows from CLOUD_START_SCALE to CLOUD_END_SCALE as z travels -96 -> -38.
   for (var ci = 0; ci < clouds3.length; ci++) {
     clouds3[ci].position.z += clouds3[ci].userData.spd;
     if (clouds3[ci].position.z > -38) clouds3[ci].position.z = -96;
+    var ct = (clouds3[ci].position.z + 96) / 58;
+    ct = Math.max(0, Math.min(1, ct));
+    ct = ct * ct * (3 - 2 * ct);
+    var cMult = CLOUD_START_SCALE + (CLOUD_END_SCALE - CLOUD_START_SCALE) * ct;
+    clouds3[ci].scale.set(CLOUD_BASE_W * cMult, CLOUD_BASE_H * cMult, 1);
   }
 
   // Scroll waterfall strips downward; each strip loops to the top when it exits the base.
