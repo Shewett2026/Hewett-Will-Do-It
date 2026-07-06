@@ -148,6 +148,12 @@ ul {
   border-bottom-color: transparent;
 }
 
+.nav-play-logo {
+  height: 1.75rem;
+  width: auto;
+  display: block;
+}
+
 .nav-toggle {
   display: none;
   flex-direction: column;
@@ -458,6 +464,10 @@ ul {
 
 .hero--short .hero-name {
   font-size: clamp(2.4rem, 5vw, 4rem);
+}
+
+.hero--short .hero-sub {
+  margin-top: 1.25rem;
 }
 
 /* --- Placeholder / Coming Soon Pages ---------------- */
