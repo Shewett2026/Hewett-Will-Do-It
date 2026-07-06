@@ -154,6 +154,20 @@ ul {
   display: block;
 }
 
+.nav-link--play {
+  background-color: var(--white);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  border-bottom: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.nav-link--play:hover {
+  background-color: rgba(255, 255, 255, 0.88);
+  border-bottom-color: transparent;
+}
+
 .nav-toggle {
   display: none;
   flex-direction: column;
@@ -646,6 +660,18 @@ ul {
     text-align: center;
     border-radius: var(--radius);
     padding: 0.65rem 1rem;
+  }
+
+  .nav-item--play {
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    padding: 0.5rem 0;
+  }
+
+  .nav-link--play {
+    display: inline-flex;
+    width: auto;
+    border-top: none;
+    padding: 0.25rem 0.7rem;
   }
 
   .hero {
