@@ -246,7 +246,9 @@ let wfGroup     = null;
 let wfStrips    = [];
 let bankTrees3   = [];   // scrolling tree sprite pool (not riverGroup children)
 let bankBoulders3 = [];  // scrolling bank boulder sprite pool (stages 2-4, decoration only)
-let bankSegMats3 = [];   // bank segment texture refs for per-frame scroll
+let bankHouses3   = [];  // scrolling lake-house sprite pool (Stage 3 only)
+let bankSegMats3  = [];   // bank segment texture refs for per-frame scroll (Stage 1)
+let grassBankMats3 = [];  // Stage 3 grass texture refs for per-frame scroll (ground + bank segs)
 let sparkles3         = [];   // Part 2: water sparkle glints (rebuilt each buildWorld)
 let kayakTurnY3       = 0;    // Polish 3: lane-change tilt angle (radians)
 let kayakWasSpinning3 = false; // Polish 3: spinout-exit guard for smooth rotation handoff
@@ -386,6 +388,49 @@ var boulderObsTexNames = ['boulder-2.png', 'boulder-3.png', 'boulder-5.png'];
   }
 })();
 
+// Stage 3 grass texture for bank ground and bank-box surfaces
+var GRASS3_REPEAT       = 12;    // tiles across the 200-unit ground plane; tune for pixel scale
+var GRASS3_SCROLL_MULT  = 1.0;   // scale the grass scroll rate; 1.0 = same as Stage 1 bank segs
+var grassStage3Tex = null;
+(function preloadGrass3Tex() {
+  new THREE.TextureLoader().load('grass-stage3.png', function(tex) {
+    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    grassStage3Tex = tex;
+    console.log('[KRR] grass-stage3.png loaded');
+  }, undefined, function(e) { console.error('[KRR] grass-stage3.png FAILED', e); });
+})();
+
+// Stage 3 lake-house landmark sprites
+var lakeHouseTex      = [null, null, null];
+var lakeHouseTexNames = ['lake-house-1.png', 'lake-house-2.png', 'lake-house-3.png'];
+
+(function preloadLakeHouseTex() {
+  var loader = new THREE.TextureLoader();
+  for (var lhi = 0; lhi < lakeHouseTexNames.length; lhi++) {
+    (function(idx) {
+      loader.load(lakeHouseTexNames[idx], function(tex) {
+        tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false; tex.needsUpdate = true;
+        lakeHouseTex[idx] = tex;
+        console.log('[KRR] lake-house-' + (idx + 1) + '.png loaded naturalW=' +
+          (tex.image ? tex.image.naturalWidth : '?') + ' naturalH=' +
+          (tex.image ? tex.image.naturalHeight : '?'));
+        // Late-patch aspect ratio for any house sprite created before this texture finished loading
+        if (tex.image && tex.image.naturalHeight > 0) {
+          var natAsp = tex.image.naturalWidth / tex.image.naturalHeight;
+          for (var hpi = 0; hpi < bankHouses3.length; hpi++) {
+            if (bankHouses3[hpi].texIdx === idx) {
+              bankHouses3[hpi].sprite.scale.set(STAGE3_HOUSE_SCALE * natAsp, STAGE3_HOUSE_SCALE, 1);
+            }
+          }
+        }
+      }, undefined, function(e) { console.error('[KRR] lake-house-' + (idx + 1) + '.png FAILED', e); });
+    })(lhi);
+  }
+})();
+
 let stageIdx    = 0;
 let curLanes    = STAGES3[0].lanes;
 
@@ -406,7 +451,10 @@ function buildWorld() {
   bankTrees3 = [];
   bankBoulders3.forEach(function(bb) { scene.remove(bb.sprite); if (bb.sprite.material) bb.sprite.material.dispose(); });
   bankBoulders3 = [];
-  bankSegMats3 = [];
+  bankHouses3.forEach(function(bh) { scene.remove(bh.sprite); if (bh.sprite.material) bh.sprite.material.dispose(); });
+  bankHouses3 = [];
+  bankSegMats3  = [];
+  grassBankMats3 = [];
   riverbedMesh   = null;
   riverbedTexRef = null;
   if (horizonGrp)   { scene.remove(horizonGrp); horizonGrp = null; }
@@ -433,8 +481,15 @@ function buildWorld() {
     gt2.repeat.set(40, 40);
     gndMat = new THREE.MeshBasicMaterial({ color: 0xA0988A, map: gt2 });
   } else if (stg.num === 3) {
-    // Stage 3 lake: BasicMaterial bypasses Lambert blow-out; bankColor renders at exact hex
-    gndMat = new THREE.MeshBasicMaterial({ color: stg.bankColor });
+    // Stage 3 lake: BasicMaterial (no Lambert blow-out); grass texture if loaded, solid fallback
+    if (grassStage3Tex) {
+      var gt3 = grassStage3Tex.clone(); gt3.needsUpdate = true;
+      gt3.repeat.set(GRASS3_REPEAT, GRASS3_REPEAT);
+      gndMat = new THREE.MeshBasicMaterial({ map: gt3 });
+      grassBankMats3.push(gt3);
+    } else {
+      gndMat = new THREE.MeshBasicMaterial({ color: stg.bankColor });
+    }
   } else {
     gndMat = new THREE.MeshLambertMaterial({ color: stg.bankColor });
   }
@@ -552,6 +607,15 @@ function buildWorld() {
           bkTex.repeat.set(Math.ceil(segW / 2), 1);
           bkSegMat = new THREE.MeshLambertMaterial({ map: bkTex });
           bankSegMats3.push(bkTex);
+        } else if (stg.num === 3 && grassStage3Tex) {
+          // Stage 3: same grass texture, BasicMaterial so lighting does not blow it out
+          var bkTex3 = grassStage3Tex.clone(); bkTex3.needsUpdate = true;
+          bkTex3.wrapS = THREE.RepeatWrapping; bkTex3.wrapT = THREE.RepeatWrapping;
+          bkTex3.magFilter = THREE.NearestFilter; bkTex3.minFilter = THREE.NearestFilter;
+          bkTex3.generateMipmaps = false;
+          bkTex3.repeat.set(Math.ceil(segW / 2), 1);
+          bkSegMat = new THREE.MeshBasicMaterial({ map: bkTex3 });
+          grassBankMats3.push(bkTex3);
         } else {
           bkSegMat = bkBaseMat.clone();
         }
@@ -581,7 +645,9 @@ function buildWorld() {
   addShoreline3(riverGroup, rw, stg);
   scene.add(riverGroup);
   if (stg.backdrop && stg.num !== 2 && stg.num !== 3) { initBankTrees3(rw, stg.backdrop); }
+  if (stg.backdrop && stg.num === 3) { initBankTrees3(rw, stg.backdrop, STAGE3_TREE_COUNT); }
   if (stg.num === 2) { initStage2RockyShores(rw); }
+  else if (stg.num === 3) { initBankBoulders3(rw, STAGE3_BOULDER_COUNT); initBankHouses3(rw); }
   else if (stg.num === 4) { initBankBoulders3(rw); }
 
   // Part 1: Current flow streaks -- z-aligned lines above the water surface (y=0.16).
@@ -759,8 +825,11 @@ function makeBankTreeSprite(variety, h) {
   return spr;
 }
 
-function initBankTrees3(rw, bd) {
-  var TREE_COUNT = 32;
+var STAGE3_TREE_COUNT    = 21;   // tune to thin or thicken Stage 3 bank trees
+var STAGE3_BOULDER_COUNT = 11;   // sparser than trees by design; tune separately
+
+function initBankTrees3(rw, bd, count) {
+  var TREE_COUNT = (count !== undefined) ? count : 32;
   for (var ti = 0; ti < TREE_COUNT; ti++) {
     var side    = ti % 2 === 0 ? -1 : 1;
     var variety = Math.floor(Math.random() * 4);
@@ -780,8 +849,8 @@ function initBankTrees3(rw, bd) {
 // 14 sprites per stage call, evenly seeded, recycled in update3().
 // Sizes vary 0.7-1.8 world units tall with slight width variation.
 // center.y=0 anchors the sprite bottom at y=0 (ground level).
-function initBankBoulders3(rw) {
-  var BOULDER_COUNT = 22;
+function initBankBoulders3(rw, count) {
+  var BOULDER_COUNT = (count !== undefined) ? count : 22;
   for (var bi = 0; bi < BOULDER_COUNT; bi++) {
     var side   = bi % 2 === 0 ? -1 : 1;
     var texIdx = Math.floor(Math.random() * bankBoulderTex.length);
@@ -803,6 +872,35 @@ function initBankBoulders3(rw) {
     spr.position.set(xBase, 0, zInit);
     scene.add(spr);
     bankBoulders3.push({ sprite: spr, side: side, z: zInit });
+  }
+}
+
+var STAGE3_HOUSE_COUNT = 4;    // sparse landmark count; tune by eye (3-6 feels right)
+var STAGE3_HOUSE_SCALE = 8;    // sprite height in world units; tune by eye
+
+function initBankHouses3(rw) {
+  for (var hi = 0; hi < STAGE3_HOUSE_COUNT; hi++) {
+    var side   = hi % 2 === 0 ? -1 : 1;
+    var texIdx = Math.floor(Math.random() * lakeHouseTex.length);
+    var xOff   = 2.0 + Math.random() * 4.0;    // set back 2-6 units behind the tree line
+    var xBase  = side * (rw / 2 + 4.0 + xOff); // minimum 4 units outside the play lane
+    var zInit  = SPAWN_Z + (hi / STAGE3_HOUSE_COUNT) * (Math.abs(SPAWN_Z) + 12);
+    var tex    = lakeHouseTex[texIdx];
+    var mat;
+    if (tex) {
+      mat = new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.08 });
+    } else {
+      mat = new THREE.SpriteMaterial({ color: 0xC8A870, transparent: true, opacity: 0.90 });
+    }
+    var spr = new THREE.Sprite(mat);
+    spr.center.set(0.5, 0);    // bottom-anchored: same as trees and boulders
+    var hAspInit = (tex && tex.image && tex.image.naturalHeight > 0)
+      ? tex.image.naturalWidth / tex.image.naturalHeight
+      : 1.0;   // square fallback; late-patch corrects it once texture loads
+    spr.scale.set(STAGE3_HOUSE_SCALE * hAspInit, STAGE3_HOUSE_SCALE, 1);
+    spr.position.set(xBase, 0, zInit);
+    scene.add(spr);
+    bankHouses3.push({ sprite: spr, side: side, z: zInit, texIdx: texIdx });
   }
 }
 
@@ -1946,6 +2044,30 @@ function update3() {
     }
   }
 
+  // Scroll lake-house sprites (Stage 3 only); recycle with randomized x-offset and texture
+  for (var hsi = 0; hsi < bankHouses3.length; hsi++) {
+    var hse = bankHouses3[hsi];
+    hse.z += spd;
+    hse.sprite.position.z = hse.z;
+    if (hse.z > DESPAWN_Z + 2) {
+      hse.z = SPAWN_Z - Math.random() * 12;
+      var hsRw  = riverWidth();
+      var hsOff = 2.0 + Math.random() * 4.0;
+      hse.sprite.position.x = hse.side * (hsRw / 2 + 4.0 + hsOff);
+      hse.sprite.position.z = hse.z;
+      var hTexIdx = Math.floor(Math.random() * lakeHouseTex.length);
+      hse.texIdx = hTexIdx;
+      if (lakeHouseTex[hTexIdx]) {
+        hse.sprite.material.map = lakeHouseTex[hTexIdx];
+        hse.sprite.material.needsUpdate = true;
+        var hRecycleAsp = (lakeHouseTex[hTexIdx].image && lakeHouseTex[hTexIdx].image.naturalHeight > 0)
+          ? lakeHouseTex[hTexIdx].image.naturalWidth / lakeHouseTex[hTexIdx].image.naturalHeight
+          : 1.0;
+        hse.sprite.scale.set(STAGE3_HOUSE_SCALE * hRecycleAsp, STAGE3_HOUSE_SCALE, 1);
+      }
+    }
+  }
+
   // Transition flash
   if (transMsg3) {
     transMsg3.life--;
@@ -2126,6 +2248,11 @@ function updateVisuals3() {
   // Scroll bank segment textures to match the river-forward feel (Part 4)
   for (var bsi = 0; bsi < bankSegMats3.length; bsi++) {
     bankSegMats3[bsi].offset.y -= 0.0005;
+  }
+
+  // Scroll Stage 3 grass textures (ground plane + bank segments) toward the player
+  for (var gbi = 0; gbi < grassBankMats3.length; gbi++) {
+    grassBankMats3[gbi].offset.y -= 0.0005 * GRASS3_SCROLL_MULT;
   }
 
   // Drift clouds slowly downstream; loop back to the far end when they pass the threshold.
