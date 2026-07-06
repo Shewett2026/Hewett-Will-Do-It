@@ -3343,8 +3343,10 @@ ul {
 
 .store-product-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 1.5rem;
+  max-width: 1100px;
+  margin: 0 auto;
 }
 
 .store-product-card {
@@ -3358,18 +3360,18 @@ ul {
   flex-direction: column;
   align-items: center;
   gap: 0.85rem;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .store-product-img-box {
   width: 100%;
-  aspect-ratio: 4 / 3;
-  border: 2px dashed rgba(11, 31, 58, 0.14);
+  aspect-ratio: 1 / 1;
   border-radius: calc(var(--radius) - 2px);
   background-color: var(--cream);
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(11, 31, 58, 0.22);
 }
 
 .store-product-name {
@@ -3378,6 +3380,61 @@ ul {
   font-weight: 700;
   color: var(--navy);
   margin: 0;
+}
+
+.store-product-img-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.store-product-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-3px);
+}
+
+.store-product-view-link {
+  display: inline-block;
+  margin-top: auto;
+  padding: 0.45rem 1.2rem;
+  background-color: var(--green);
+  color: var(--white);
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: var(--radius);
+  letter-spacing: 0.02em;
+  transition: background-color 0.18s ease;
+}
+
+.store-product-view-link:hover {
+  background-color: var(--gold);
+  color: var(--white);
+}
+
+.store-preview-banner {
+  background-color: var(--white);
+  border: 1.5px solid rgba(201, 136, 58, 0.4);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.75rem;
+  text-align: center;
+  max-width: 680px;
+  margin: 0 auto 2.5rem;
+}
+
+.store-preview-banner p {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  color: var(--navy);
+  margin: 0;
+  line-height: 1.65;
+}
+
+.store-preview-banner strong {
+  color: var(--gold);
+  font-weight: 600;
 }
 
 .store-notify-section {
@@ -3464,12 +3521,7 @@ ul {
   min-height: 1.4em;
 }
 
-@media (max-width: 860px) {
-  .store-product-grid { grid-template-columns: repeat(2, 1fr); }
-}
-
 @media (max-width: 520px) {
-  .store-product-grid { grid-template-columns: 1fr; }
   .store-notify-form  { flex-direction: column; align-items: stretch; }
   .store-notify-input { flex: 1 1 auto; }
 }
