@@ -74,10 +74,17 @@ const STAGES3 = [
   },
   {
     num:4, name:'KERN CANYON', endMile:132, lanes:4, speed:1.91, obsFreq:0.013, fwFreq:0.12,
-    waterColor:0x0369A1, bankColor:0x1C1917,
+    waterColor:0x0B4F6C, bankColor:0x1C1917,
     obsTypes:['mine_cart','mine_cart','boulder','boulder','river_wash'],
     fwType:'old_mining_bridge', collA:'gold_nugget', collB:'treasure_chest',
-    backdrop: null,
+    backdrop: {
+      img:        'kern-canyon-bg.png',
+      bankGrass:  0x5C5248,
+      bankEarth:  0x3E3530,
+      treeColors: [0x3E3530, 0x4A4440, 0x3E3530, 0x4A4440],
+      trunkColor: 0x2E2A28,
+      wf:         null,
+    },
   },
   {
     num:5, name:'BAKERSFIELD', endMile:165, lanes:3, speed:2.00, obsFreq:0.012, fwFreq:0.09,
@@ -247,8 +254,12 @@ let wfStrips    = [];
 let bankTrees3   = [];   // scrolling tree sprite pool (not riverGroup children)
 let bankBoulders3 = [];  // scrolling bank boulder sprite pool (stages 2-4, decoration only)
 let bankHouses3   = [];  // scrolling lake-house sprite pool (Stage 3 only)
+let canyonWalls4  = [];  // scrolling canyon-wall boulder sprite pool (Stage 4 only)
+let canyonFill4   = [];  // opaque rock wall mesh refs (Stage 4 only); lives inside riverGroup
+let rockWallMats4 = [];  // rock wall texture refs for per-frame UV scroll (Stage 4 only)
 let bankSegMats3  = [];   // bank segment texture refs for per-frame scroll (Stage 1)
 let grassBankMats3 = [];  // Stage 3 grass texture refs for per-frame scroll (ground + bank segs)
+let floorMats4    = [];  // Stage 4 pebble floor texture refs for per-frame scroll
 let sparkles3         = [];   // Part 2: water sparkle glints (rebuilt each buildWorld)
 let kayakTurnY3       = 0;    // Polish 3: lane-change tilt angle (radians)
 let kayakWasSpinning3 = false; // Polish 3: spinout-exit guard for smooth rotation handoff
@@ -453,8 +464,14 @@ function buildWorld() {
   bankBoulders3 = [];
   bankHouses3.forEach(function(bh) { scene.remove(bh.sprite); if (bh.sprite.material) bh.sprite.material.dispose(); });
   bankHouses3 = [];
+  canyonWalls4.forEach(function(cw) { scene.remove(cw.sprite); if (cw.sprite.material) cw.sprite.material.dispose(); });
+  canyonWalls4 = [];
+  canyonFill4.forEach(function(m) { if (m.parent) m.parent.remove(m); if (m.geometry) m.geometry.dispose(); if (m.material) m.material.dispose(); });
+  canyonFill4 = [];
+  rockWallMats4 = [];
   bankSegMats3  = [];
   grassBankMats3 = [];
+  floorMats4    = [];
   riverbedMesh   = null;
   riverbedTexRef = null;
   if (horizonGrp)   { scene.remove(horizonGrp); horizonGrp = null; }
@@ -487,6 +504,21 @@ function buildWorld() {
       gt3.repeat.set(GRASS3_REPEAT, GRASS3_REPEAT);
       gndMat = new THREE.MeshBasicMaterial({ map: gt3 });
       grassBankMats3.push(gt3);
+    } else {
+      gndMat = new THREE.MeshBasicMaterial({ color: stg.bankColor });
+    }
+  } else if (stg.num === 4) {
+    // Stage 4 (Kern Canyon): pebble texture on dry canyon bank ground.
+    // BasicMaterial so the texture renders at exact color without Lambert blow-out.
+    // Tinted by WALL4_FLOOR_TINT (default white = no change); darken to taste.
+    if (riverbedStageTex) {
+      var gt4 = riverbedStageTex.clone(); gt4.needsUpdate = true;
+      gt4.wrapS = THREE.RepeatWrapping; gt4.wrapT = THREE.RepeatWrapping;
+      gt4.magFilter = THREE.NearestFilter; gt4.minFilter = THREE.NearestFilter;
+      gt4.generateMipmaps = false;
+      gt4.repeat.set(WALL4_FLOOR_REPEAT, WALL4_FLOOR_REPEAT);
+      gndMat = new THREE.MeshBasicMaterial({ color: WALL4_FLOOR_TINT, map: gt4 });
+      floorMats4.push(gt4);
     } else {
       gndMat = new THREE.MeshBasicMaterial({ color: stg.bankColor });
     }
@@ -542,6 +574,10 @@ function buildWorld() {
     // Stage 3 (Lake Isabella): lighting-free flat color so the lake reads true-hued
     // without the scene lights blowing out the blue channels (same reason as Stage 2).
     wMat = new THREE.MeshBasicMaterial({ color: stg.waterColor });
+  } else if (stg.num === 4) {
+    // Stage 4 (Kern Canyon): BasicMaterial so the deep-blue canyon water renders at exact hex
+    // under the heavily shadowed canyon. Lambert/Phong would blow out the mid-dark blue.
+    wMat = new THREE.MeshBasicMaterial({ color: stg.waterColor });
   } else {
     wMat = new THREE.MeshPhongMaterial({ color: stg.waterColor, shininess: 14, specular: 0x111a22 });
     if (stg.num === 1 && waterStageTex) {
@@ -578,8 +614,8 @@ function buildWorld() {
   // Play lanes, water surface, lane dividers, spawns, and collision are all untouched.
   if (stg.num !== 2) {
     const bkColor   = stg.backdrop ? stg.backdrop.bankGrass : stg.bankColor;
-    // Stage 3: BasicMaterial so bankGrass renders at exact hex without Lambert blow-out
-    const bkBaseMat = (stg.num === 3)
+    // Stage 3 + 4: BasicMaterial so rocky/grass bank color renders at exact hex without Lambert blow-out
+    const bkBaseMat = (stg.num === 3 || stg.num === 4)
       ? new THREE.MeshBasicMaterial({ color: bkColor })
       : new THREE.MeshLambertMaterial({ color: bkColor });
     // BANK_AMP raised to 2.8 for more organic outer-edge meander (inner edge invariant unchanged)
@@ -616,6 +652,15 @@ function buildWorld() {
           bkTex3.repeat.set(Math.ceil(segW / 2), 1);
           bkSegMat = new THREE.MeshBasicMaterial({ map: bkTex3 });
           grassBankMats3.push(bkTex3);
+        } else if (stg.num === 4 && riverbedStageTex) {
+          // Stage 4: pebble texture on bank box-segments; BasicMaterial for exact-color render
+          var bkTex4 = riverbedStageTex.clone(); bkTex4.needsUpdate = true;
+          bkTex4.wrapS = THREE.RepeatWrapping; bkTex4.wrapT = THREE.RepeatWrapping;
+          bkTex4.magFilter = THREE.NearestFilter; bkTex4.minFilter = THREE.NearestFilter;
+          bkTex4.generateMipmaps = false;
+          bkTex4.repeat.set(Math.ceil(segW / 2), 1);
+          bkSegMat = new THREE.MeshBasicMaterial({ color: WALL4_FLOOR_TINT, map: bkTex4 });
+          floorMats4.push(bkTex4);
         } else {
           bkSegMat = bkBaseMat.clone();
         }
@@ -644,11 +689,15 @@ function buildWorld() {
   addBankDecor(riverGroup, rw, stg);
   addShoreline3(riverGroup, rw, stg);
   scene.add(riverGroup);
-  if (stg.backdrop && stg.num !== 2 && stg.num !== 3) { initBankTrees3(rw, stg.backdrop); }
+  if (stg.backdrop && stg.num !== 2 && stg.num !== 3 && stg.num !== 4) { initBankTrees3(rw, stg.backdrop); }
   if (stg.backdrop && stg.num === 3) { initBankTrees3(rw, stg.backdrop, STAGE3_TREE_COUNT); }
   if (stg.num === 2) { initStage2RockyShores(rw); }
   else if (stg.num === 3) { initBankBoulders3(rw, STAGE3_BOULDER_COUNT); initBankHouses3(rw); }
-  else if (stg.num === 4) { initBankBoulders3(rw); }
+  else if (stg.num === 4) {
+    initCanyonWalls4(rw);
+    addCanyonBackfill4(riverGroup, rw);
+    console.log('[KRR S4 AUDIT] wallBoulders=' + canyonWalls4.length + ' otherBankBoulders=' + bankBoulders3.length);
+  }
 
   // Part 1: Current flow streaks -- z-aligned lines above the water surface (y=0.16).
   // Each streak is a short segment at a random x position with a slight downstream drift,
@@ -718,12 +767,7 @@ function addBankDecor(group, rw, stg) {
     var z     = zPos[i];
 
     if (stg.num === 4) {
-      // Kern Canyon: dark rock pillars
-      var rock = new THREE.Mesh(
-        new THREE.BoxGeometry(0.9, 4.0, 0.75),
-        new THREE.MeshLambertMaterial({ color: 0x292524 })
-      );
-      rock.position.set(xBase, 2.0, z); rock.castShadow = true; group.add(rock);
+      // Kern Canyon bank decor is handled by initCanyonWalls4; no static pillars here.
 
     } else if (bd) {
       // Tree sprites are now owned by initBankTrees3 (scrolling pool).
@@ -750,6 +794,13 @@ function addBankDecor(group, rw, stg) {
 var SHORE3_EDGE_COLOR   = 0x607848;  // Stage 3: damp green-brown bank edge (shows through water)
 var SHORE3_FOAM_COLOR   = 0xA8C490;  // Stage 3: muted green-tinted wet shoreline (no bright curb)
 var SHORE3_FOAM_OPACITY = 0.12;      // Stage 3: near-invisible foam so edge reads as natural lake
+var SHORE4_EDGE_COLOR   = 0x3A3028;  // Stage 4: damp dark-rock channel edge
+var SHORE4_FOAM_COLOR   = 0x5C504A;  // Stage 4: muted stone-brown wet edge (no bright curb)
+var SHORE4_FOAM_OPACITY = 0.10;      // Stage 4: near-invisible so edge reads as bare wet rock
+// Stage 4 backdrop horizontal alignment: shifts the painted river left/right to match the gameplay channel.
+// Positive = image shifts left (see more of right side); negative = shifts right.
+// Gameplay channel center is always world x=0; adjust until painted river matches at horizon.
+var STAGE4_BD_SHIFT_X = 0.0;
 function addShoreline3(rg, rw, stg) {
   if (stg.num === 2) return;
   for (var shSide = -1; shSide <= 1; shSide += 2) {
@@ -765,7 +816,7 @@ function addShoreline3(rg, rw, stg) {
       sTex.repeat.set(1, 20);
       sandyMat = new THREE.MeshLambertMaterial({ color: 0xA0988A, map: sTex });
     } else {
-      var sandyColor = (stg.num === 3) ? SHORE3_EDGE_COLOR : (stg.num === 2) ? 0x8E8070 : 0xC4A46B;
+      var sandyColor = (stg.num === 3) ? SHORE3_EDGE_COLOR : (stg.num === 4) ? SHORE4_EDGE_COLOR : (stg.num === 2) ? 0x8E8070 : 0xC4A46B;
       sandyMat = new THREE.MeshBasicMaterial({ color: sandyColor });
     }
     var sandyMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 155), sandyMat);
@@ -775,8 +826,8 @@ function addShoreline3(rg, rw, stg) {
     rg.add(sandyMesh);
 
     // Foam/wet-edge strip: Stage 3 uses muted lake color at near-zero opacity (no hard curb line)
-    var foamColor   = (stg.num === 3) ? SHORE3_FOAM_COLOR   : 0xCCEEFF;
-    var foamOpacity = (stg.num === 3) ? SHORE3_FOAM_OPACITY : 0.45;
+    var foamColor   = (stg.num === 3) ? SHORE3_FOAM_COLOR   : (stg.num === 4) ? SHORE4_FOAM_COLOR   : 0xCCEEFF;
+    var foamOpacity = (stg.num === 3) ? SHORE3_FOAM_OPACITY : (stg.num === 4) ? SHORE4_FOAM_OPACITY : 0.45;
     var foamMat = new THREE.MeshBasicMaterial({ color: foamColor, transparent: true, opacity: foamOpacity, depthWrite: false });
     var foamMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 150), foamMat);
     foamMesh.rotation.x = -Math.PI / 2;
@@ -875,8 +926,168 @@ function initBankBoulders3(rw, count) {
   }
 }
 
+// Stage 4 (Kern Canyon) only: build rising boulder-slope walls on both sides of the
+// center channel. Rows step outward from the play edge, each row higher and taller
+// than the last, reading as a rock slope rising from the canyon floor.
+// All sprites are outside +/-E (the channel edge), no collision impact.
+// Entries go into canyonWalls4 (not bankBoulders3) so Stage 3 is untouched.
+function initCanyonWalls4(rw) {
+  var E = rw / 2;   // outer edge of navigable channel; 4.4 for Stage 4 (4 lanes x 2.2)
+  // density scales with WALL4_SCALE_MULT so bigger boulders don't open z-gaps
+  var wallDens = Math.ceil(WALL4_DENSITY * WALL4_SCALE_MULT);
+  console.log('[KRR WALL4] rows=' + WALL4_ROWS + ' stepY=' + WALL4_ROW_STEP_Y +
+    ' stepX=' + WALL4_ROW_STEP_X + ' scaleBase=' + WALL4_SCALE_BASE +
+    ' scaleStep=' + WALL4_SCALE_STEP + ' scaleMult=' + WALL4_SCALE_MULT +
+    ' density=' + wallDens + ' E=' + E);
+  var zSpan   = Math.abs(SPAWN_Z) + 12;
+  var rotMult = Math.PI / 180;
+  for (var side = -1; side <= 1; side += 2) {
+    for (var r = 0; r < WALL4_ROWS; r++) {
+      var rowXBase = side * (E + WALL4_INNER_GAP + r * WALL4_ROW_STEP_X);
+      var rowY     = r * WALL4_ROW_STEP_Y;
+      var rowH     = WALL4_SCALE_BASE + r * WALL4_SCALE_STEP;
+      // renderOrder: inner rows (r=0) render on top of outer rows (r=WALL4_ROWS-1)
+      var rOrder   = WALL4_ROWS - r;
+      for (var di = 0; di < wallDens; di++) {
+        var texIdx = Math.floor(Math.random() * bankBoulderTex.length);
+        var tex    = bankBoulderTex[texIdx];
+        var mat;
+        if (tex) {
+          mat = new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.08 });
+        } else {
+          mat = new THREE.SpriteMaterial({ color: 0x6A5A4A, transparent: true, opacity: 0.88 });
+        }
+        // random rotation jitter breaks copy-paste silhouette
+        mat.rotation = (Math.random() - 0.5) * 2.0 * WALL4_ROT_RANGE * rotMult;
+        // per-boulder brightness jitter (multiplicative tint)
+        var tv = 1.0 - Math.random() * WALL4_TINT_JITTER;
+        mat.color.setRGB(tv, tv, tv);
+        var spr     = new THREE.Sprite(mat);
+        spr.center.set(0.5, 0);   // bottom-anchor: raising Y lifts the rock visually upward
+        var zInit   = SPAWN_Z + (di / wallDens) * zSpan;
+        var baseH   = rowH * (0.85 + Math.random() * 0.30);  // pre-mult, pre-depth-scale
+        var wFactor = 0.80 + Math.random() * 0.65;           // width-to-height ratio
+        var flipX   = Math.random() < 0.5 ? 1 : -1;
+        // depth taper: t=0 at SPAWN_Z (far/short) t=1 at DESPAWN_Z (near/tall)
+        var t4  = Math.max(0, Math.min(1, (zInit - SPAWN_Z) / (DESPAWN_Z - SPAWN_Z)));
+        var ds4 = WALL4_FAR_SCALE + t4 * (WALL4_NEAR_SCALE - WALL4_FAR_SCALE);
+        var bH  = baseH * WALL4_SCALE_MULT * ds4;
+        spr.scale.set(bH * wFactor * flipX, bH, 1);
+        var xJit = (Math.random() - 0.5) * 2.0 * WALL4_JITTER;
+        spr.position.set(rowXBase + xJit, rowY, zInit);
+        spr.renderOrder = rOrder;
+        scene.add(spr);
+        canyonWalls4.push({
+          sprite:   spr,
+          side:     side,
+          z:        zInit,
+          rowIdx:   r,
+          rowXBase: rowXBase,
+          rowY:     rowY,
+          rowH:     rowH,
+          texIdx:   texIdx,
+          baseH:    baseH,    // rowH * size jitter; WALL4_SCALE_MULT and depth scale applied per-frame
+          wFactor:  wFactor,
+          flipX:    flipX,
+        });
+      }
+    }
+  }
+}
+
+// Stage 4: continuous textured rock-wall quad per side.
+// Geometry: a quad raking from (E, yBot) at the channel edge up-and-outward to (E+WIDTH, TOP).
+// Spans the full stage length in Z so no backdrop shows through boulder sprite gaps.
+// Mirror-identical left/right. renderOrder=0 draws before boulders (1-5); Z-depth keeps it behind backdrop.
+function addCanyonBackfill4(rg, rw) {
+  var E      = rw / 2;                      // channel half-width (4.4 for Stage 4)
+  var W      = WALL4_ROCK_WIDTH;            // outward X extent
+  var H      = WALL4_ROCK_TOP;             // top-edge height -- clears frame at all depths
+  var yBot   = -0.5;                        // bottom tucked below ground plane
+  var z_near = DESPAWN_Z - 1;              // front end just ahead of camera (CAM_Z_BK=8.5)
+  var z_far  = SPAWN_Z   - 5;             // back end past spawn
+  console.log('[KRR WALL4 ROCK] E=' + E.toFixed(1) + ' W=' + W + ' H=' + H + ' z=' + z_far + '->' + z_near + ' tint=0x' + WALL4_ROCK_TINT.toString(16));
+  for (var side = -1; side <= 1; side += 2) {
+    var xInner = side * E;                   // channel edge
+    var xOuter = side * (E + W);             // outer top edge
+    // 4-vertex quad; U axis along Z (stage length), V axis along slope (bottom to top).
+    // winding: viewed from channel interior, front face is visible (DoubleSide also used as safety).
+    var pos = new Float32Array([
+      xInner, yBot, z_far,    // 0 bottom-far
+      xInner, yBot, z_near,   // 1 bottom-near
+      xOuter, H,    z_near,   // 2 top-near
+      xOuter, H,    z_far,    // 3 top-far
+    ]);
+    var uv = new Float32Array([
+      0, 0,   // 0
+      1, 0,   // 1
+      1, 1,   // 2
+      0, 1,   // 3
+    ]);
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv',       new THREE.BufferAttribute(uv,  2));
+    geo.setIndex([0, 1, 2,  0, 2, 3]);
+    var tex = null;
+    if (riverbedStageTex) {
+      tex = riverbedStageTex.clone();
+      tex.needsUpdate    = true;
+      tex.wrapS          = THREE.RepeatWrapping;
+      tex.wrapT          = THREE.RepeatWrapping;
+      tex.magFilter      = THREE.NearestFilter;
+      tex.minFilter      = THREE.NearestFilter;
+      tex.generateMipmaps = false;
+      tex.repeat.set(WALL4_ROCK_RPT_U, WALL4_ROCK_RPT_V);
+    }
+    var mat = new THREE.MeshBasicMaterial({
+      color:      WALL4_ROCK_TINT,
+      map:        tex || null,
+      side:       THREE.DoubleSide,
+    });
+    var mesh = new THREE.Mesh(geo, mat);
+    mesh.renderOrder = 0;  // draws before boulders (renderOrder 1-5); Z-depth puts it in front of backdrop
+    canyonFill4.push(mesh);
+    if (tex) rockWallMats4.push(tex);
+    rg.add(mesh);
+  }
+}
+
+
 var STAGE3_HOUSE_COUNT = 4;    // sparse landmark count; tune by eye (3-6 feels right)
 var STAGE3_HOUSE_SCALE = 8;    // sprite height in world units; tune by eye
+
+// Stage 4 canyon ravine wall constants -- all cosmetic, outside play lane, no collision
+var WALL4_ROWS       = 5;    // number of boulder rows per side, stepping outward
+var WALL4_INNER_GAP  = 0.3;  // x-gap from play edge (E) to innermost row center
+var WALL4_ROW_STEP_X = 2.5;  // x-distance between adjacent rows (outward)
+var WALL4_ROW_STEP_Y = 0.9;  // y-rise (upward) per row
+var WALL4_SCALE_BASE = 2.4;  // sprite height of innermost row (row 0)
+var WALL4_SCALE_STEP = 1.1;  // height added per row outward
+var WALL4_DENSITY    = 10;   // boulder sprites per row per side
+var WALL4_JITTER      = 0.55; // one-sided random position jitter in world units
+var WALL4_FLOOR_REPEAT = 40;        // pebble tiles across the 200-unit bank ground; tune for pebble scale
+var WALL4_FLOOR_TINT   = 0xFFFFFF;  // MeshBasicMaterial color tint on pebble floor; darken to taste
+var WALL4_FLOOR_SCROLL_MULT = 1.0;  // multiply pebble floor scroll vs world speed (1.0 = exact match; tune if needed)
+var WALL4_SCALE_MULT  = 1.2;   // global per-boulder size multiplier on top of per-row scale
+var WALL4_ROT_RANGE   = 22;    // max rotation jitter in degrees; breaks the copy-paste silhouette
+var WALL4_TINT_JITTER = 0.20;  // max brightness reduction per boulder (0=uniform, 1=can go fully dark)
+// depth taper: funnel -- near boulders tall, far boulders short so backdrop shows over the horizon
+var WALL4_NEAR_SCALE  = 1.3;   // height multiplier at near (camera) end; enlarge to raise near walls
+var WALL4_FAR_SCALE   = 0.45;  // height multiplier at far (backdrop) end; reduce to lower far walls
+// Opaque rock wall seal behind the boulder rows (Stage 4 only) -- replaces old flat slab
+// Geometry: a quad per side raking from channel edge (x=E, y=0) up and outward to (x=E+WIDTH, y=TOP).
+// Must reach well above the camera frame so no sky shows through boulder gaps.
+var WALL4_ROCK_WIDTH  = 20;          // outward X extent of rock wall from channel edge (world units)
+var WALL4_ROCK_TOP    = 24;          // top-edge height; 24 clears the camera frame at all depths
+var WALL4_ROCK_TINT   = 0xB8A090;   // warm stone color; darken toward 0x4A3828 for darker canyon rock
+var WALL4_ROCK_RPT_U  = 8;          // texture tiles along stage length (Z axis)
+var WALL4_ROCK_RPT_V  = 5;          // texture tiles along slope height
+var WALL4_ROCK_SCROLL_MULT = 1.0;   // multiply rock-wall scroll rate vs world speed (1.0 = matched)
+// Legacy tuner constants kept so TEMP tuner keys compile (not used by new geometry)
+var WALL4_FILL_COLOR        = 0x3A3028;
+var WALL4_FILL_H_FAR        = -0.5;
+var WALL4_FILL_SLOPE_INNER  = 0.0;
+var WALL4_FILL_SLOPE_OUTER  = 3.0;
 
 function initBankHouses3(rw) {
   for (var hi = 0; hi < STAGE3_HOUSE_COUNT; hi++) {
@@ -984,7 +1195,7 @@ function buildStageBackdrop(stg) {
   // Stages 2 and 3: shift backdrop center down 3 units so the bottom edge (y=-3) overlaps
   // below the water surface (y=0.15), closing the clear-color seam at the horizon.
   // Stage 1 position is untouched (remains y=26 from the position.set call above).
-  if (stg.num === 2 || stg.num === 3) {
+  if (stg.num === 2 || stg.num === 3 || stg.num === 4) {
     backdropMesh.position.y = 23;
   }
 
@@ -1020,6 +1231,15 @@ function buildStageBackdrop(stg) {
       tex.offset.set(s3OffX, s3OffY);
       tex.repeat.set(s3RepX, s3RepY);
       console.log('[KRR BG ZOOM S3] ZOOM3=' + ZOOM3 + ' final offset=(' + s3OffX.toFixed(4) + ',' + s3OffY.toFixed(4) + ') repeat=(' + s3RepX.toFixed(4) + ',' + s3RepY.toFixed(4) + ')');
+    } else if (stg.num === 4) {
+      // Stage 4 (Kern Canyon): clamp + bottom-row trim N=6, full-width (no zoom)
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      var trimN4 = 6;
+      var trimH4 = (tex.image && tex.image.naturalHeight) ? tex.image.naturalHeight : 1024;
+      tex.offset.set(STAGE4_BD_SHIFT_X, trimN4 / trimH4);
+      tex.repeat.set(1, (trimH4 - trimN4) / trimH4);
+      console.log('[KRR BG TRIM S4] shiftX=' + STAGE4_BD_SHIFT_X + ' N=6 offset.y=' + (trimN4 / trimH4).toFixed(6) + ' repeat.y=' + ((trimH4 - trimN4) / trimH4).toFixed(6));
     }
     tex.needsUpdate  = true;
     stageTexCache[bd.img] = tex;
@@ -2044,6 +2264,38 @@ function update3() {
     }
   }
 
+  // Scroll Stage 4 canyon wall boulders; size is updated per-frame for smooth depth taper (funnel)
+  for (var cwi = 0; cwi < canyonWalls4.length; cwi++) {
+    var cw = canyonWalls4[cwi];
+    cw.z += spd;
+    if (cw.z > DESPAWN_Z + 2) {
+      // recycle: reset z and re-randomize per-boulder shape + style
+      cw.z       = SPAWN_Z - Math.random() * 8;
+      var cwTexIdx = Math.floor(Math.random() * bankBoulderTex.length);
+      cw.texIdx  = cwTexIdx;
+      cw.baseH   = cw.rowH * (0.85 + Math.random() * 0.30);
+      cw.wFactor = 0.80 + Math.random() * 0.65;
+      cw.flipX   = Math.random() < 0.5 ? 1 : -1;
+      var cwXJit = (Math.random() - 0.5) * 2.0 * WALL4_JITTER;
+      var cwRot  = (Math.random() - 0.5) * 2.0 * WALL4_ROT_RANGE * (Math.PI / 180);
+      var cwTv   = 1.0 - Math.random() * WALL4_TINT_JITTER;
+      cw.sprite.position.x = cw.rowXBase + cwXJit;
+      cw.sprite.position.y = cw.rowY;
+      cw.sprite.material.rotation = cwRot;
+      cw.sprite.material.color.setRGB(cwTv, cwTv, cwTv);
+      if (bankBoulderTex[cwTexIdx]) {
+        cw.sprite.material.map = bankBoulderTex[cwTexIdx];
+        cw.sprite.material.needsUpdate = true;
+      }
+    }
+    // per-frame: depth taper (t=0 far/short, t=1 near/tall) applied every frame so funnel is smooth
+    cw.sprite.position.z = cw.z;
+    var cwT  = Math.max(0, Math.min(1, (cw.z - SPAWN_Z) / (DESPAWN_Z - SPAWN_Z)));
+    var cwDs = WALL4_FAR_SCALE + cwT * (WALL4_NEAR_SCALE - WALL4_FAR_SCALE);
+    var cwH  = cw.baseH * WALL4_SCALE_MULT * cwDs;
+    cw.sprite.scale.set(cwH * cw.wFactor * cw.flipX, cwH, 1);
+  }
+
   // Scroll lake-house sprites (Stage 3 only); recycle with randomized x-offset and texture
   for (var hsi = 0; hsi < bankHouses3.length; hsi++) {
     var hse = bankHouses3[hsi];
@@ -2253,6 +2505,25 @@ function updateVisuals3() {
   // Scroll Stage 3 grass textures (ground plane + bank segments) toward the player
   for (var gbi = 0; gbi < grassBankMats3.length; gbi++) {
     grassBankMats3[gbi].offset.y -= 0.0005 * GRASS3_SCROLL_MULT;
+  }
+
+  // Scroll Stage 4 pebble floor textures toward player, tied to curSpd3 so they match world movement.
+  // Ground plane is PlaneGeometry(200,170); after rotation UV-V maps to 170 world-Z units.
+  // UV delta = spd * repeat / plane_z_extent = curSpd3 * WALL4_FLOOR_REPEAT / 170
+  if (floorMats4.length > 0) {
+    var floorDelta = curSpd3 * WALL4_FLOOR_REPEAT / 170 * WALL4_FLOOR_SCROLL_MULT;
+    for (var f4i = 0; f4i < floorMats4.length; f4i++) {
+      floorMats4[f4i].offset.y -= floorDelta;
+    }
+  }
+
+  // Scroll Stage 4 rock wall textures along U (Z axis) to match boulder/world movement.
+  // Wall quad spans z_far to z_near (74 world units). UV delta = curSpd3 * RPT_U / z_extent.
+  if (rockWallMats4.length > 0) {
+    var rwDelta = curSpd3 * WALL4_ROCK_RPT_U / 74 * WALL4_ROCK_SCROLL_MULT;
+    for (var rw4i = 0; rw4i < rockWallMats4.length; rw4i++) {
+      rockWallMats4[rw4i].offset.x += rwDelta;
+    }
   }
 
   // Drift clouds slowly downstream; loop back to the far end when they pass the threshold.
