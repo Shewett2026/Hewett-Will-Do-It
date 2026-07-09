@@ -14,7 +14,7 @@ const MIN_GAP   = 135;
 const MI_PER_PX = 900;
 const COLL_FREQ  = 0.006;
 const COLL_DRIFT = 0.60;  // collectibles float at 60% of obstacle speed (river-current feel)
-const SPD_SCALE = 0.070;
+const SPD_SCALE = 0.060;
 const CAM_Y     = 4.8;
 const CAM_Z_BK  = 8.5;
 const CAM_LOOK_Z = -8.0;
@@ -88,10 +88,17 @@ const STAGES3 = [
   },
   {
     num:5, name:'BAKERSFIELD', endMile:165, lanes:3, speed:2.00, obsFreq:0.012, fwFreq:0.09,
-    waterColor:0x22D3EE, bankColor:0xD97706,
-    obsTypes:['shopping_cart','shopping_cart','boulder','boulder','river_wash'],
+    waterColor:0x3E5560, bankColor:0xD97706,
+    obsTypes:['boulder','boulder','boulder','fallen_log','fallen_log','shopping_cart','river_wash'],
     fwType:'tube_float_parade', collA:'fox_theater_ticket', collB:'city_seal_medallion',
-    backdrop: null,
+    backdrop: {
+      img:        'bakersfield-terminus-bg.png',
+      bankGrass:  0x8A7D5E,
+      bankEarth:  0x5A5040,
+      treeColors: [0x6B6A4A, 0x5C5A3E, 0x6B6A4A, 0x5C5A3E],
+      trunkColor: 0x3A342A,
+      wf:         null,
+    },
     subNarrow:[
       { atMile:150, lanes:2, msg:'THE RIVER NARROWS', obsFreq:0.009 },
       { atMile:160, lanes:1, msg:'FINAL STRETCH',     obsFreq:0.007 },
@@ -249,6 +256,7 @@ let flowLines3d = [];
 let horizonGrp  = null;
 let waterMesh   = null;
 let backdropMesh = null;
+let stageBackdropMesh = null;   // Stage 5 persistent backdrop handle (framing tuner)
 let wfGroup     = null;
 let wfStrips    = [];
 let bankTrees3   = [];   // scrolling tree sprite pool (not riverGroup children)
@@ -260,6 +268,12 @@ let rockWallMats4 = [];  // rock wall texture refs for per-frame UV scroll (Stag
 let bankSegMats3  = [];   // bank segment texture refs for per-frame scroll (Stage 1)
 let grassBankMats3 = [];  // Stage 3 grass texture refs for per-frame scroll (ground + bank segs)
 let floorMats4    = [];  // Stage 4 pebble floor texture refs for per-frame scroll
+let swampBankMats5 = []; // Stage 5 bank seg texture clones for per-frame UV scroll
+var s5GndScrollTex = null; // Stage 5 ground plane scroll clone; re-acquired each buildWorld
+let bankStumps5    = [];  // Stage 5 tree-stump sprite pool
+let bankFarms5     = [];  // Stage 5 farm-house sprite pool (farm-house-1 and farm-house-2)
+let bankFishing5   = [];  // Stage 5 fishing-supplies sprite pool
+let bankCars5      = [];  // Stage 5 broken-down-car sprite pool
 let sparkles3         = [];   // Part 2: water sparkle glints (rebuilt each buildWorld)
 let kayakTurnY3       = 0;    // Polish 3: lane-change tilt angle (radians)
 let kayakWasSpinning3 = false; // Polish 3: spinout-exit guard for smooth rotation handoff
@@ -413,6 +427,18 @@ var grassStage3Tex = null;
   }, undefined, function(e) { console.error('[KRR] grass-stage3.png FAILED', e); });
 })();
 
+// Stage 5 terrain bank ground texture (dry-swamp-terrain.png left on disk but no longer referenced for Stage 5)
+var swampTerrainTex = null;
+(function preloadSwampTerrain5() {
+  new THREE.TextureLoader().load('new-stage-5-terrain-blur.png', function(tex) {
+    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    swampTerrainTex = tex;
+    console.log('[KRR] stage5 terrain loaded: new-stage-5-terrain-blur.png');
+  }, undefined, function(e) { console.error('[KRR] new-stage-5-terrain-blur.png FAILED', e); });
+})();
+
 // Stage 3 lake-house landmark sprites
 var lakeHouseTex      = [null, null, null];
 var lakeHouseTexNames = ['lake-house-1.png', 'lake-house-2.png', 'lake-house-3.png'];
@@ -442,6 +468,147 @@ var lakeHouseTexNames = ['lake-house-1.png', 'lake-house-2.png', 'lake-house-3.p
   }
 })();
 
+// Stage 5 bank decoration textures
+var stumpTex5   = null;
+var farmTex5    = [null, null];   // index 0 = farm-house-1, index 1 = farm-house-2
+var fishingTex5 = null;
+var carTex5     = null;
+
+(function() {
+  var ldr = new THREE.TextureLoader();
+  ldr.load('tree-stump.png', function(tex) {
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    stumpTex5 = tex;
+    if (tex.image && tex.image.naturalHeight > 0) {
+      var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
+      console.log('[KRR S5DECO] tree-stump ' + natW + 'x' + natH + ' -> world ' + (S5_STUMP_SCALE * natW / natH).toFixed(2) + 'x' + S5_STUMP_SCALE.toFixed(2));
+      var asp = natW / natH;
+      for (var i = 0; i < bankStumps5.length; i++) {
+        bankStumps5[i].sprite.material.map = tex; bankStumps5[i].sprite.material.needsUpdate = true;
+        bankStumps5[i].sprite.scale.set(S5_STUMP_SCALE * asp, S5_STUMP_SCALE, 1);
+      }
+    }
+  }, undefined, function(e) { console.error('[KRR] tree-stump.png FAILED', e); });
+  ldr.load('farm-house-1.png', function(tex) {
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    farmTex5[0] = tex;
+    if (tex.image && tex.image.naturalHeight > 0) {
+      var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
+      console.log('[KRR S5DECO] farm-house-1 ' + natW + 'x' + natH + ' -> world ' + (S5_FARMHOUSE_SCALE * natW / natH).toFixed(2) + 'x' + S5_FARMHOUSE_SCALE.toFixed(2));
+      var asp = natW / natH;
+      for (var i = 0; i < bankFarms5.length; i++) {
+        if (bankFarms5[i].texIdx === 0) {
+          bankFarms5[i].sprite.material.map = tex; bankFarms5[i].sprite.material.needsUpdate = true;
+          bankFarms5[i].sprite.scale.set(S5_FARMHOUSE_SCALE * asp, S5_FARMHOUSE_SCALE, 1);
+        }
+      }
+    }
+  }, undefined, function(e) { console.error('[KRR] farm-house-1.png FAILED', e); });
+  ldr.load('farm-house-2.png', function(tex) {
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    farmTex5[1] = tex;
+    if (tex.image && tex.image.naturalHeight > 0) {
+      var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
+      console.log('[KRR S5DECO] farm-house-2 ' + natW + 'x' + natH + ' -> world ' + (S5_FARMHOUSE_SCALE * natW / natH).toFixed(2) + 'x' + S5_FARMHOUSE_SCALE.toFixed(2));
+      var asp = natW / natH;
+      for (var i = 0; i < bankFarms5.length; i++) {
+        if (bankFarms5[i].texIdx === 1) {
+          bankFarms5[i].sprite.material.map = tex; bankFarms5[i].sprite.material.needsUpdate = true;
+          bankFarms5[i].sprite.scale.set(S5_FARMHOUSE_SCALE * asp, S5_FARMHOUSE_SCALE, 1);
+        }
+      }
+    }
+  }, undefined, function(e) { console.error('[KRR] farm-house-2.png FAILED', e); });
+  ldr.load('fishing-supplies.png', function(tex) {
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    fishingTex5 = tex;
+    if (tex.image && tex.image.naturalHeight > 0) {
+      var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
+      console.log('[KRR S5DECO] fishing-supplies ' + natW + 'x' + natH + ' -> world ' + (S5_FISHING_SCALE * natW / natH).toFixed(2) + 'x' + S5_FISHING_SCALE.toFixed(2));
+      var asp = natW / natH;
+      for (var i = 0; i < bankFishing5.length; i++) {
+        bankFishing5[i].sprite.material.map = tex; bankFishing5[i].sprite.material.needsUpdate = true;
+        bankFishing5[i].sprite.scale.set(S5_FISHING_SCALE * asp, S5_FISHING_SCALE, 1);
+      }
+    }
+  }, undefined, function(e) { console.error('[KRR] fishing-supplies.png FAILED', e); });
+  ldr.load('broken-down-car.png', function(tex) {
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    carTex5 = tex;
+    if (tex.image && tex.image.naturalHeight > 0) {
+      var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
+      console.log('[KRR S5DECO] broken-down-car ' + natW + 'x' + natH + ' -> world ' + (S5_CAR_SCALE * natW / natH).toFixed(2) + 'x' + S5_CAR_SCALE.toFixed(2));
+      var asp = natW / natH;
+      for (var i = 0; i < bankCars5.length; i++) {
+        bankCars5[i].sprite.material.map = tex; bankCars5[i].sprite.material.needsUpdate = true;
+        bankCars5[i].sprite.scale.set(S5_CAR_SCALE * asp, S5_CAR_SCALE, 1);
+      }
+    }
+  }, undefined, function(e) { console.error('[KRR] broken-down-car.png FAILED', e); });
+})();
+
+// Stage 5 in-water obstacle textures (shopping cart art)
+var cartTex5Obs    = [null, null];  // index 0 = shopping-cart-3.png, index 1 = shopping-cart-4.png
+var cartTex5ObsAsp = [1.0, 1.0];   // cached aspect ratios; updated on texture load; defaults to 1.0
+var cartTex5ObsLogged = false;      // fire sizing log once on first load
+
+(function() {
+  var ldr = new THREE.TextureLoader();
+  var cartNames = ['shopping-cart-3.png', 'shopping-cart-4.png'];
+  for (var cti = 0; cti < cartNames.length; cti++) {
+    (function(idx) {
+      ldr.load(cartNames[idx], function(tex) {
+        tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false; tex.needsUpdate = true;
+        cartTex5Obs[idx] = tex;
+        if (tex.image && tex.image.naturalHeight > 0) {
+          var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
+          cartTex5ObsAsp[idx] = natW / natH;
+          if (!cartTex5ObsLogged) {
+            cartTex5ObsLogged = true;
+            var wH = 1.40;
+            console.log('[KRR S5OBS] shopping-cart ' + natW + 'x' + natH + ' -> world ' + (wH * cartTex5ObsAsp[idx]).toFixed(2) + 'x' + wH.toFixed(2) + ' seatY=' + S5_CART_SEAT_Y);
+          }
+        }
+      }, undefined, function(e) { console.error('[KRR] ' + cartNames[idx] + ' FAILED', e); });
+    })(cti);
+  }
+})();
+
+// Stage 5 in-water obstacle textures (fallen log art)
+var fallenLogTex5      = [null, null];  // index 0 = fallen-log-1.png roots-left, index 1 = fallen-log-2.png roots-right
+var fallenLogTex5Asp   = [1.0, 1.0];   // cached aspect ratios; updated on texture load; defaults to 1.0
+var fallenLogTex5Logged = false;        // fire sizing log once on first load
+var fallenLogAlt5      = 0;            // toggles 0/1 per fallen_log spawn to alternate art/gap side
+
+(function() {
+  var ldr = new THREE.TextureLoader();
+  var logNames = ['fallen-log-1.png', 'fallen-log-2.png'];
+  for (var lgi = 0; lgi < logNames.length; lgi++) {
+    (function(idx) {
+      ldr.load(logNames[idx], function(tex) {
+        tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false; tex.needsUpdate = true;
+        fallenLogTex5[idx] = tex;
+        if (tex.image && tex.image.naturalHeight > 0) {
+          var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
+          fallenLogTex5Asp[idx] = natW / natH;
+          if (!fallenLogTex5Logged) {
+            fallenLogTex5Logged = true;
+            var wW = 2 * LANE_W;
+            console.log('[KRR S5LOG] fallen-log ' + natW + 'x' + natH + ' -> world ' + wW.toFixed(2) + 'x' + (wW / fallenLogTex5Asp[idx]).toFixed(2));
+          }
+        }
+      }, undefined, function(e) { console.error('[KRR] ' + logNames[idx] + ' FAILED', e); });
+    })(lgi);
+  }
+})();
+
 let stageIdx    = 0;
 let curLanes    = STAGES3[0].lanes;
 
@@ -464,6 +631,14 @@ function buildWorld() {
   bankBoulders3 = [];
   bankHouses3.forEach(function(bh) { scene.remove(bh.sprite); if (bh.sprite.material) bh.sprite.material.dispose(); });
   bankHouses3 = [];
+  bankStumps5.forEach(function(b5) { scene.remove(b5.sprite); if (b5.sprite.material) b5.sprite.material.dispose(); });
+  bankStumps5 = [];
+  bankFarms5.forEach(function(b5) { scene.remove(b5.sprite); if (b5.sprite.material) b5.sprite.material.dispose(); });
+  bankFarms5 = [];
+  bankFishing5.forEach(function(b5) { scene.remove(b5.sprite); if (b5.sprite.material) b5.sprite.material.dispose(); });
+  bankFishing5 = [];
+  bankCars5.forEach(function(b5) { scene.remove(b5.sprite); if (b5.sprite.material) b5.sprite.material.dispose(); });
+  bankCars5 = [];
   canyonWalls4.forEach(function(cw) { scene.remove(cw.sprite); if (cw.sprite.material) cw.sprite.material.dispose(); });
   canyonWalls4 = [];
   canyonFill4.forEach(function(m) { if (m.parent) m.parent.remove(m); if (m.geometry) m.geometry.dispose(); if (m.material) m.material.dispose(); });
@@ -472,13 +647,21 @@ function buildWorld() {
   bankSegMats3  = [];
   grassBankMats3 = [];
   floorMats4    = [];
+  swampBankMats5 = [];
+  s5GndScrollTex = null;
   riverbedMesh   = null;
   riverbedTexRef = null;
   if (horizonGrp)   { scene.remove(horizonGrp); horizonGrp = null; }
-  if (backdropMesh) { scene.remove(backdropMesh); backdropMesh.geometry.dispose(); backdropMesh = null; }
+  // Stage 5 backdrop persists through sub-narrow rebuilds; only tear down on actual stage change
+  if (backdropMesh && !(stageIdx === 4 && stageBackdropMesh !== null)) { scene.remove(backdropMesh); backdropMesh.geometry.dispose(); backdropMesh = null; stageBackdropMesh = null; }
   if (wfGroup)      { scene.remove(wfGroup); wfGroup = null; wfStrips = []; }
 
   const stg = STAGES3[stageIdx];
+  // Per-stage sky: Stage 5 gets a dusty haze tone; all others restore the standard sky blue
+  scene.background.set(stg.num === 5 ? 0x9FB0B8 : 0x87CEEB);
+  // Stage 5: extend far clip so deep terrain planes reach the backdrop bottom; restore for other stages
+  camera.far = (stg.num === 5) ? 350 : 160;
+  camera.updateProjectionMatrix();
   const rw  = riverWidth();
   riverGroup = new THREE.Group();
 
@@ -522,10 +705,25 @@ function buildWorld() {
     } else {
       gndMat = new THREE.MeshBasicMaterial({ color: stg.bankColor });
     }
+  } else if (stg.num === 5) {
+    // Stage 5: dedicated scrolling clone so auto-scroll and [/] seat tuner don't fight over the same offset.y
+    if (swampTerrainTex) {
+      var gndTex5 = swampTerrainTex.clone(); gndTex5.needsUpdate = true;
+      gndTex5.wrapS = THREE.RepeatWrapping; gndTex5.wrapT = THREE.RepeatWrapping;
+      gndTex5.magFilter = THREE.NearestFilter; gndTex5.minFilter = THREE.NearestFilter;
+      gndTex5.generateMipmaps = false;
+      gndTex5.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y);
+      gndMat = new THREE.MeshBasicMaterial({ map: gndTex5 });
+      s5GndScrollTex = gndTex5;
+    } else {
+      gndMat = new THREE.MeshBasicMaterial({ color: stg.backdrop ? stg.backdrop.bankGrass : stg.bankColor });
+      s5GndScrollTex = null;
+    }
   } else {
     gndMat = new THREE.MeshLambertMaterial({ color: stg.bankColor });
   }
-  const gnd = new THREE.Mesh(new THREE.PlaneGeometry(200, 170), gndMat);
+  var gndZ = (stg.num === 5) ? 600 : 170;
+  const gnd = new THREE.Mesh(new THREE.PlaneGeometry(200, gndZ), gndMat);
   gnd.rotation.x = -Math.PI / 2; gnd.position.set(0, -0.02, -55); gnd.receiveShadow = true;
   gnd.renderOrder = 0;
   riverGroup.add(gnd);
@@ -545,7 +743,8 @@ function buildWorld() {
       rbMat.needsUpdate = true;
       riverbedTexRef = riverbedStageTex;
     }
-    var rbMesh = new THREE.Mesh(new THREE.PlaneGeometry(rw + 2, 155, 1, 1), rbMat);
+    var rbDepth = (stg.num === 5) ? 600 : 155;
+    var rbMesh = new THREE.Mesh(new THREE.PlaneGeometry(rw + 2, rbDepth, 1, 1), rbMat);
     rbMesh.rotation.x = -Math.PI / 2;
     rbMesh.position.set(0, 0.0, -55);
     rbMesh.renderOrder = 1;
@@ -578,6 +777,9 @@ function buildWorld() {
     // Stage 4 (Kern Canyon): BasicMaterial so the deep-blue canyon water renders at exact hex
     // under the heavily shadowed canyon. Lambert/Phong would blow out the mid-dark blue.
     wMat = new THREE.MeshBasicMaterial({ color: stg.waterColor });
+  } else if (stg.num === 5) {
+    // Stage 5 (Bakersfield Terminus): BasicMaterial for lighting-free tunable murky tone
+    wMat = new THREE.MeshBasicMaterial({ color: stg.waterColor });
   } else {
     wMat = new THREE.MeshPhongMaterial({ color: stg.waterColor, shininess: 14, specular: 0x111a22 });
     if (stg.num === 1 && waterStageTex) {
@@ -601,7 +803,8 @@ function buildWorld() {
   wMat.depthWrite  = false;
   var waterPW = (stg.num === 2) ? 200 : rw;
   var waterPX = (stg.num === 2) ? 8   : 12;
-  const water = new THREE.Mesh(new THREE.PlaneGeometry(waterPW, 155, waterPX, 32), wMat);
+  var waterDepth = (stg.num === 5) ? 600 : 155;
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(waterPW, waterDepth, waterPX, 32), wMat);
   water.rotation.x = -Math.PI / 2; water.position.set(0, 0.15, -55); water.receiveShadow = true;
   water.renderOrder = 2;
   riverGroup.add(water);
@@ -661,6 +864,15 @@ function buildWorld() {
           bkTex4.repeat.set(Math.ceil(segW / 2), 1);
           bkSegMat = new THREE.MeshBasicMaterial({ color: WALL4_FLOOR_TINT, map: bkTex4 });
           floorMats4.push(bkTex4);
+        } else if (stg.num === 5 && swampTerrainTex) {
+          // Stage 5: per-segment clone so UV scroll is visible (same approach as Stages 1/3/4)
+          var bkTex5 = swampTerrainTex.clone(); bkTex5.needsUpdate = true;
+          bkTex5.wrapS = THREE.RepeatWrapping; bkTex5.wrapT = THREE.RepeatWrapping;
+          bkTex5.magFilter = THREE.NearestFilter; bkTex5.minFilter = THREE.NearestFilter;
+          bkTex5.generateMipmaps = false;
+          bkTex5.repeat.set(Math.ceil(segW / 2), 1);
+          bkSegMat = new THREE.MeshBasicMaterial({ map: bkTex5 });
+          swampBankMats5.push(bkTex5);
         } else {
           bkSegMat = bkBaseMat.clone();
         }
@@ -689,10 +901,12 @@ function buildWorld() {
   addBankDecor(riverGroup, rw, stg);
   addShoreline3(riverGroup, rw, stg);
   scene.add(riverGroup);
-  if (stg.backdrop && stg.num !== 2 && stg.num !== 3 && stg.num !== 4) { initBankTrees3(rw, stg.backdrop); }
+  if (stg.backdrop && stg.num === 1) { initBankTrees3(rw, stg.backdrop); }
+  if (stg.backdrop && stg.num === 5) { initBankTrees3(rw, stg.backdrop, 16); }
   if (stg.backdrop && stg.num === 3) { initBankTrees3(rw, stg.backdrop, STAGE3_TREE_COUNT); }
   if (stg.num === 2) { initStage2RockyShores(rw); }
   else if (stg.num === 3) { initBankBoulders3(rw, STAGE3_BOULDER_COUNT); initBankHouses3(rw); }
+  if (stg.num === 5) { initBankDecor5(rw); }
   else if (stg.num === 4) {
     initCanyonWalls4(rw);
     addCanyonBackfill4(riverGroup, rw);
@@ -797,6 +1011,29 @@ var SHORE3_FOAM_OPACITY = 0.12;      // Stage 3: near-invisible foam so edge rea
 var SHORE4_EDGE_COLOR   = 0x3A3028;  // Stage 4: damp dark-rock channel edge
 var SHORE4_FOAM_COLOR   = 0x5C504A;  // Stage 4: muted stone-brown wet edge (no bright curb)
 var SHORE4_FOAM_OPACITY = 0.10;      // Stage 4: near-invisible so edge reads as bare wet rock
+var SHORE5_EDGE_COLOR   = 0x7E6A46;  // Stage 5: muted dry-earth channel edge
+var SHORE5_FOAM_COLOR   = 0x8A8578;  // Stage 5: dusty stone-brown wet edge (no bright curb)
+var SHORE5_FOAM_OPACITY = 0.12;      // Stage 5: near-invisible so edge reads as dry rocky bed
+var S5_BD_SCALE = 0.86; // Stage 5 backdrop initial scale (TEMP framing tuner; bake before launch)
+var S5_BD_Y    = -3.0;  // Stage 5 backdrop Y offset from default y=26 (TEMP framing tuner)
+var S5_TERR_REPEAT_X = 12;   // Stage 5 swamp terrain X repeat (TEMP tuner; bake before launch)
+var S5_TERR_REPEAT_Y = 12;   // Stage 5 swamp terrain Y repeat
+var S5_TERR_SCROLL   = 1.0;  // Stage 5 swamp terrain scroll multiplier
+var S5_TERR_Y        = 0.0;  // Stage 5 swamp terrain UV seat (phase offset)
+// Stage 5 bank decoration spawn frequencies (relative to the halved tree pool of 16)
+// pool count = Math.max(1, Math.round(freq * 16)); tune by screenshot
+var S5_FREQ_TREE_STUMP   = 0.60;   // semi-frequent ground clutter
+var S5_FREQ_FARMHOUSE    = 0.35;   // less common; farm-house-1 and farm-house-2 share this
+var S5_FREQ_FISHING      = 0.15;   // rare
+var S5_FREQ_BROKEN_CAR   = 0.08;   // rarest
+// Stage 5 bank decoration sprite heights (world units); aspect width computed from image
+var S5_STUMP_SCALE     = 2.5;
+var S5_FARMHOUSE_SCALE = 11.9;
+var S5_FARMHOUSE_SEAT_Y = -3.00; // bottom anchor Y; large negative corrects ~27% bottom padding in farm-house art; tune with , / . keys
+var S5_FISHING_SCALE   = 3.50;  // 2.0 base x 2.5 x 0.7
+var S5_CAR_SCALE       = 2.0;
+var S5_CART_SEAT_Y     = -0.20;  // bottom anchor Y; sinks lower ~third of cart below water surface (y=0.15)
+var S5_LOG_SEAT_Y      = -2.70;  // bottom anchor Y; corrects ~47-50% transparent bottom padding in fallen-log art; tune with ; / ' keys
 // Stage 4 backdrop horizontal alignment: shifts the painted river left/right to match the gameplay channel.
 // Positive = image shifts left (see more of right side); negative = shifts right.
 // Gameplay channel center is always world x=0; adjust until painted river matches at horizon.
@@ -816,7 +1053,7 @@ function addShoreline3(rg, rw, stg) {
       sTex.repeat.set(1, 20);
       sandyMat = new THREE.MeshLambertMaterial({ color: 0xA0988A, map: sTex });
     } else {
-      var sandyColor = (stg.num === 3) ? SHORE3_EDGE_COLOR : (stg.num === 4) ? SHORE4_EDGE_COLOR : (stg.num === 2) ? 0x8E8070 : 0xC4A46B;
+      var sandyColor = (stg.num === 3) ? SHORE3_EDGE_COLOR : (stg.num === 4) ? SHORE4_EDGE_COLOR : (stg.num === 5) ? SHORE5_EDGE_COLOR : (stg.num === 2) ? 0x8E8070 : 0xC4A46B;
       sandyMat = new THREE.MeshBasicMaterial({ color: sandyColor });
     }
     var sandyMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 155), sandyMat);
@@ -826,8 +1063,8 @@ function addShoreline3(rg, rw, stg) {
     rg.add(sandyMesh);
 
     // Foam/wet-edge strip: Stage 3 uses muted lake color at near-zero opacity (no hard curb line)
-    var foamColor   = (stg.num === 3) ? SHORE3_FOAM_COLOR   : (stg.num === 4) ? SHORE4_FOAM_COLOR   : 0xCCEEFF;
-    var foamOpacity = (stg.num === 3) ? SHORE3_FOAM_OPACITY : (stg.num === 4) ? SHORE4_FOAM_OPACITY : 0.45;
+    var foamColor   = (stg.num === 3) ? SHORE3_FOAM_COLOR   : (stg.num === 4) ? SHORE4_FOAM_COLOR   : (stg.num === 5) ? SHORE5_FOAM_COLOR   : 0xCCEEFF;
+    var foamOpacity = (stg.num === 3) ? SHORE3_FOAM_OPACITY : (stg.num === 4) ? SHORE4_FOAM_OPACITY : (stg.num === 5) ? SHORE5_FOAM_OPACITY : 0.45;
     var foamMat = new THREE.MeshBasicMaterial({ color: foamColor, transparent: true, opacity: foamOpacity, depthWrite: false });
     var foamMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 150), foamMat);
     foamMesh.rotation.x = -Math.PI / 2;
@@ -932,68 +1169,103 @@ function initBankBoulders3(rw, count) {
 // All sprites are outside +/-E (the channel edge), no collision impact.
 // Entries go into canyonWalls4 (not bankBoulders3) so Stage 3 is untouched.
 function initCanyonWalls4(rw) {
-  var E = rw / 2;   // outer edge of navigable channel; 4.4 for Stage 4 (4 lanes x 2.2)
-  // density scales with WALL4_SCALE_MULT so bigger boulders don't open z-gaps
-  var wallDens = Math.ceil(WALL4_DENSITY * WALL4_SCALE_MULT);
-  console.log('[KRR WALL4] rows=' + WALL4_ROWS + ' stepY=' + WALL4_ROW_STEP_Y +
-    ' stepX=' + WALL4_ROW_STEP_X + ' scaleBase=' + WALL4_SCALE_BASE +
-    ' scaleStep=' + WALL4_SCALE_STEP + ' scaleMult=' + WALL4_SCALE_MULT +
-    ' density=' + wallDens + ' E=' + E);
+  var E       = rw / 2;  // half-width of navigable channel; 4.4 for Stage 4 (4 lanes x 2.2)
+  var minAbs  = E + WALL4_INNER_GAP;  // channel guard: |posX| must be >= this
   var zSpan   = Math.abs(SPAWN_Z) + 12;
+  // dy per dx along slope surface: rakes from (E, -0.5) at waterline to (E+WIDTH, ROCK_TOP) at top
+  var slopeK  = (WALL4_ROCK_TOP + 0.5) / WALL4_ROCK_WIDTH;
+  var N_BANDS = 8;  // renderOrder bands: inner = higher order (drawn on top of outer)
   var rotMult = Math.PI / 180;
+  console.log('[KRR WALL4 INIT] count=' + WALL4_COUNT + ' coverX=' + WALL4_COVER_X +
+    ' rockTop=' + WALL4_ROCK_TOP + ' scaleBase=' + WALL4_SCALE_BASE + ' E=' + E);
   for (var side = -1; side <= 1; side += 2) {
-    for (var r = 0; r < WALL4_ROWS; r++) {
-      var rowXBase = side * (E + WALL4_INNER_GAP + r * WALL4_ROW_STEP_X);
-      var rowY     = r * WALL4_ROW_STEP_Y;
-      var rowH     = WALL4_SCALE_BASE + r * WALL4_SCALE_STEP;
-      // renderOrder: inner rows (r=0) render on top of outer rows (r=WALL4_ROWS-1)
-      var rOrder   = WALL4_ROWS - r;
-      for (var di = 0; di < wallDens; di++) {
-        var texIdx = Math.floor(Math.random() * bankBoulderTex.length);
-        var tex    = bankBoulderTex[texIdx];
-        var mat;
-        if (tex) {
-          mat = new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.08 });
-        } else {
-          mat = new THREE.SpriteMaterial({ color: 0x6A5A4A, transparent: true, opacity: 0.88 });
-        }
-        // random rotation jitter breaks copy-paste silhouette
-        mat.rotation = (Math.random() - 0.5) * 2.0 * WALL4_ROT_RANGE * rotMult;
-        // per-boulder brightness jitter (multiplicative tint)
-        var tv = 1.0 - Math.random() * WALL4_TINT_JITTER;
-        mat.color.setRGB(tv, tv, tv);
-        var spr     = new THREE.Sprite(mat);
-        spr.center.set(0.5, 0);   // bottom-anchor: raising Y lifts the rock visually upward
-        var zInit   = SPAWN_Z + (di / wallDens) * zSpan;
-        var baseH   = rowH * (0.85 + Math.random() * 0.30);  // pre-mult, pre-depth-scale
-        var wFactor = 0.80 + Math.random() * 0.65;           // width-to-height ratio
-        var flipX   = Math.random() < 0.5 ? 1 : -1;
-        // depth taper: t=0 at SPAWN_Z (far/short) t=1 at DESPAWN_Z (near/tall)
-        var t4  = Math.max(0, Math.min(1, (zInit - SPAWN_Z) / (DESPAWN_Z - SPAWN_Z)));
-        var ds4 = WALL4_FAR_SCALE + t4 * (WALL4_NEAR_SCALE - WALL4_FAR_SCALE);
-        var bH  = baseH * WALL4_SCALE_MULT * ds4;
-        spr.scale.set(bH * wFactor * flipX, bH, 1);
-        var xJit = (Math.random() - 0.5) * 2.0 * WALL4_JITTER;
-        spr.position.set(rowXBase + xJit, rowY, zInit);
-        spr.renderOrder = rOrder;
-        scene.add(spr);
-        canyonWalls4.push({
-          sprite:   spr,
-          side:     side,
-          z:        zInit,
-          rowIdx:   r,
-          rowXBase: rowXBase,
-          rowY:     rowY,
-          rowH:     rowH,
-          texIdx:   texIdx,
-          baseH:    baseH,    // rowH * size jitter; WALL4_SCALE_MULT and depth scale applied per-frame
-          wFactor:  wFactor,
-          flipX:    flipX,
-        });
+    for (var ci = 0; ci < WALL4_COUNT; ci++) {
+      // scatter randomly across full slope: random dx in [INNER_GAP, COVER_X]
+      var dx     = WALL4_INNER_GAP + Math.random() * (WALL4_COVER_X - WALL4_INNER_GAP);
+      var ySlope = -0.5 + dx * slopeK;  // slope-surface Y at this dx
+      var yPos   = ySlope + (Math.random() - 0.5) * 2.0 * WALL4_Y_JITTER;
+      var xPos   = side * (E + dx);
+      if (side > 0 && xPos <  minAbs) xPos =  minAbs;
+      if (side < 0 && xPos > -minAbs) xPos = -minAbs;
+      var zInit  = SPAWN_Z + Math.random() * zSpan;
+      var texIdx = Math.floor(Math.random() * bankBoulderTex.length);
+      var tex    = bankBoulderTex[texIdx];
+      var mat;
+      if (tex) {
+        mat = new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.08 });
+      } else {
+        mat = new THREE.SpriteMaterial({ color: 0x6A5A4A, transparent: true, opacity: 0.88 });
       }
+      mat.rotation = (Math.random() - 0.5) * 2.0 * WALL4_ROT_RANGE * rotMult;
+      var tv = 1.0 - Math.random() * WALL4_TINT_JITTER;
+      mat.color.setRGB(tv, tv, tv);
+      var spr     = new THREE.Sprite(mat);
+      spr.center.set(0.5, 0);  // bottom-anchor: base sits on slope surface
+      // random size across spread band; depth-taper multiplier applied per-frame
+      var baseH   = WALL4_SCALE_BASE * (1.0 - WALL4_SCALE_SPREAD * 0.5 + Math.random() * WALL4_SCALE_SPREAD);
+      var wFactor = 0.80 + Math.random() * 0.65;
+      var flipX   = Math.random() < 0.5 ? 1 : -1;
+      var t4      = Math.max(0, Math.min(1, (zInit - SPAWN_Z) / (DESPAWN_Z - SPAWN_Z)));
+      var ds4     = WALL4_FAR_SCALE + t4 * (WALL4_NEAR_SCALE - WALL4_FAR_SCALE);
+      var bH      = baseH * WALL4_SCALE_MULT * ds4;
+      spr.scale.set(bH * wFactor * flipX, bH, 1);
+      spr.position.set(xPos, yPos, zInit);
+      // inner boulders (small dx) render on top of outer (large dx)
+      var band       = Math.min(N_BANDS - 1, Math.floor(dx / WALL4_COVER_X * N_BANDS));
+      spr.renderOrder = N_BANDS - band;
+      scene.add(spr);
+      canyonWalls4.push({
+        sprite:  spr,
+        side:    side,
+        z:       zInit,
+        dx:      dx,     // outward offset from E; re-rolled on recycle
+        baseH:   baseH,
+        wFactor: wFactor,
+        flipX:   flipX,
+        texIdx:  texIdx,
+        eVal:    E,      // channel half-width at spawn; used for recycle x-position
+        minAbs:  minAbs, // channel guard minimum |posX|
+      });
     }
   }
 }
+
+// ===== TEMP WALL4 SIZE TUNER helper (REMOVE BEFORE LAUNCH) =====
+function rebuildCanyonWalls4() {
+  for (var ri = 0; ri < canyonWalls4.length; ri++) {
+    scene.remove(canyonWalls4[ri].sprite);
+    canyonWalls4[ri].sprite.material.dispose();
+    canyonWalls4[ri].sprite.geometry.dispose();
+  }
+  canyonWalls4 = [];
+  initCanyonWalls4(riverWidth());
+  console.log('[KRR WALL4 SIZE] nearScale=' + WALL4_NEAR_SCALE.toFixed(2) + ' scaleBase=' + WALL4_SCALE_BASE.toFixed(1));
+}
+// ===== END TEMP WALL4 SIZE TUNER helper =====
+
+// ===== TEMP WALL4 COVER helper (REMOVE BEFORE LAUNCH) =====
+// Rebuilds both the rock-wall quad geometry (needed when WALL4_ROCK_TOP changes)
+// and all boulder sprites (needed when WALL4_COUNT, WALL4_COVER_X, or WALL4_ROCK_TOP change)
+function rebuildCanyonFull4() {
+  for (var ri = 0; ri < canyonWalls4.length; ri++) {
+    scene.remove(canyonWalls4[ri].sprite);
+    canyonWalls4[ri].sprite.material.dispose();
+    canyonWalls4[ri].sprite.geometry.dispose();
+  }
+  canyonWalls4 = [];
+  for (var qi = 0; qi < canyonFill4.length; qi++) {
+    riverGroup.remove(canyonFill4[qi]);
+    canyonFill4[qi].material.dispose();
+    canyonFill4[qi].geometry.dispose();
+  }
+  canyonFill4 = [];
+  rockWallMats4 = [];
+  var rw4 = riverWidth();
+  addCanyonBackfill4(riverGroup, rw4);
+  initCanyonWalls4(rw4);
+  console.log('[KRR WALL4 COVER] count=' + WALL4_COUNT + ' coverX=' + WALL4_COVER_X.toFixed(1) + ' rockTop=' + WALL4_ROCK_TOP.toFixed(1));
+}
+// ===== END TEMP WALL4 COVER helper =====
 
 // Stage 4: continuous textured rock-wall quad per side.
 // Geometry: a quad raking from (E, yBot) at the channel edge up-and-outward to (E+WIDTH, TOP).
@@ -1056,34 +1328,32 @@ function addCanyonBackfill4(rg, rw) {
 var STAGE3_HOUSE_COUNT = 4;    // sparse landmark count; tune by eye (3-6 feels right)
 var STAGE3_HOUSE_SCALE = 8;    // sprite height in world units; tune by eye
 
-// Stage 4 canyon ravine wall constants -- all cosmetic, outside play lane, no collision
-var WALL4_ROWS       = 5;    // number of boulder rows per side, stepping outward
-var WALL4_INNER_GAP  = 0.3;  // x-gap from play edge (E) to innermost row center
-var WALL4_ROW_STEP_X = 2.5;  // x-distance between adjacent rows (outward)
-var WALL4_ROW_STEP_Y = 0.9;  // y-rise (upward) per row
-var WALL4_SCALE_BASE = 2.4;  // sprite height of innermost row (row 0)
-var WALL4_SCALE_STEP = 1.1;  // height added per row outward
-var WALL4_DENSITY    = 10;   // boulder sprites per row per side
-var WALL4_JITTER      = 0.55; // one-sided random position jitter in world units
-var WALL4_FLOOR_REPEAT = 40;        // pebble tiles across the 200-unit bank ground; tune for pebble scale
-var WALL4_FLOOR_TINT   = 0xFFFFFF;  // MeshBasicMaterial color tint on pebble floor; darken to taste
-var WALL4_FLOOR_SCROLL_MULT = 1.0;  // multiply pebble floor scroll vs world speed (1.0 = exact match; tune if needed)
-var WALL4_SCALE_MULT  = 1.2;   // global per-boulder size multiplier on top of per-row scale
-var WALL4_ROT_RANGE   = 22;    // max rotation jitter in degrees; breaks the copy-paste silhouette
-var WALL4_TINT_JITTER = 0.20;  // max brightness reduction per boulder (0=uniform, 1=can go fully dark)
-// depth taper: funnel -- near boulders tall, far boulders short so backdrop shows over the horizon
-var WALL4_NEAR_SCALE  = 1.3;   // height multiplier at near (camera) end; enlarge to raise near walls
-var WALL4_FAR_SCALE   = 0.45;  // height multiplier at far (backdrop) end; reduce to lower far walls
-// Opaque rock wall seal behind the boulder rows (Stage 4 only) -- replaces old flat slab
-// Geometry: a quad per side raking from channel edge (x=E, y=0) up and outward to (x=E+WIDTH, y=TOP).
-// Must reach well above the camera frame so no sky shows through boulder gaps.
-var WALL4_ROCK_WIDTH  = 20;          // outward X extent of rock wall from channel edge (world units)
-var WALL4_ROCK_TOP    = 24;          // top-edge height; 24 clears the camera frame at all depths
-var WALL4_ROCK_TINT   = 0xB8A090;   // warm stone color; darken toward 0x4A3828 for darker canyon rock
-var WALL4_ROCK_RPT_U  = 8;          // texture tiles along stage length (Z axis)
-var WALL4_ROCK_RPT_V  = 5;          // texture tiles along slope height
-var WALL4_ROCK_SCROLL_MULT = 1.0;   // multiply rock-wall scroll rate vs world speed (1.0 = matched)
-// Legacy tuner constants kept so TEMP tuner keys compile (not used by new geometry)
+// Stage 4 canyon wall boulder constants -- all cosmetic, outside play lane, no collision
+// Boulders scatter-fill the FULL slope surface (not row-based); see initCanyonWalls4
+var WALL4_COUNT        = 350;  // boulder sprites per side; crank to pack slope (TEMP COVER tuner: z/x)
+var WALL4_COVER_X      = 18;   // outward X extent boulders reach (0..WALL4_ROCK_WIDTH) (TEMP COVER tuner: c/f)
+var WALL4_INNER_GAP    = 0.2;  // x-gap from play edge E to innermost boulder; channel-clamp guard
+var WALL4_SCALE_BASE   = 2.6;  // median boulder height world units (TEMP SIZE tuner: b/v)
+var WALL4_SCALE_SPREAD = 0.6;  // random size band: baseH = SCALE_BASE * (1-SPREAD/2 .. 1+SPREAD/2)
+var WALL4_Y_JITTER     = 0.4;  // +/- y deviation of boulder base from slope surface (world units)
+var WALL4_SCALE_MULT   = 1.2;  // global per-boulder size multiplier on top of SCALE_BASE
+var WALL4_ROT_RANGE    = 40;   // max rotation jitter degrees; 40 for wide silhouette chaos (was 30)
+var WALL4_TINT_JITTER  = 0.35; // max brightness reduction; reads as individual rock faces
+// depth taper: near boulders tall, far short so backdrop shows over horizon
+var WALL4_NEAR_SCALE   = 1.15; // height mult at near (camera) end (TEMP SIZE tuner: n/m)
+var WALL4_FAR_SCALE    = 0.45; // height multiplier at far (backdrop) end
+// Floor (pebble riverbed)
+var WALL4_FLOOR_REPEAT      = 40;
+var WALL4_FLOOR_TINT        = 0xFFFFFF;
+var WALL4_FLOOR_SCROLL_MULT = 1.0;
+// Opaque rock wall seal behind boulders -- quad per side raking from channel edge up and out
+var WALL4_ROCK_WIDTH   = 20;         // outward X extent of rock wall quad from channel edge (world units)
+var WALL4_ROCK_TOP     = 18;         // wall top height; was 24 (PART C reduction) (TEMP COVER tuner: h/j)
+var WALL4_ROCK_TINT    = 0x7A6850;  // darker warm canyon rock
+var WALL4_ROCK_RPT_U   = 5;         // texture tiles along stage length
+var WALL4_ROCK_RPT_V   = 3;         // texture tiles along slope height
+var WALL4_ROCK_SCROLL_MULT = 1.0;   // multiply rock-wall scroll rate vs world speed
+// Legacy slope constants -- not used; retained for reference
 var WALL4_FILL_COLOR        = 0x3A3028;
 var WALL4_FILL_H_FAR        = -0.5;
 var WALL4_FILL_SLOPE_INNER  = 0.0;
@@ -1112,6 +1382,95 @@ function initBankHouses3(rw) {
     spr.position.set(xBase, 0, zInit);
     scene.add(spr);
     bankHouses3.push({ sprite: spr, side: side, z: zInit, texIdx: texIdx });
+  }
+}
+
+// Stage 5 bank decoration: tree stumps, farm houses, fishing supplies, broken-down cars.
+// All bottom-anchored (center.y=0), aspect-correct from naturalWidth/naturalHeight,
+// scattered on the banks (either side, outside the play channel), scrolling as a pool.
+// Pool count = Math.max(1, Math.round(S5_FREQ_* * 16)) where 16 is the halved tree pool.
+function initBankDecor5(rw) {
+  var S5_POOL_BASE = 16;
+  var stumpCount = Math.max(1, Math.round(S5_FREQ_TREE_STUMP   * S5_POOL_BASE));  // ~10
+  var farmCount  = Math.max(1, Math.round(S5_FREQ_FARMHOUSE    * S5_POOL_BASE));  // ~6
+  var fishCount  = Math.max(1, Math.round(S5_FREQ_FISHING      * S5_POOL_BASE));  // ~2
+  var carCount   = Math.max(1, Math.round(S5_FREQ_BROKEN_CAR   * S5_POOL_BASE));  // ~1
+  var zSpan = Math.abs(SPAWN_Z) + 12;
+
+  function makeDecorSpr(tex, fallbackCol) {
+    var mat = tex
+      ? new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.08 })
+      : new THREE.SpriteMaterial({ color: fallbackCol, transparent: true, opacity: 0.90 });
+    var spr = new THREE.Sprite(mat);
+    spr.center.set(0.5, 0);
+    return spr;
+  }
+  function groundClutterX(rw5, side5) {
+    return side5 * (rw5 / 2 + 1.2 + Math.random() * 3.0);
+  }
+  function setbackX(rw5, side5) {
+    return side5 * (rw5 / 2 + 4.0 + 2.0 + Math.random() * 4.0);
+  }
+
+  // Tree stumps (ground clutter, close to bank)
+  for (var si = 0; si < stumpCount; si++) {
+    var sSide = si % 2 === 0 ? -1 : 1;
+    var sTex  = stumpTex5;
+    var sAsp  = (sTex && sTex.image && sTex.image.naturalHeight > 0)
+      ? sTex.image.naturalWidth / sTex.image.naturalHeight : 1.0;
+    var sspr  = makeDecorSpr(sTex, 0x5A4A30);
+    sspr.scale.set(S5_STUMP_SCALE * sAsp, S5_STUMP_SCALE, 1);
+    var sX = groundClutterX(rw, sSide);
+    var sZ = SPAWN_Z + (si / stumpCount) * zSpan;
+    sspr.position.set(sX, 0, sZ);
+    scene.add(sspr);
+    bankStumps5.push({ sprite: sspr, side: sSide, z: sZ });
+  }
+
+  // Farm houses (largest, set back from water, alternating farm-house-1 and farm-house-2)
+  for (var fi = 0; fi < farmCount; fi++) {
+    var fSide  = fi % 2 === 0 ? -1 : 1;
+    var fTexI  = fi % 2;
+    var fTex   = farmTex5[fTexI];
+    var fAsp   = (fTex && fTex.image && fTex.image.naturalHeight > 0)
+      ? fTex.image.naturalWidth / fTex.image.naturalHeight : 1.0;
+    var fspr   = makeDecorSpr(fTex, 0xC8A870);
+    fspr.scale.set(S5_FARMHOUSE_SCALE * fAsp, S5_FARMHOUSE_SCALE, 1);
+    var fX = setbackX(rw, fSide);
+    var fZ = SPAWN_Z + (fi / farmCount) * zSpan;
+    fspr.position.set(fX, S5_FARMHOUSE_SEAT_Y, fZ);
+    scene.add(fspr);
+    bankFarms5.push({ sprite: fspr, side: fSide, z: fZ, texIdx: fTexI });
+  }
+
+  // Fishing supplies (ground clutter, close to bank)
+  for (var fsi = 0; fsi < fishCount; fsi++) {
+    var fsSide = fsi % 2 === 0 ? -1 : 1;
+    var fsTex  = fishingTex5;
+    var fsAsp  = (fsTex && fsTex.image && fsTex.image.naturalHeight > 0)
+      ? fsTex.image.naturalWidth / fsTex.image.naturalHeight : 1.0;
+    var fsspr  = makeDecorSpr(fsTex, 0x8A7A60);
+    fsspr.scale.set(S5_FISHING_SCALE * fsAsp, S5_FISHING_SCALE, 1);
+    var fsX = groundClutterX(rw, fsSide);
+    var fsZ = SPAWN_Z + (fsi / fishCount) * zSpan;
+    fsspr.position.set(fsX, 0, fsZ);
+    scene.add(fsspr);
+    bankFishing5.push({ sprite: fsspr, side: fsSide, z: fsZ });
+  }
+
+  // Broken-down cars (ground clutter, close to bank)
+  for (var ci = 0; ci < carCount; ci++) {
+    var cSide = ci % 2 === 0 ? -1 : 1;
+    var cTex  = carTex5;
+    var cAsp  = (cTex && cTex.image && cTex.image.naturalHeight > 0)
+      ? cTex.image.naturalWidth / cTex.image.naturalHeight : 1.0;
+    var cspr  = makeDecorSpr(cTex, 0x6A5A4A);
+    cspr.scale.set(S5_CAR_SCALE * cAsp, S5_CAR_SCALE, 1);
+    var cX = groundClutterX(rw, cSide);
+    var cZ = SPAWN_Z + (ci / Math.max(carCount, 1)) * zSpan;
+    cspr.position.set(cX, 0, cZ);
+    scene.add(cspr);
+    bankCars5.push({ sprite: cspr, side: cSide, z: cZ });
   }
 }
 
@@ -1185,6 +1544,8 @@ var ZOOM3 = 1.08;  // Stage 3 UV zoom: show 1/ZOOM3 of image, centered horizonta
 function buildStageBackdrop(stg) {
   var bd = stg.backdrop;
   if (!bd) return;
+  // Stage 5: backdrop persists through sub-narrows; skip rebuild if already built
+  if (stg.num === 5 && stageBackdropMesh !== null) return;
 
   // Backdrop plane - start with sky-blue fallback so any load failure is invisible
   var bdMat = new THREE.MeshBasicMaterial({ color: 0x87CEEB, fog: false });
@@ -1197,6 +1558,13 @@ function buildStageBackdrop(stg) {
   // Stage 1 position is untouched (remains y=26 from the position.set call above).
   if (stg.num === 2 || stg.num === 3 || stg.num === 4) {
     backdropMesh.position.y = 23;
+  }
+
+  // Stage 5: apply framing constants and record persistent handle for tuner + persistence guard
+  if (stg.num === 5) {
+    backdropMesh.scale.multiplyScalar(S5_BD_SCALE);
+    backdropMesh.position.y += S5_BD_Y;
+    stageBackdropMesh = backdropMesh;
   }
 
   // Capture current mesh so the async callback patches the RIGHT instance
@@ -1240,6 +1608,16 @@ function buildStageBackdrop(stg) {
       tex.offset.set(STAGE4_BD_SHIFT_X, trimN4 / trimH4);
       tex.repeat.set(1, (trimH4 - trimN4) / trimH4);
       console.log('[KRR BG TRIM S4] shiftX=' + STAGE4_BD_SHIFT_X + ' N=6 offset.y=' + (trimN4 / trimH4).toFixed(6) + ' repeat.y=' + ((trimH4 - trimN4) / trimH4).toFixed(6));
+    } else if (stg.num === 5) {
+      // Stage 5 (Bakersfield Terminus): clamp + N=6 bottom trim, no X shift
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      var trimN5 = 6;
+      var natH5 = (tex.image && tex.image.naturalHeight) ? tex.image.naturalHeight : 1024;
+      var natW5 = (tex.image && tex.image.naturalWidth)  ? tex.image.naturalWidth  : 1536;
+      tex.offset.set(0, trimN5 / natH5);
+      tex.repeat.set(1, (natH5 - trimN5) / natH5);
+      console.log('[KRR BG TRIM S5] natW=' + natW5 + ' natH=' + natH5 + ' N=6 offset.y=' + (trimN5 / natH5).toFixed(6) + ' repeat.y=' + ((natH5 - trimN5) / natH5).toFixed(6));
     }
     tex.needsUpdate  = true;
     stageTexCache[bd.img] = tex;
@@ -1875,32 +2253,40 @@ function makeObsMesh(type, fullWidth) {
     return grp;
   }
   if (type === 'shopping_cart') {
-    const grp = new THREE.Group();
-    const wireMat = lm(0x9CA3AF);
-    const cW = 0.52, cH = 0.38, cD = 0.46;
-    // Front / back walls
-    for (const tz of [cD / 2, -cD / 2]) {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(cW, cH, 0.038), wireMat.clone());
-      wall.position.set(0, cH / 2 + 0.10, tz); grp.add(wall);
+    var cIdx = Math.floor(Math.random() * cartTex5Obs.length);
+    var cTex = cartTex5Obs[cIdx];
+    var cMat;
+    if (cTex) {
+      cMat = new THREE.SpriteMaterial({ map: cTex, transparent: true, alphaTest: 0.05 });
+    } else {
+      cMat = new THREE.SpriteMaterial({ color: 0x9CA3AF, transparent: true, opacity: 0.90 });
     }
-    // Side walls
-    for (const tx of [cW / 2, -cW / 2]) {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(0.038, cH, cD), wireMat.clone());
-      wall.position.set(tx, cH / 2 + 0.10, 0); grp.add(wall);
+    var cSpr = new THREE.Sprite(cMat);
+    cSpr.center.set(0.5, 0);
+    var cH5 = 1.82;
+    cSpr.scale.set(cH5 * cartTex5ObsAsp[cIdx], cH5, 1);
+    cSpr.renderOrder = 3;
+    return cSpr;
+  }
+  if (type === 'fallen_log') {
+    // Sprite spans (curLanes-1) lanes; gap lane is one edge lane.
+    // Width forced to the blocked span; height derived from cached aspect ratio.
+    // fallenLogAlt5 was already incremented by spawnObs3 before this call.
+    var lgIdx = fallenLogAlt5 % 2;
+    var lgTex = fallenLogTex5[lgIdx];
+    var lgMat;
+    if (lgTex) {
+      lgMat = new THREE.SpriteMaterial({ map: lgTex, transparent: true, alphaTest: 0.05 });
+    } else {
+      lgMat = new THREE.SpriteMaterial({ color: 0x78350F, transparent: true, opacity: 0.90 });
     }
-    // Handle
-    const handle = new THREE.Mesh(new THREE.BoxGeometry(cW, 0.06, 0.06), wireMat.clone());
-    handle.position.set(0, cH + 0.21, cD * 0.32); grp.add(handle);
-    // Wheels
-    const wh = new THREE.CylinderGeometry(0.09, 0.09, 0.06, 5);
-    wh.rotateZ(Math.PI / 2);
-    const wlMat = lm(0x6B7280);
-    for (const wx of [-0.18, 0.18]) {
-      for (const wz of [-0.16, 0.16]) {
-        const w = new THREE.Mesh(wh, wlMat); w.position.set(wx, 0.09, wz); grp.add(w);
-      }
-    }
-    return grp;
+    var lgSpr = new THREE.Sprite(lgMat);
+    lgSpr.center.set(0.5, 0);
+    var lgW = (curLanes - 1) * LANE_W;
+    var lgH = (fallenLogTex5Asp[lgIdx] > 0) ? (lgW / fallenLogTex5Asp[lgIdx]) : 1.4;
+    lgSpr.scale.set(lgW, lgH, 1);
+    lgSpr.renderOrder = 3;
+    return lgSpr;
   }
 
   // Default box
@@ -2035,8 +2421,12 @@ function spawnObs3() {
   if (!isFw && type === 'boulder' && curLanes >= 3 && Math.random() < 0.35) {
     actualType = 'boulder_wide';
   }
+  // Suppress fallen_log at narrows (< 3 lanes) -- auto-fires at mile 150 and 160; fall back to boulder.
+  if (!isFw && actualType === 'fallen_log' && curLanes < 3) {
+    actualType = 'boulder';
+  }
 
-  var lane, lane2, xPos;
+  var lane, lane2, xPos, gapLane;
   if (isFw) {
     lane  = -1;
     lane2 = undefined;
@@ -2046,6 +2436,22 @@ function spawnObs3() {
     lane  = Math.floor(Math.random() * (curLanes - 1));
     lane2 = lane + 1;
     xPos  = (laneXPos(lane) + laneXPos(lane2)) / 2;
+  } else if (actualType === 'fallen_log') {
+    // Alternate roots-left / roots-right art; gap follows the heavy end (roots side is blocked).
+    // lgIdx=0 (fallen-log-1.png, roots-left): gap = rightmost lane (curLanes-1)
+    // lgIdx=1 (fallen-log-2.png, roots-right): gap = leftmost lane (0)
+    fallenLogAlt5++;
+    var lgIdx5 = fallenLogAlt5 % 2;
+    gapLane = (lgIdx5 === 0) ? (curLanes - 1) : 0;
+    if (gapLane === 0) {
+      // gap on left: blocked lanes 1..curLanes-1
+      xPos = (laneXPos(1) + laneXPos(curLanes - 1)) / 2;
+    } else {
+      // gap on right: blocked lanes 0..curLanes-2
+      xPos = (laneXPos(0) + laneXPos(curLanes - 2)) / 2;
+    }
+    lane  = gapLane;
+    lane2 = undefined;
   } else {
     lane  = Math.floor(Math.random() * curLanes);
     lane2 = undefined;
@@ -2059,12 +2465,14 @@ function spawnObs3() {
   else if (actualType === 'boulder')      yPos = 0.08;
   else if (actualType === 'boulder_wide') yPos = 0.08;
   else if (actualType === 'river_wash')   yPos = 0.52;
+  else if (actualType === 'shopping_cart') yPos = S5_CART_SEAT_Y;
+  else if (actualType === 'fallen_log')   yPos = S5_LOG_SEAT_Y;
   else                                    yPos = 0;
 
   mesh.position.set(xPos, yPos, SPAWN_Z);
   mesh.traverse(c => { if (c.isMesh) c.castShadow = true; });
   scene.add(mesh);
-  obstacles3.push({ mesh, lane, z: SPAWN_Z, resolved: false, fullWidth: isFw, type: actualType, lane2 });
+  obstacles3.push({ mesh, lane, z: SPAWN_Z, resolved: false, fullWidth: isFw, type: actualType, lane2, gapLane });
 }
 
 function spawnColl3() {
@@ -2269,18 +2677,24 @@ function update3() {
     var cw = canyonWalls4[cwi];
     cw.z += spd;
     if (cw.z > DESPAWN_Z + 2) {
-      // recycle: reset z and re-randomize per-boulder shape + style
-      cw.z       = SPAWN_Z - Math.random() * 8;
-      var cwTexIdx = Math.floor(Math.random() * bankBoulderTex.length);
-      cw.texIdx  = cwTexIdx;
-      cw.baseH   = cw.rowH * (0.85 + Math.random() * 0.30);
+      // recycle: reset z and re-randomize across full slope surface
+      cw.z = SPAWN_Z - Math.random() * 8;
+      var cwDx     = WALL4_INNER_GAP + Math.random() * (WALL4_COVER_X - WALL4_INNER_GAP);
+      var cwYSlope = -0.5 + cwDx * ((WALL4_ROCK_TOP + 0.5) / WALL4_ROCK_WIDTH);
+      var cwYPos   = cwYSlope + (Math.random() - 0.5) * 2.0 * WALL4_Y_JITTER;
+      var cwXPos   = cw.side * (cw.eVal + cwDx);
+      if (cw.side > 0 && cwXPos <  cw.minAbs) cwXPos =  cw.minAbs;
+      if (cw.side < 0 && cwXPos > -cw.minAbs) cwXPos = -cw.minAbs;
+      var cwBand   = Math.min(7, Math.floor(cwDx / WALL4_COVER_X * 8));
+      cw.sprite.renderOrder = 8 - cwBand;
+      cw.sprite.position.x = cwXPos;
+      cw.sprite.position.y = cwYPos;
+      cw.baseH   = WALL4_SCALE_BASE * (1.0 - WALL4_SCALE_SPREAD * 0.5 + Math.random() * WALL4_SCALE_SPREAD);
       cw.wFactor = 0.80 + Math.random() * 0.65;
       cw.flipX   = Math.random() < 0.5 ? 1 : -1;
-      var cwXJit = (Math.random() - 0.5) * 2.0 * WALL4_JITTER;
       var cwRot  = (Math.random() - 0.5) * 2.0 * WALL4_ROT_RANGE * (Math.PI / 180);
       var cwTv   = 1.0 - Math.random() * WALL4_TINT_JITTER;
-      cw.sprite.position.x = cw.rowXBase + cwXJit;
-      cw.sprite.position.y = cw.rowY;
+      var cwTexIdx = Math.floor(Math.random() * bankBoulderTex.length);
       cw.sprite.material.rotation = cwRot;
       cw.sprite.material.color.setRGB(cwTv, cwTv, cwTv);
       if (bankBoulderTex[cwTexIdx]) {
@@ -2320,6 +2734,72 @@ function update3() {
     }
   }
 
+  // Stage 5 bank decor: scroll and recycle stumps, farm houses, fishing supplies, cars
+  var d5rw = riverWidth();
+  for (var st5i = 0; st5i < bankStumps5.length; st5i++) {
+    var st5 = bankStumps5[st5i];
+    st5.z += spd; st5.sprite.position.z = st5.z;
+    if (st5.z > DESPAWN_Z + 2) {
+      st5.z = SPAWN_Z - Math.random() * 8;
+      st5.sprite.position.x = st5.side * (d5rw / 2 + 1.2 + Math.random() * 3.0);
+      st5.sprite.position.z = st5.z;
+      if (stumpTex5) {
+        st5.sprite.material.map = stumpTex5; st5.sprite.material.needsUpdate = true;
+        var stAsp = (stumpTex5.image && stumpTex5.image.naturalHeight > 0)
+          ? stumpTex5.image.naturalWidth / stumpTex5.image.naturalHeight : 1.0;
+        st5.sprite.scale.set(S5_STUMP_SCALE * stAsp, S5_STUMP_SCALE, 1);
+      }
+    }
+  }
+  for (var fm5i = 0; fm5i < bankFarms5.length; fm5i++) {
+    var fm5 = bankFarms5[fm5i];
+    fm5.z += spd; fm5.sprite.position.z = fm5.z;
+    if (fm5.z > DESPAWN_Z + 2) {
+      fm5.z = SPAWN_Z - Math.random() * 12;
+      fm5.sprite.position.x = fm5.side * (d5rw / 2 + 4.0 + 2.0 + Math.random() * 4.0);
+      fm5.sprite.position.z = fm5.z;
+      var fmTexI = Math.floor(Math.random() * 2);
+      fm5.texIdx = fmTexI;
+      var fmTex5 = farmTex5[fmTexI];
+      if (fmTex5) {
+        fm5.sprite.material.map = fmTex5; fm5.sprite.material.needsUpdate = true;
+        var fmAsp = (fmTex5.image && fmTex5.image.naturalHeight > 0)
+          ? fmTex5.image.naturalWidth / fmTex5.image.naturalHeight : 1.0;
+        fm5.sprite.scale.set(S5_FARMHOUSE_SCALE * fmAsp, S5_FARMHOUSE_SCALE, 1);
+      }
+    }
+  }
+  for (var fs5i = 0; fs5i < bankFishing5.length; fs5i++) {
+    var fs5 = bankFishing5[fs5i];
+    fs5.z += spd; fs5.sprite.position.z = fs5.z;
+    if (fs5.z > DESPAWN_Z + 2) {
+      fs5.z = SPAWN_Z - Math.random() * 8;
+      fs5.sprite.position.x = fs5.side * (d5rw / 2 + 1.2 + Math.random() * 3.0);
+      fs5.sprite.position.z = fs5.z;
+      if (fishingTex5) {
+        fs5.sprite.material.map = fishingTex5; fs5.sprite.material.needsUpdate = true;
+        var fsAsp5 = (fishingTex5.image && fishingTex5.image.naturalHeight > 0)
+          ? fishingTex5.image.naturalWidth / fishingTex5.image.naturalHeight : 1.0;
+        fs5.sprite.scale.set(S5_FISHING_SCALE * fsAsp5, S5_FISHING_SCALE, 1);
+      }
+    }
+  }
+  for (var cr5i = 0; cr5i < bankCars5.length; cr5i++) {
+    var cr5 = bankCars5[cr5i];
+    cr5.z += spd; cr5.sprite.position.z = cr5.z;
+    if (cr5.z > DESPAWN_Z + 2) {
+      cr5.z = SPAWN_Z - Math.random() * 8;
+      cr5.sprite.position.x = cr5.side * (d5rw / 2 + 1.2 + Math.random() * 3.0);
+      cr5.sprite.position.z = cr5.z;
+      if (carTex5) {
+        cr5.sprite.material.map = carTex5; cr5.sprite.material.needsUpdate = true;
+        var crAsp5 = (carTex5.image && carTex5.image.naturalHeight > 0)
+          ? carTex5.image.naturalWidth / carTex5.image.naturalHeight : 1.0;
+        cr5.sprite.scale.set(S5_CAR_SCALE * crAsp5, S5_CAR_SCALE, 1);
+      }
+    }
+  }
+
   // Transition flash
   if (transMsg3) {
     transMsg3.life--;
@@ -2349,6 +2829,14 @@ function checkCollisions3() {
     if (o.resolved) continue;
     if (o.z < COLL_FRONT || o.z > COLL_BACK) continue;
     o.resolved = true;
+    // fallen_log: safe only in gapLane; instant game-over on any blocked lane.
+    if (o.type === 'fallen_log') {
+      if (!player3.isJumping && player3.targetLane !== o.gapLane) {
+        if (player3.hasShield) { player3.hasShield = false; continue; }
+        endRun3(false);
+      }
+      continue;
+    }
     // lane2 is set on boulder_wide: hit if player is in lane OR lane2.
     const inHitLane = (o.lane === player3.targetLane) ||
                       (o.lane2 !== undefined && o.lane2 === player3.targetLane);
@@ -2505,6 +2993,18 @@ function updateVisuals3() {
   // Scroll Stage 3 grass textures (ground plane + bank segments) toward the player
   for (var gbi = 0; gbi < grassBankMats3.length; gbi++) {
     grassBankMats3[gbi].offset.y -= 0.0005 * GRASS3_SCROLL_MULT;
+  }
+
+  // Stage 5: scroll bank segment clones (same mechanism as Stages 1/3/4; master-only was imperceptibly slow)
+  for (var s5i = 0; s5i < swampBankMats5.length; s5i++) {
+    swampBankMats5[s5i].offset.y -= 0.0005 * S5_TERR_SCROLL;
+    if (s5i === 0 && stageIdx === 4 && frameN % 60 === 0) {
+      console.log('[KRR TERRDBG] bankOffY=' + swampBankMats5[0].offset.y.toFixed(4) + ' gndOffY=' + (s5GndScrollTex ? s5GndScrollTex.offset.y.toFixed(4) : 'null') + ' scroll=' + S5_TERR_SCROLL + ' world=' + curSpd3.toFixed(4));
+    }
+  }
+  // Stage 5: scroll the ground plane's dedicated clone at the same rate as bank segment clones
+  if (stageIdx === 4 && s5GndScrollTex) {
+    s5GndScrollTex.offset.y -= 0.0005 * S5_TERR_SCROLL;
   }
 
   // Scroll Stage 4 pebble floor textures toward player, tied to curSpd3 so they match world movement.
@@ -2795,6 +3295,88 @@ window.addEventListener('keydown', e => {
       devJumpToStage(parseInt(e.key, 10) - 1);
     }
     // ===== END TEMP DEV STAGE JUMP =====
+    // ===== TEMP STAGE5 WATER TUNER (REMOVE BEFORE LAUNCH) =====
+    // z/x = R -/+, c/v = G -/+, b/n = B -/+ (live water color; Stage 5 only)
+    if (stageIdx === 4 && waterMesh && waterMesh.material && waterMesh.material.color) {
+      var wc = waterMesh.material.color;
+      var step = 0.02;
+      if (e.key === 'z') { wc.r = Math.max(0, wc.r - step); }
+      if (e.key === 'x') { wc.r = Math.min(1, wc.r + step); }
+      if (e.key === 'c') { wc.g = Math.max(0, wc.g - step); }
+      if (e.key === 'v') { wc.g = Math.min(1, wc.g + step); }
+      if (e.key === 'b') { wc.b = Math.max(0, wc.b - step); }
+      if (e.key === 'n') { wc.b = Math.min(1, wc.b + step); }
+      if ('zxcvbn'.indexOf(e.key) !== -1) {
+        console.log('[KRR WATER5] hex=0x' + wc.getHexString() + ' r=' + wc.r.toFixed(3) + ' g=' + wc.g.toFixed(3) + ' b=' + wc.b.toFixed(3));
+      }
+    }
+    // ===== END TEMP STAGE5 WATER TUNER =====
+
+    // ===== TEMP STAGE5 BACKDROP FRAMING TUNER (REMOVE BEFORE LAUNCH) =====
+    // o/p = zoom out/in (scale); k/i = plane down/up
+    if (stageIdx === 4 && stageBackdropMesh) {
+      if (e.key === 'o') { S5_BD_SCALE = Math.max(0.40, S5_BD_SCALE - 0.02); stageBackdropMesh.scale.setScalar(S5_BD_SCALE); }
+      if (e.key === 'p') { S5_BD_SCALE = Math.min(2.00, S5_BD_SCALE + 0.02); stageBackdropMesh.scale.setScalar(S5_BD_SCALE); }
+      if (e.key === 'k') { S5_BD_Y -= 0.5; stageBackdropMesh.position.y -= 0.5; }
+      if (e.key === 'i') { S5_BD_Y += 0.5; stageBackdropMesh.position.y += 0.5; }
+      if ('opki'.indexOf(e.key) !== -1) {
+        console.log('[KRR BD5] scale=' + S5_BD_SCALE.toFixed(3) + ' yOff=' + S5_BD_Y.toFixed(2));
+      }
+    }
+    // ===== END TEMP STAGE5 BACKDROP FRAMING TUNER =====
+
+    // ===== TEMP STAGE5 TERRAIN TUNER (REMOVE BEFORE LAUNCH) =====
+    // t/g = repeatX -/+ ; y/h = repeatY -/+ ; u/j = scroll -/+ ; [ / ] = seatY down/up ; m = toggle width mirror
+    // T = master (source for future bank clones); G = ground plane clone (live visible surface)
+    if (stageIdx === 4 && swampTerrainTex) {
+      var T = swampTerrainTex;
+      var G = s5GndScrollTex;
+      if (e.key === 't') { S5_TERR_REPEAT_X = Math.max(0.25, +(S5_TERR_REPEAT_X - 0.25).toFixed(2)); T.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); if (G) { G.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); G.needsUpdate = true; } }
+      if (e.key === 'g') { S5_TERR_REPEAT_X = +(S5_TERR_REPEAT_X + 0.25).toFixed(2); T.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); if (G) { G.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); G.needsUpdate = true; } }
+      if (e.key === 'y') { S5_TERR_REPEAT_Y = Math.max(0.25, +(S5_TERR_REPEAT_Y - 0.25).toFixed(2)); T.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); if (G) { G.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); G.needsUpdate = true; } }
+      if (e.key === 'h') { S5_TERR_REPEAT_Y = +(S5_TERR_REPEAT_Y + 0.25).toFixed(2); T.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); if (G) { G.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); G.needsUpdate = true; } }
+      if (e.key === 'u') { S5_TERR_SCROLL = Math.max(0, +(S5_TERR_SCROLL - 0.1).toFixed(2)); }
+      if (e.key === 'j') { S5_TERR_SCROLL = +(S5_TERR_SCROLL + 0.1).toFixed(2); }
+      if (e.key === '[') { S5_TERR_Y -= 0.2; T.offset.y -= 0.2; if (G) G.offset.y -= 0.2; }
+      if (e.key === ']') { S5_TERR_Y += 0.2; T.offset.y += 0.2; if (G) G.offset.y += 0.2; }
+      if (e.key === 'm') { T.wrapS = (T.wrapS === THREE.MirroredRepeatWrapping) ? THREE.RepeatWrapping : THREE.MirroredRepeatWrapping; T.needsUpdate = true; if (G) { G.wrapS = T.wrapS; G.needsUpdate = true; } }
+      if ('tgyhuj[]m'.indexOf(e.key) !== -1) {
+        console.log('[KRR TERR5] repX=' + S5_TERR_REPEAT_X + ' repY=' + S5_TERR_REPEAT_Y + ' scroll=' + S5_TERR_SCROLL + ' seatY=' + S5_TERR_Y.toFixed(2) + ' wrapS=' + (T.wrapS === THREE.MirroredRepeatWrapping ? 'mirror' : 'repeat'));
+      }
+    }
+    // ===== END TEMP STAGE5 TERRAIN TUNER =====
+
+    // ===== TEMP STAGE5 FARMHOUSE SEAT TUNER (REMOVE BEFORE LAUNCH) =====
+    // , = seat down (more negative, lower into ground) ; . = seat up
+    if (stageIdx === 4) {
+      var fsmoved = false;
+      if (e.key === ',') { S5_FARMHOUSE_SEAT_Y -= 0.05; fsmoved = true; }
+      if (e.key === '.') { S5_FARMHOUSE_SEAT_Y += 0.05; fsmoved = true; }
+      if (fsmoved) {
+        for (var fsti = 0; fsti < bankFarms5.length; fsti++) {
+          bankFarms5[fsti].sprite.position.y = S5_FARMHOUSE_SEAT_Y;
+        }
+        console.log('[KRR FARMSEAT] y=' + S5_FARMHOUSE_SEAT_Y.toFixed(2));
+      }
+    }
+    // ===== END TEMP STAGE5 FARMHOUSE SEAT TUNER =====
+
+    // ===== TEMP STAGE5 LOG SEAT TUNER (REMOVE BEFORE LAUNCH) =====
+    // ; = logs down (more negative, lower toward channel) ; ' = logs up
+    if (stageIdx === 4) {
+      var lgsm = false;
+      if (e.key === ';') { S5_LOG_SEAT_Y -= 0.03; lgsm = true; }
+      if (e.key === "'") { S5_LOG_SEAT_Y += 0.03; lgsm = true; }
+      if (lgsm) {
+        for (var lgsi = 0; lgsi < obstacles3.length; lgsi++) {
+          if (obstacles3[lgsi].type === 'fallen_log') {
+            obstacles3[lgsi].mesh.position.y = S5_LOG_SEAT_Y;
+          }
+        }
+        console.log('[KRR LOGSEAT] y=' + S5_LOG_SEAT_Y.toFixed(2));
+      }
+    }
+    // ===== END TEMP STAGE5 LOG SEAT TUNER =====
 
   } else if (gameState3 === 'paused') {
     if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
