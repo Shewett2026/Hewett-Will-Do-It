@@ -30,7 +30,7 @@ const STAGES3 = [
   {
     num:1, name:'HEADWATERS', endMile:33, lanes:7, speed:1.48, obsFreq:0.011, fwFreq:0.11,
     waterColor:0x38BDF8, bankColor:0x374151,
-    obsTypes:['deadfall_log','deadfall_log','boulder','boulder','river_wash'],
+    obsTypes:['boulder','boulder','boulder','river_wash'],
     fwType:'fallen_sequoia', collA:'golden_trout', collB:'mountain_crystal',
     // ── Stage 1 environment config (swap img/colors here for other stages) ──
     backdrop: {
@@ -47,7 +47,7 @@ const STAGES3 = [
   {
     num:2, name:'UPPER KERN', endMile:66, lanes:6, speed:1.65, obsFreq:0.012, fwFreq:0.12,
     waterColor:0x185761, bankColor:0x7C2D12,
-    obsTypes:['capsized_raft','capsized_raft','boulder','boulder','river_wash'],
+    obsTypes:['boulder','boulder','river_wash'],
     fwType:'raft_train', collA:'fishing_lure', collB:'golden_eagle_feather',
     backdrop: {
       img:        'stage2-bg.png',
@@ -61,7 +61,7 @@ const STAGES3 = [
   {
     num:3, name:'LAKE ISABELLA', endMile:99, lanes:5, speed:1.78, obsFreq:0.012, fwFreq:0.10,
     waterColor:0x2878B8, bankColor:0x4A7D32,
-    obsTypes:['drifting_sailboat','drifting_sailboat','boulder','boulder','river_wash'],
+    obsTypes:['boulder','boulder','boulder','river_wash'],
     fwType:'pontoon_party', collA:'beach_ball', collB:'cooler',
     backdrop: {
       img:        'lake-isabella-green-bg.png',
@@ -75,7 +75,7 @@ const STAGES3 = [
   {
     num:4, name:'KERN CANYON', endMile:132, lanes:4, speed:1.91, obsFreq:0.013, fwFreq:0.12,
     waterColor:0x0B4F6C, bankColor:0x1C1917,
-    obsTypes:['mine_cart','mine_cart','boulder','boulder','river_wash'],
+    obsTypes:['boulder','boulder','river_wash'],
     fwType:'old_mining_bridge', collA:'gold_nugget', collB:'treasure_chest',
     backdrop: {
       img:        'kern-canyon-bg.png',
@@ -87,7 +87,7 @@ const STAGES3 = [
     },
   },
   {
-    num:5, name:'BAKERSFIELD', endMile:165, lanes:3, speed:2.00, obsFreq:0.012, fwFreq:0.09,
+    num:5, name:'BAKERSFIELD', endMile:165, lanes:3, speed:2.00, obsFreq:0.012, fwFreq:0,
     waterColor:0x3E5560, bankColor:0xD97706,
     obsTypes:['boulder','boulder','boulder','fallen_log','fallen_log','shopping_cart','river_wash'],
     fwType:'tube_float_parade', collA:'fox_theater_ticket', collB:'city_seal_medallion',
@@ -609,6 +609,186 @@ var fallenLogAlt5      = 0;            // toggles 0/1 per fallen_log spawn to al
   }
 })();
 
+// Stage 2 raft_train fwType sprite (tubing-obstacle-2.png)
+var raftTrainTex    = null;  // loaded async; null until load callback fires
+var raftTrainAsp    = 1.0;   // cached aspect ratio; updated on load; default 1.0
+var raftTrainLogged = false; // fire sizing log once on first load
+
+(function() {
+  new THREE.TextureLoader().load('tubing-obstacle-2.png', function(tex) {
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    raftTrainTex = tex;
+    if (tex.image && tex.image.naturalHeight > 0) {
+      var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
+      raftTrainAsp = natW / natH;
+      if (!raftTrainLogged) {
+        raftTrainLogged = true;
+        var rtLogW = 6 * LANE_W;
+        var rtLogH = rtLogW / raftTrainAsp;
+        console.log('[KRR FW2] tubing-obstacle-2 ' + natW + 'x' + natH + ' -> world ' + rtLogW.toFixed(2) + 'x' + rtLogH.toFixed(2) + ' seatY=' + FW2_SEAT_Y);
+      }
+    }
+  }, undefined, function(e) { console.error('[KRR] tubing-obstacle-2.png FAILED', e); });
+})();
+
+// Stage 4 old_mining_bridge fwType sprite (tubing-obstacle-1.png)
+var tubeRaftTex    = null;  // loaded async; null until load callback fires
+var tubeRaftAsp    = 0.773; // tubing-obstacle-1.png is 1545x1999 portrait; seeded like bridge1Asp
+var tubeRaftLogged = false; // fire sizing log once on first load
+
+(function() {
+  new THREE.TextureLoader().load('tubing-obstacle-1.png', function(tex) {
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    tubeRaftTex = tex;
+    if (tex.image && tex.image.naturalHeight > 0) {
+      var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
+      tubeRaftAsp = natW / natH;
+      if (!tubeRaftLogged) {
+        tubeRaftLogged = true;
+        var tr4LogW = 4 * LANE_W;
+        var tr4LogH = tr4LogW / tubeRaftAsp;
+        console.log('[KRR FW4] tubing-obstacle-1 ' + natW + 'x' + natH + ' -> world ' + tr4LogW.toFixed(2) + 'x' + tr4LogH.toFixed(2) + ' seatY=' + FW4_SEAT_Y);
+      }
+    }
+  }, undefined, function(e) { console.error('[KRR] tubing-obstacle-1.png FAILED', e); });
+})();
+
+// Stage 1 fallen_sequoia fwType sprite (long-bridge-1.png)
+var bridge1Tex    = null;  // loaded async; null until load callback fires
+var bridge1Asp    = 0.773; // long-bridge-1.png is 1545x1999 portrait; callback confirms
+var bridge1Logged = false; // fire sizing log once on first load
+
+(function() {
+  new THREE.TextureLoader().load('long-bridge-1.png', function(tex) {
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    bridge1Tex = tex;
+    if (tex.image && tex.image.naturalHeight > 0) {
+      var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
+      bridge1Asp = natW / natH;
+      if (!bridge1Logged) {
+        bridge1Logged = true;
+        var br1LogW = 7 * LANE_W;
+        var br1LogH = br1LogW / bridge1Asp;
+        console.log('[KRR FW1] long-bridge-1 ' + natW + 'x' + natH + ' -> world ' + br1LogW.toFixed(2) + 'x' + br1LogH.toFixed(2) + ' seatY=' + FW1_SEAT_Y);
+      }
+    }
+  }, undefined, function(e) { console.error('[KRR] long-bridge-1.png FAILED', e); });
+})();
+
+// Stage 3 pontoon_party fwType sprite (long-bridge-2.png)
+var bridge2Tex    = null;  // loaded async; null until load callback fires
+var bridge2Asp    = 0.773; // long-bridge-2.png is 1545x1999 portrait; seeded so pre-load spawns use correct height
+var bridge2Logged = false; // fire sizing log once on first load
+
+(function() {
+  new THREE.TextureLoader().load('long-bridge-2.png', function(tex) {
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    bridge2Tex = tex;
+    if (tex.image && tex.image.naturalHeight > 0) {
+      var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
+      bridge2Asp = natW / natH;
+      if (!bridge2Logged) {
+        bridge2Logged = true;
+        var br2LogW = 5 * LANE_W;
+        var br2LogH = br2LogW / bridge2Asp;
+        console.log('[KRR FW3] long-bridge-2 ' + natW + 'x' + natH + ' -> world ' + br2LogW.toFixed(2) + 'x' + br2LogH.toFixed(2) + ' seatY=' + FW3_SEAT_Y);
+      }
+    }
+  }, undefined, function(e) { console.error('[KRR] long-bridge-2.png FAILED', e); });
+})();
+
+// river_wash visual constants -- tune live with 0 / - / =
+var RW_ARMS        = 3;            // spiral arm count (fewer = looser swirl)
+var RW_TURNS       = 1.2;          // arm wraps from center to rim
+var RW_CORE_ALPHA  = 0.55;         // translucent core (water shows through); was 0.95
+var RW_RIM_ALPHA   = 0.0;          // opacity at outer edge (fully transparent)
+var RW_BLUR_PX     = 6;            // canvas blur on arms (soft foamy look)
+var RW_CORE_FRAC   = 0.35;         // radius fraction that stays at full RW_CORE_ALPHA
+var RW_SPIRAL_SIZE = LANE_W * 1.2; // disc diameter in world units (~2.64)
+var RW_SPIN_SPEED  = 0.07;         // radians per frame (fast churn)
+var RW_SWIRL_R     = 200;          // swirl base red   (pale blue-white churned water)
+var RW_SWIRL_G     = 225;          // swirl base green
+var RW_SWIRL_B     = 240;          // swirl base blue
+var RW_SWIRL_BRIGHT = 0;           // brightness offset added to all channels (tuner param 7, range -50..50)
+var RW_FLECK_COUNT = 40;           // baked fleck count; orbit with disc rotation
+var RW_FLECK_MAX_R = 1.6;          // max fleck radius in canvas pixels (min 0.5)
+var RW_FLECK_ALPHA = 0.7;          // fleck opacity
+var rwTunerParam   = 0;            // cycles: 0=arms 1=turns 2=coreAlpha 3=blur 4=spin 5=size 6=flecks 7=bright
+
+// canvas + context kept module-level so buildRwSpiral() can redraw on tuner change
+var rwSpiralCv  = document.createElement('canvas');
+rwSpiralCv.width = 256; rwSpiralCv.height = 256;
+var rwSpiralCtx = rwSpiralCv.getContext('2d');
+var rwSpiralTex = null;  // assigned on first buildRwSpiral(); all instances share it
+
+function buildRwSpiral() {
+  var sz = 256, half = 128;
+  rwSpiralCtx.clearRect(0, 0, sz, sz);
+  // Resolve color channels with brightness offset
+  var rr = Math.max(0, Math.min(255, RW_SWIRL_R + RW_SWIRL_BRIGHT));
+  var rg = Math.max(0, Math.min(255, RW_SWIRL_G + RW_SWIRL_BRIGHT));
+  var rb = Math.max(0, Math.min(255, RW_SWIRL_B + RW_SWIRL_BRIGHT));
+  var colBase = 'rgba(' + rr + ', ' + rg + ', ' + rb + ', ';
+  // Step 1: radial gradient base -- translucent funnel core, dissolves to transparent rim
+  rwSpiralCtx.filter = 'none';
+  var grad = rwSpiralCtx.createRadialGradient(half, half, 0, half, half, half);
+  grad.addColorStop(0,            colBase + RW_CORE_ALPHA + ')');
+  grad.addColorStop(RW_CORE_FRAC, colBase + RW_CORE_ALPHA + ')');
+  grad.addColorStop(1,            colBase + RW_RIM_ALPHA  + ')');
+  rwSpiralCtx.fillStyle = grad;
+  rwSpiralCtx.fillRect(0, 0, sz, sz);
+  // Step 2: blurred spiral arms -- soft watery swirl strokes over the gradient
+  rwSpiralCtx.filter = 'blur(' + RW_BLUR_PX + 'px)';
+  var outerR = half * 0.88;
+  var innerR = half * 0.04;
+  var armAlpha = Math.min(1, RW_CORE_ALPHA + 0.20).toFixed(2);
+  for (var arm = 0; arm < RW_ARMS; arm++) {
+    var startAngle = (arm / RW_ARMS) * Math.PI * 2;
+    rwSpiralCtx.beginPath();
+    for (var s = 0; s <= 160; s++) {
+      var t = s / 160;
+      var angle = startAngle + t * RW_TURNS * Math.PI * 2;
+      var r = innerR + t * (outerR - innerR);
+      var px = half + r * Math.cos(angle);
+      var py = half + r * Math.sin(angle);
+      if (s === 0) { rwSpiralCtx.moveTo(px, py); } else { rwSpiralCtx.lineTo(px, py); }
+    }
+    rwSpiralCtx.strokeStyle = colBase + armAlpha + ')';
+    rwSpiralCtx.lineWidth = 9;
+    rwSpiralCtx.stroke();
+  }
+  rwSpiralCtx.filter = 'none';
+  // Step 3: baked flecks -- tiny bright dots scattered in mid-radius band, orbit with disc
+  var fMinR = half * 0.22;
+  var fMaxR = half * 0.82;
+  var fr = Math.min(255, rr + 30);
+  var fg = Math.min(255, rg + 20);
+  var fb = Math.min(255, rb + 15);
+  for (var f = 0; f < RW_FLECK_COUNT; f++) {
+    var fAngle = Math.random() * Math.PI * 2;
+    var fR = fMinR + Math.random() * (fMaxR - fMinR);
+    var fPx = half + fR * Math.cos(fAngle);
+    var fPy = half + fR * Math.sin(fAngle);
+    var fRadius = 0.5 + Math.random() * (RW_FLECK_MAX_R - 0.5);
+    rwSpiralCtx.beginPath();
+    rwSpiralCtx.arc(fPx, fPy, fRadius, 0, Math.PI * 2);
+    rwSpiralCtx.fillStyle = 'rgba(' + fr + ', ' + fg + ', ' + fb + ', ' + RW_FLECK_ALPHA + ')';
+    rwSpiralCtx.fill();
+  }
+  if (!rwSpiralTex) {
+    rwSpiralTex = new THREE.CanvasTexture(rwSpiralCv);
+    rwSpiralTex.magFilter = THREE.LinearFilter;
+    rwSpiralTex.minFilter = THREE.LinearFilter;
+  }
+  rwSpiralTex.needsUpdate = true;
+}
+
+buildRwSpiral();
+
 let stageIdx    = 0;
 let curLanes    = STAGES3[0].lanes;
 
@@ -1034,6 +1214,15 @@ var S5_FISHING_SCALE   = 3.50;  // 2.0 base x 2.5 x 0.7
 var S5_CAR_SCALE       = 2.0;
 var S5_CART_SEAT_Y     = -0.20;  // bottom anchor Y; sinks lower ~third of cart below water surface (y=0.15)
 var S5_LOG_SEAT_Y      = -2.70;  // bottom anchor Y; corrects ~47-50% transparent bottom padding in fallen-log art; tune with ; / ' keys
+var FW2_SEAT_Y         = -7.50;  // Stage 2 raft_train sprite y-offset within group; corrects ~44% transparent bottom padding in tubing-obstacle-2.png; tune with f / r keys
+var FW4_SEAT_Y         = -4.55;  // Stage 4 old_mining_bridge donut-raft y-offset; asp=0.773, tr4H=11.38, seat=-(11.38*0.40); tune with l / s keys
+var FW1_SEAT_Y         = -8.55;  // Stage 1 fallen_sequoia bridge y-offset; piling legs dip ~0.58 below waterline; tune with 6 / 7 keys
+var FW3_WIDTH_MULT     = 1.40;   // Stage 3 bridge scale: width multiplier (baked; no free keys for live tuner)
+var FW3_HEIGHT_MULT    = 1.15;   // Stage 3 bridge scale: height multiplier (independent of width)
+var FW3_SEAT_Y         = -7.13;  // Stage 3 bridge y-offset; recomputed to keep piling base at y=-0.58 after height scale; tune with 8 / 9 keys
+var FW_HULL_H    = 0.50;      // hull strip height (Y) under raft waterline; tune with e/q in Stage 2
+var FW_HULL_D    = 0.5;       // hull strip depth (Z) hint of thickness
+var FW_HULL_TINT = 0x4A3A2C; // dark muted hull shadow
 // Stage 4 backdrop horizontal alignment: shifts the painted river left/right to match the gameplay channel.
 // Positive = image shifts left (see more of right side); negative = shifts right.
 // Gameplay channel center is always world x=0; adjust until painted river matches at horizon.
@@ -2066,64 +2255,130 @@ function makeObsMesh(type, fullWidth) {
     const grp = new THREE.Group();
 
     if (type === 'fallen_sequoia') {
-      const logGeo = new THREE.CylinderGeometry(0.30, 0.38, rw + 1.4, 6);
-      logGeo.rotateZ(Math.PI / 2);
-      const log = new THREE.Mesh(logGeo, lm(0x78350F));
-      log.position.y = 0.34; grp.add(log);
-      // Highlight stripe
-      const topGeo = new THREE.CylinderGeometry(0.31, 0.31, rw + 1.4, 6);
-      topGeo.rotateZ(Math.PI / 2);
-      const top = new THREE.Mesh(topGeo, lm(0x92400E));
-      top.position.set(0, 0.60, 0); top.scale.y = 0.18; grp.add(top);
-      // End rings
-      for (const sx of [-(rw / 2 + 0.55), rw / 2 + 0.55]) {
-        const endGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.07, 6);
-        const end = new THREE.Mesh(endGeo, lm(0x5C2002));
-        end.rotation.z = Math.PI / 2; end.position.set(sx, 0.34, 0); grp.add(end);
+      if (bridge1Tex) {
+        var br1W = rw;
+        var br1H = br1W / bridge1Asp;
+        var br1Geo = new THREE.PlaneGeometry(br1W, br1H);
+        br1Geo.translate(0, br1H / 2, 0);
+        var br1Mat = new THREE.MeshBasicMaterial({ map: bridge1Tex, transparent: true, alphaTest: 0.05, depthWrite: false });
+        var br1Plane = new THREE.Mesh(br1Geo, br1Mat);
+        br1Plane.position.y = FW1_SEAT_Y;
+        br1Plane.renderOrder = 3;
+        grp.userData.bridgeSpriteMesh = br1Plane;
+        grp.add(br1Plane);
+      } else {
+        const logGeo = new THREE.CylinderGeometry(0.30, 0.38, rw + 1.4, 6);
+        logGeo.rotateZ(Math.PI / 2);
+        const log = new THREE.Mesh(logGeo, lm(0x78350F));
+        log.position.y = 0.34; grp.add(log);
+        const topGeo = new THREE.CylinderGeometry(0.31, 0.31, rw + 1.4, 6);
+        topGeo.rotateZ(Math.PI / 2);
+        const top = new THREE.Mesh(topGeo, lm(0x92400E));
+        top.position.set(0, 0.60, 0); top.scale.y = 0.18; grp.add(top);
+        for (const sx of [-(rw / 2 + 0.55), rw / 2 + 0.55]) {
+          const endGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.07, 6);
+          const end = new THREE.Mesh(endGeo, lm(0x5C2002));
+          end.rotation.z = Math.PI / 2; end.position.set(sx, 0.34, 0); grp.add(end);
+        }
       }
 
     } else if (type === 'raft_train') {
-      const raftW = rw * 0.28;
-      for (let i = 0; i < 3; i++) {
-        const rx = -rw * 0.29 + i * rw * 0.29;
-        const raft = new THREE.Mesh(new THREE.BoxGeometry(raftW - 0.12, 0.12, 0.72), lm(0x92400E));
-        raft.position.set(rx, 0.06, 0); grp.add(raft);
-        const deck = new THREE.Mesh(new THREE.BoxGeometry(raftW - 0.14, 0.04, 0.70), lm(0xB45309));
-        deck.position.set(rx, 0.14, 0); grp.add(deck);
-        if (i < 2) {
-          const ropeGeo = new THREE.CylinderGeometry(0.026, 0.026, 0.22, 4);
-          ropeGeo.rotateZ(Math.PI / 2);
-          const rope = new THREE.Mesh(ropeGeo, lm(0x78350F));
-          rope.position.set(rx + raftW * 0.5 + 0.11, 0.06, 0); grp.add(rope);
+      if (raftTrainTex) {
+        var rtW = rw;
+        var rtH = rtW / raftTrainAsp;
+        // Plane: fixed orientation (normal +Z toward camera), bottom-anchored via geometry translate.
+        // depthWrite:false avoids depth-buffer occlusion through transparent pixels.
+        var rtGeo = new THREE.PlaneGeometry(rtW, rtH);
+        rtGeo.translate(0, rtH / 2, 0);
+        var rtMat = new THREE.MeshBasicMaterial({ map: raftTrainTex, transparent: true, alphaTest: 0.05, depthWrite: false });
+        var rtPlane = new THREE.Mesh(rtGeo, rtMat);
+        rtPlane.position.y = FW2_SEAT_Y;
+        rtPlane.renderOrder = 3;
+        // Hull strip: thin low strip at waterline base of visible art.
+        // Visible art occupies top 56% of portrait; its base is at FW2_SEAT_Y + rtH*0.44.
+        // Strip TOP anchored there; strip CENTER at TOP - FW_HULL_H/2. Subtle -- NOT a wall.
+        var rtHullBaseOff = rtH * 0.44;
+        var rtHullGeo = new THREE.BoxGeometry(rtW * 0.9, FW_HULL_H, FW_HULL_D);
+        var rtHullMat = new THREE.MeshBasicMaterial({ color: FW_HULL_TINT });
+        var rtHull = new THREE.Mesh(rtHullGeo, rtHullMat);
+        rtHull.position.set(0, FW2_SEAT_Y + rtHullBaseOff - FW_HULL_H / 2, -FW_HULL_D / 2);
+        rtHull.renderOrder = 2;
+        grp.userData.raftSpriteGroup = true;
+        grp.userData.raftSpriteMesh  = rtPlane;       // ref for seat tuner (.position.y)
+        grp.userData.raftHullMesh    = rtHull;        // ref for hull tuner
+        grp.userData.raftHullBaseOff = rtHullBaseOff; // rtH*0.44; used by seat and hull tuners
+        grp.add(rtHull);
+        grp.add(rtPlane);
+      } else {
+        // Geometry fallback until texture loads (identical to original raft_train branch)
+        var raftWf = rw * 0.28;
+        for (var rfi = 0; rfi < 3; rfi++) {
+          var rxf = -rw * 0.29 + rfi * rw * 0.29;
+          var raftf = new THREE.Mesh(new THREE.BoxGeometry(raftWf - 0.12, 0.12, 0.72), lm(0x92400E));
+          raftf.position.set(rxf, 0.06, 0); grp.add(raftf);
+          var deckf = new THREE.Mesh(new THREE.BoxGeometry(raftWf - 0.14, 0.04, 0.70), lm(0xB45309));
+          deckf.position.set(rxf, 0.14, 0); grp.add(deckf);
+          if (rfi < 2) {
+            var ropeGf = new THREE.CylinderGeometry(0.026, 0.026, 0.22, 4);
+            ropeGf.rotateZ(Math.PI / 2);
+            var ropef = new THREE.Mesh(ropeGf, lm(0x78350F));
+            ropef.position.set(rxf + raftWf * 0.5 + 0.11, 0.06, 0); grp.add(ropef);
+          }
         }
       }
 
     } else if (type === 'pontoon_party') {
-      const plat = new THREE.Mesh(new THREE.BoxGeometry(rw + 0.9, 0.12, 0.82), lm(0x1D4ED8));
-      plat.position.y = 0.06; grp.add(plat);
-      const deck = new THREE.Mesh(new THREE.BoxGeometry(rw + 0.9, 0.04, 0.82), lm(0xEFF6FF));
-      deck.position.y = 0.14; grp.add(deck);
-      const bColors = [0xF97316, 0xFBBF24, 0x34D399, 0xF472B6];
-      const spacing = rw / 3.5;
-      for (let i = 0; i < 4; i++) {
-        const bx = -rw * 0.33 + i * spacing;
-        const balloon = new THREE.Mesh(new THREE.SphereGeometry(0.19, 6, 5), lm(bColors[i]));
-        balloon.position.set(bx, 0.52, 0); grp.add(balloon);
-        const str = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.22, 0.022), lm(0x9CA3AF));
-        str.position.set(bx, 0.29, 0); grp.add(str);
+      if (bridge2Tex) {
+        var br2W = rw * FW3_WIDTH_MULT;
+        var br2H = (rw / bridge2Asp) * FW3_HEIGHT_MULT;
+        var br2Geo = new THREE.PlaneGeometry(br2W, br2H);
+        br2Geo.translate(0, br2H / 2, 0);
+        var br2Mat = new THREE.MeshBasicMaterial({ map: bridge2Tex, transparent: true, alphaTest: 0.05, depthWrite: false });
+        var br2Plane = new THREE.Mesh(br2Geo, br2Mat);
+        br2Plane.position.y = FW3_SEAT_Y;
+        br2Plane.renderOrder = 3;
+        grp.userData.bridgeSpriteMesh3 = br2Plane;
+        grp.add(br2Plane);
+      } else {
+        const plat = new THREE.Mesh(new THREE.BoxGeometry(rw + 0.9, 0.12, 0.82), lm(0x1D4ED8));
+        plat.position.y = 0.06; grp.add(plat);
+        const deck = new THREE.Mesh(new THREE.BoxGeometry(rw + 0.9, 0.04, 0.82), lm(0xEFF6FF));
+        deck.position.y = 0.14; grp.add(deck);
+        const bColors = [0xF97316, 0xFBBF24, 0x34D399, 0xF472B6];
+        const spacing = rw / 3.5;
+        for (let i = 0; i < 4; i++) {
+          const bx = -rw * 0.33 + i * spacing;
+          const balloon = new THREE.Mesh(new THREE.SphereGeometry(0.19, 6, 5), lm(bColors[i]));
+          balloon.position.set(bx, 0.52, 0); grp.add(balloon);
+          const str = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.22, 0.022), lm(0x9CA3AF));
+          str.position.set(bx, 0.29, 0); grp.add(str);
+        }
       }
 
     } else if (type === 'old_mining_bridge') {
-      const main = new THREE.Mesh(new THREE.BoxGeometry(rw + 1.3, 0.16, 0.58), lm(0x44403C));
-      main.position.y = 0.42; grp.add(main);
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(rw + 1.3, 0.08, 0.08), lm(0x78350F));
-      rail.position.y = 0.54; grp.add(rail);
-      for (const sx of [-(rw / 2 + 0.52), rw / 2 + 0.52]) {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.72, 0.19), lm(0x292524));
-        post.position.set(sx, 0.36, 0); grp.add(post);
+      if (tubeRaftTex) {
+        var tr4W = rw;
+        var tr4H = tr4W / tubeRaftAsp;
+        var tr4Geo = new THREE.PlaneGeometry(tr4W, tr4H);
+        tr4Geo.translate(0, tr4H / 2, 0);
+        var tr4Mat = new THREE.MeshBasicMaterial({ map: tubeRaftTex, transparent: true, alphaTest: 0.05, depthWrite: false });
+        var tr4Plane = new THREE.Mesh(tr4Geo, tr4Mat);
+        tr4Plane.position.y = FW4_SEAT_Y;
+        tr4Plane.renderOrder = 3;
+        grp.userData.mineSpriteMesh = tr4Plane;
+        grp.add(tr4Plane);
+      } else {
+        const main = new THREE.Mesh(new THREE.BoxGeometry(rw + 1.3, 0.16, 0.58), lm(0x44403C));
+        main.position.y = 0.42; grp.add(main);
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(rw + 1.3, 0.08, 0.08), lm(0x78350F));
+        rail.position.y = 0.54; grp.add(rail);
+        for (const sx of [-(rw / 2 + 0.52), rw / 2 + 0.52]) {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.72, 0.19), lm(0x292524));
+          post.position.set(sx, 0.36, 0); grp.add(post);
+        }
+        const crossbar = new THREE.Mesh(new THREE.BoxGeometry(rw + 1.3, 0.07, 0.07), lm(0x1C1917));
+        crossbar.position.y = 0.11; grp.add(crossbar);
       }
-      const crossbar = new THREE.Mesh(new THREE.BoxGeometry(rw + 1.3, 0.07, 0.07), lm(0x1C1917));
-      crossbar.position.y = 0.11; grp.add(crossbar);
 
     } else if (type === 'tube_float_parade') {
       const plat = new THREE.Mesh(new THREE.BoxGeometry(rw + 0.7, 0.08, 0.58), lm(0x1E3A5F));
@@ -2148,18 +2403,15 @@ function makeObsMesh(type, fullWidth) {
 
   // ── Lane obstacles ─────────────────────────────────────────────
   if (type === 'river_wash') {
-    const grp = new THREE.Group();
-    const sphereMat = new THREE.MeshPhongMaterial({ color: 0x38BDF8, transparent: true, opacity: 0.42, shininess: 80 });
-    grp.add(new THREE.Mesh(new THREE.SphereGeometry(0.52, 10, 7), sphereMat));
-    const sColors = [0x38BDF8, 0x7DD3FC, 0xBAE6FD];
-    for (let i = 0; i < 3; i++) {
-      const tMat = new THREE.MeshBasicMaterial({ color: sColors[i], transparent: true, opacity: 0.72 - i * 0.18 });
-      const tor  = new THREE.Mesh(new THREE.TorusGeometry(0.28 + i * 0.11, 0.038, 4, 8), tMat);
-      tor.rotation.x = i * Math.PI / 3 + 0.5;
-      tor.rotation.y = i * Math.PI / 4;
-      grp.add(tor);
-    }
-    return grp;
+    var rwGrp = new THREE.Group();
+    var rwGeo = new THREE.CircleGeometry(RW_SPIRAL_SIZE / 2, 48);
+    var rwMat = new THREE.MeshBasicMaterial({ map: rwSpiralTex, transparent: true, depthWrite: false });
+    var rwDisc = new THREE.Mesh(rwGeo, rwMat);
+    rwDisc.rotation.x = -Math.PI / 2;  // lie flat, normal +Y (matches water plane orientation)
+    rwDisc.renderOrder = 3;             // above water (renderOrder 2), same layer as other obstacles
+    rwGrp.userData.spiralDisc = rwDisc;
+    rwGrp.add(rwDisc);
+    return rwGrp;
   }
   if (type === 'boulder') {
     // scale(1.60, 1.60): ~73% of lane width (LANE_W=2.2), visually fills the lane.
@@ -2464,7 +2716,7 @@ function spawnObs3() {
   if (isFw)                               yPos = 0;
   else if (actualType === 'boulder')      yPos = 0.08;
   else if (actualType === 'boulder_wide') yPos = 0.08;
-  else if (actualType === 'river_wash')   yPos = 0.52;
+  else if (actualType === 'river_wash')   yPos = 0.16;  // flat on water (water Y=0.15, +0.01 clears depth)
   else if (actualType === 'shopping_cart') yPos = S5_CART_SEAT_Y;
   else if (actualType === 'fallen_log')   yPos = S5_LOG_SEAT_Y;
   else                                    yPos = 0;
@@ -2544,6 +2796,7 @@ function update3() {
 
   for (const o of obstacles3) {
     o.z += spd; o.mesh.position.z = o.z;
+    if (o.type === 'river_wash') { o.mesh.rotation.y += RW_SPIN_SPEED; }
   }
   obstacles3 = obstacles3.filter(o => {
     if (o.z > DESPAWN_Z) { disposeMesh(o.mesh); scene.remove(o.mesh); return false; }
@@ -3377,6 +3630,136 @@ window.addEventListener('keydown', e => {
       }
     }
     // ===== END TEMP STAGE5 LOG SEAT TUNER =====
+
+    // ===== TEMP FW2 RAFT SEAT TUNER (REMOVE BEFORE LAUNCH) =====
+    // f = raft down (more negative) ; r = raft up
+    if (stageIdx === 1) {
+      var fw2m = false;
+      if (e.key === 'f') { FW2_SEAT_Y -= 0.25; fw2m = true; }
+      if (e.key === 'r') { FW2_SEAT_Y += 0.25; fw2m = true; }
+      if (fw2m) {
+        for (var fw2i = 0; fw2i < obstacles3.length; fw2i++) {
+          var fw2o = obstacles3[fw2i];
+          if (fw2o.type === 'raft_train' && fw2o.fullWidth && fw2o.mesh.userData.raftSpriteMesh) {
+            fw2o.mesh.userData.raftSpriteMesh.position.y = FW2_SEAT_Y;
+            if (fw2o.mesh.userData.raftHullMesh && fw2o.mesh.userData.raftHullBaseOff !== undefined) {
+              fw2o.mesh.userData.raftHullMesh.position.y = FW2_SEAT_Y + fw2o.mesh.userData.raftHullBaseOff - FW_HULL_H / 2;
+            }
+          }
+        }
+        console.log('[KRR FW2SEAT] y=' + FW2_SEAT_Y.toFixed(2));
+      }
+    }
+    // ===== END TEMP FW2 RAFT SEAT TUNER =====
+
+    // ===== TEMP HULL HEIGHT TUNER (REMOVE BEFORE LAUNCH) =====
+    // e = hull thinner (-0.05) ; q = hull thicker (+0.05) (Stage 2 only)
+    if (stageIdx === 1) {
+      var fwhm = false;
+      if (e.key === 'e') { FW_HULL_H = Math.max(0.02, +(FW_HULL_H - 0.05).toFixed(2)); fwhm = true; }
+      if (e.key === 'q') { FW_HULL_H = +(FW_HULL_H + 0.05).toFixed(2); fwhm = true; }
+      if (fwhm) {
+        for (var fwhi = 0; fwhi < obstacles3.length; fwhi++) {
+          var fwho = obstacles3[fwhi];
+          if (fwho.type === 'raft_train' && fwho.fullWidth && fwho.mesh.userData.raftHullMesh) {
+            var rtHullM = fwho.mesh.userData.raftHullMesh;
+            rtHullM.geometry.dispose();
+            rtHullM.geometry = new THREE.BoxGeometry(riverWidth() * 0.9, FW_HULL_H, FW_HULL_D);
+            rtHullM.position.y = FW2_SEAT_Y + fwho.mesh.userData.raftHullBaseOff - FW_HULL_H / 2;
+          }
+        }
+        console.log('[KRR HULL] h=' + FW_HULL_H.toFixed(2) + ' d=' + FW_HULL_D.toFixed(2));
+      }
+    }
+    // ===== END TEMP HULL HEIGHT TUNER =====
+
+    // ===== TEMP FW4 DONUT-RAFT SEAT TUNER (REMOVE BEFORE LAUNCH) =====
+    // l = raft down (-0.25) ; s = raft up (+0.25) (Stage 4 only)
+    if (stageIdx === 3) {
+      var fw4m = false;
+      if (e.key === 'l') { FW4_SEAT_Y -= 0.25; fw4m = true; }
+      if (e.key === 's') { FW4_SEAT_Y += 0.25; fw4m = true; }
+      if (fw4m) {
+        for (var fw4i = 0; fw4i < obstacles3.length; fw4i++) {
+          var fw4o = obstacles3[fw4i];
+          if (fw4o.type === 'old_mining_bridge' && fw4o.fullWidth && fw4o.mesh.userData.mineSpriteMesh) {
+            fw4o.mesh.userData.mineSpriteMesh.position.y = FW4_SEAT_Y;
+          }
+        }
+        console.log('[KRR FW4SEAT] y=' + FW4_SEAT_Y.toFixed(2));
+      }
+    }
+    // ===== END TEMP FW4 DONUT-RAFT SEAT TUNER =====
+
+    // ===== TEMP FW3 BRIDGE SEAT TUNER (REMOVE BEFORE LAUNCH) =====
+    // 8 = bridge down (-0.25) ; 9 = bridge up (+0.25) (Stage 3 only)
+    if (stageIdx === 2) {
+      var fw3m = false;
+      if (e.key === '8') { FW3_SEAT_Y -= 0.25; fw3m = true; }
+      if (e.key === '9') { FW3_SEAT_Y += 0.25; fw3m = true; }
+      if (fw3m) {
+        for (var fw3i = 0; fw3i < obstacles3.length; fw3i++) {
+          var fw3o = obstacles3[fw3i];
+          if (fw3o.type === 'pontoon_party' && fw3o.fullWidth && fw3o.mesh.userData.bridgeSpriteMesh3) {
+            fw3o.mesh.userData.bridgeSpriteMesh3.position.y = FW3_SEAT_Y;
+          }
+        }
+        console.log('[KRR FW3SEAT] y=' + FW3_SEAT_Y.toFixed(2));
+      }
+    }
+    // ===== END TEMP FW3 BRIDGE SEAT TUNER =====
+
+    // ===== TEMP FW1 BRIDGE SEAT TUNER (REMOVE BEFORE LAUNCH) =====
+    // 6 = bridge down (-0.25) ; 7 = bridge up (+0.25) (Stage 1 only)
+    if (stageIdx === 0) {
+      var fw1m = false;
+      if (e.key === '6') { FW1_SEAT_Y -= 0.25; fw1m = true; }
+      if (e.key === '7') { FW1_SEAT_Y += 0.25; fw1m = true; }
+      if (fw1m) {
+        for (var fw1i = 0; fw1i < obstacles3.length; fw1i++) {
+          var fw1o = obstacles3[fw1i];
+          if (fw1o.type === 'fallen_sequoia' && fw1o.fullWidth && fw1o.mesh.userData.bridgeSpriteMesh) {
+            fw1o.mesh.userData.bridgeSpriteMesh.position.y = FW1_SEAT_Y;
+          }
+        }
+        console.log('[KRR FW1SEAT] y=' + FW1_SEAT_Y.toFixed(2));
+      }
+    }
+    // ===== END TEMP FW1 BRIDGE SEAT TUNER =====
+
+    // ===== TEMP RIVER_WASH VISUAL TUNER (REMOVE BEFORE LAUNCH) =====
+    // 0 = cycle param | - = decrease | = = increase (ungated, works in all stages)
+    // params: 0=arms  1=turns  2=coreAlpha  3=blur  4=spin  5=size
+    {
+      var rwTuned = false;
+      if (e.key === '0') { rwTunerParam = (rwTunerParam + 1) % 8; rwTuned = true; }
+      if (e.key === '-' || e.key === '=') {
+        var rwDelta = (e.key === '=') ? 1 : -1;
+        if (rwTunerParam === 0) { RW_ARMS         = Math.max(1, RW_ARMS + rwDelta); }
+        if (rwTunerParam === 1) { RW_TURNS        = Math.max(0.2, +(RW_TURNS + rwDelta * 0.1).toFixed(2)); }
+        if (rwTunerParam === 2) { RW_CORE_ALPHA   = Math.min(1, Math.max(0, +(RW_CORE_ALPHA + rwDelta * 0.05).toFixed(2))); }
+        if (rwTunerParam === 3) { RW_BLUR_PX      = Math.max(0, RW_BLUR_PX + rwDelta); }
+        if (rwTunerParam === 4) { RW_SPIN_SPEED   = Math.max(0, +(RW_SPIN_SPEED + rwDelta * 0.01).toFixed(3)); }
+        if (rwTunerParam === 5) { RW_SPIRAL_SIZE  = Math.max(0.5, +(RW_SPIRAL_SIZE + rwDelta * 0.1).toFixed(2)); }
+        if (rwTunerParam === 6) { RW_FLECK_COUNT  = Math.max(0, RW_FLECK_COUNT + rwDelta * 5); }
+        if (rwTunerParam === 7) { RW_SWIRL_BRIGHT = Math.max(-50, Math.min(50, RW_SWIRL_BRIGHT + rwDelta * 5)); }
+        rwTuned = true;
+      }
+      if (rwTuned) {
+        buildRwSpiral();
+        if (rwTunerParam === 5) {
+          for (var rwti = 0; rwti < obstacles3.length; rwti++) {
+            var rwto = obstacles3[rwti];
+            if (rwto.type === 'river_wash' && rwto.mesh.userData.spiralDisc) {
+              rwto.mesh.userData.spiralDisc.geometry.dispose();
+              rwto.mesh.userData.spiralDisc.geometry = new THREE.CircleGeometry(RW_SPIRAL_SIZE / 2, 48);
+            }
+          }
+        }
+        console.log('[KRR RWASH] param=' + ['arms','turns','coreA','blur','spin','size','flecks','bright'][rwTunerParam] + ' arms=' + RW_ARMS + ' turns=' + RW_TURNS.toFixed(2) + ' coreA=' + RW_CORE_ALPHA.toFixed(2) + ' blur=' + RW_BLUR_PX + ' spin=' + RW_SPIN_SPEED.toFixed(3) + ' size=' + RW_SPIRAL_SIZE.toFixed(2) + ' flecks=' + RW_FLECK_COUNT + ' bright=' + RW_SWIRL_BRIGHT);
+      }
+    }
+    // ===== END TEMP RIVER_WASH VISUAL TUNER =====
 
   } else if (gameState3 === 'paused') {
     if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
