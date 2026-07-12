@@ -1877,35 +1877,104 @@ function buildStageBackdrop(stg) {
 }
 
 // ── KAYAK HULL GEOMETRY (custom hex-prism with pointed bow/stern) ─
-function buildKayakHullGeo() {
-  const bw = 0.28, bh = 0.14, ms = 0.55, bl = 1.0;
-  // 12 vertices: top hexagon (0-5) + bottom hexagon (6-11)
-  // bow tip = index 0/6; stern tip = index 3/9
-  const v = new Float32Array([
-     0,  bh, -bl,   bw, bh, -ms,   bw, bh,  ms,   0,  bh,  bl,  -bw, bh,  ms,  -bw, bh, -ms,
-     0,   0, -bl,   bw,  0, -ms,   bw,  0,  ms,   0,   0,  bl,  -bw,  0,  ms,  -bw,  0, -ms,
+// ================================================================
+// ROWBOAT + RURAL GUIDE  --  all materials MeshBasicMaterial
+// so colors render true under bright scene lighting.
+// Tune by changing the grouped constants below.
+// ================================================================
+
+// helper: one-call MeshBasicMaterial shorthand
+function bm(c) { return new THREE.MeshBasicMaterial({ color: c }); }
+
+// -- BOAT DIMENSIONS -------------------------------------
+var BOAT_WIDTH    = 0.85;   // outer beam (X)
+var BOAT_LENGTH   = 2.50;   // bow-to-stern (Z)
+var BOAT_WALL_H   = 0.26;   // side wall height (Y)
+var BOAT_FLOOR_Y  = 0.04;   // interior floor Y
+var GUNWALE_H     = 0.04;   // raised rim height above wall top
+var BOAT_SHOULDER = 0.76;   // z offset of widest beam point
+
+// -- BOAT COLORS -----------------------------------------
+var BOAT_WOOD      = 0x6B4A2E;   // hull planks (Basic: renders exact RGB)
+var BOAT_WOOD_DARK = 0x4E3620;   // gunwale rim
+var BOAT_FLOOR_COL = 0x5A3D24;   // interior floor
+
+// -- ROWER BASE Y (bottom of torso, sits at gunwale level) ---
+var ROWER_Y = 0.30;
+
+// -- TORSO -----------------------------------------------
+var TORSO_W = 0.34;   // width (X)
+var TORSO_H = 0.36;   // height (Y)
+var TORSO_D = 0.26;   // depth (Z)
+var TORSO_Y = ROWER_Y + TORSO_H / 2;   // torso center Y = 0.48
+
+// -- HEAD ------------------------------------------------
+var HEAD_S = 0.22;   // head cube side length
+var HEAD_Y = ROWER_Y + TORSO_H + HEAD_S / 2;   // head center Y = 0.77
+
+// -- HAT -------------------------------------------------
+var HAT_BRIM_W  = 0.84;   // brim box width and depth
+var HAT_BRIM_H  = 0.04;   // brim thickness (Y)
+var HAT_BAND_H  = 0.03;   // band strip height
+var HAT_CROWN_W = 0.24;   // crown width and depth
+var HAT_CROWN_H = 0.14;   // crown height
+var HAT_Y = ROWER_Y + TORSO_H + HEAD_S + HAT_BRIM_H / 2;   // brim center Y = 0.90
+
+// -- BEARD -----------------------------------------------
+var BEARD_W = 0.18;   // width (X)
+var BEARD_H = 0.14;   // height (Y)
+var BEARD_D = 0.06;   // depth proud of face (-Z face)
+
+// -- OVERALL STRAPS (camera-visible back face of torso) --
+var STRAP_W = 0.05;   // strap box width (X)
+var STRAP_H = 0.22;   // strap box height (Y)
+var STRAP_X = 0.07;   // strap X offset from center
+
+// -- PADDLE ----------------------------------------------
+var PADDLE_Y       = 0.50;   // paddleGroup world Y
+var PADDLE_SHAFT_L = 1.90;   // shaft length (X)
+var PADDLE_BLADE_W = 0.13;   // blade width (X)
+var PADDLE_BLADE_D = 0.38;   // blade face length (Z)
+var PADDLE_BLADE_H = 0.05;   // blade thickness (Y)
+var PADDLE_BLADE_X = 0.97;   // blade center X offset
+
+// -- ARMS ------------------------------------------------
+var ARM_REACH_X = 0.60;   // forearm box half-span along X
+var ARM_Y       = 0.52;   // forearm center Y
+
+// ================================================================
+
+// open-top rowboat hull: 12-vertex hex prism, top face omitted
+// so the interior floor is visible through the open deck
+function buildOpenHullGeo() {
+  var bw = BOAT_WIDTH / 2;
+  var bh = BOAT_WALL_H;
+  var ms = BOAT_SHOULDER;
+  var bl = BOAT_LENGTH / 2;
+  // vertices 0-5 = top ring, 6-11 = bottom ring; bow = 0/6 (-Z), stern = 3/9 (+Z)
+  var v = new Float32Array([
+     0, bh, -bl,   bw, bh, -ms,   bw, bh,  ms,   0, bh,  bl,  -bw, bh,  ms,  -bw, bh, -ms,
+     0,  0, -bl,   bw,  0, -ms,   bw,  0,  ms,   0,  0,  bl,  -bw,  0,  ms,  -bw,  0, -ms
   ]);
-  const idx = [
-    // Top (CCW from above → normals up)
-    0, 5, 4,  0, 4, 3,  0, 3, 2,  0, 2, 1,
-    // Bottom (CW from above → normals down)
+  var idx = [
+    // bottom (keel)
     6, 7, 8,  6, 8, 9,  6, 9, 10, 6, 10, 11,
-    // Sides (CCW from outside)
+    // six side panels - no top face, deck stays open
     0, 1, 7,  0, 7, 6,   1, 2, 8,  1, 8, 7,   2, 3, 9,  2, 9, 8,
-    3, 4, 10, 3, 10, 9,  4, 5, 11, 4, 11, 10,  5, 0, 6,  5, 6, 11,
+    3, 4, 10, 3, 10, 9,  4, 5, 11, 4, 11, 10,  5, 0, 6,  5, 6, 11
   ];
-  const geo = new THREE.BufferGeometry();
+  var geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(v, 3));
   geo.setIndex(idx);
   geo.computeVertexNormals();
   return geo;
 }
 
-// ── PLAYER MODEL ─────────────────────────────────────────────────
+// -- PLAYER MODEL ----------------------------------------------------
 const playerGroup = new THREE.Group();
 scene.add(playerGroup);
 
-// Materials (MeshStandardMaterial for PBR shading)
+// Legacy Standard materials kept as declarations (no longer drive the player model).
 const kNavy  = new THREE.MeshStandardMaterial({ color: 0x0B1F3A, roughness: 0.65, metalness: 0.15 });
 const kGold  = new THREE.MeshStandardMaterial({ color: 0xC9883A, roughness: 0.30, metalness: 0.60 });
 const kGreen = new THREE.MeshStandardMaterial({ color: 0x2D6A4F, roughness: 0.80, metalness: 0.05 });
@@ -1913,66 +1982,223 @@ const kMid   = new THREE.MeshStandardMaterial({ color: 0x1E3A5F, roughness: 0.70
 const kWood  = new THREE.MeshStandardMaterial({ color: 0x92400E, roughness: 0.90, metalness: 0.00 });
 const kDark  = new THREE.MeshStandardMaterial({ color: 0x78350F, roughness: 0.90, metalness: 0.00 });
 
-// Kayak hull (improved custom geometry)
-const hullMesh = new THREE.Mesh(buildKayakHullGeo(), kNavy.clone());
-hullMesh.castShadow = true;
+// ---- BOAT -----------------------------------------------
+
+// Open-top hull shell (deck face removed; floor visible from camera above)
+const hullMesh = new THREE.Mesh(buildOpenHullGeo(), bm(BOAT_WOOD));
 playerGroup.add(hullMesh);
 
-// Deck stripe (green center line)
-const deckStripe = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, 1.80), kGreen.clone());
-deckStripe.position.set(0, 0.15, 0);
-playerGroup.add(deckStripe);
+// Interior floor (visible through open deck from chase camera angle)
+const boatFloor = new THREE.Mesh(
+  new THREE.BoxGeometry(BOAT_WIDTH * 0.70, 0.03, BOAT_LENGTH * 0.66),
+  bm(BOAT_FLOOR_COL)
+);
+boatFloor.position.set(0, BOAT_FLOOR_Y, 0);
+playerGroup.add(boatFloor);
 
-// Cockpit rim (raised ring around cockpit opening)
-const cockpit = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.07, 0.52), kMid.clone());
-cockpit.position.set(0, 0.17, 0.08);
-playerGroup.add(cockpit);
-
-// Torso / life-jacket (green over navy base)
-const torso = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.38, 0.24), kGreen.clone());
-torso.position.set(0, 0.42, 0.08); torso.castShadow = true;
-playerGroup.add(torso);
-
-// Torso front panel (navy)
-const torsoFront = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.24, 0.04), kNavy.clone());
-torsoFront.position.set(0, 0.44, -0.08);
-playerGroup.add(torsoFront);
-
-// Head / helmet (gold)
-const head = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.22, 0.22), kGold.clone());
-head.position.set(0, 0.72, 0.08); head.castShadow = true;
-playerGroup.add(head);
-
-// Helmet visor (dark, facing camera side = back of head toward z+)
-const visor = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.09, 0.05), kMid.clone());
-visor.position.set(0, 0.68, 0.185);
-playerGroup.add(visor);
-
-// Face indicator: small bright panel on front face of helmet (z- = facing forward)
-const faceMat = new THREE.MeshStandardMaterial({ color: 0xFDE68A, roughness: 0.5, metalness: 0.0, emissive: 0x786014, emissiveIntensity: 0.4 });
-const facePlate = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.10, 0.03), faceMat);
-facePlate.position.set(0, 0.70, -0.09);
-playerGroup.add(facePlate);
-
-// Arms
-const armGeo = new THREE.BoxGeometry(0.08, 0.09, 0.30);
-for (const sx of [-0.20, 0.20]) {
-  const arm = new THREE.Mesh(armGeo, kNavy.clone());
-  arm.position.set(sx, 0.50, 0.08);
-  playerGroup.add(arm);
+// Port and starboard gunwale strips
+var gwThick = 0.065;
+var gwY     = BOAT_WALL_H + GUNWALE_H * 0.5;
+for (var gsi = -1; gsi <= 1; gsi += 2) {
+  var gwMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(gwThick, GUNWALE_H, BOAT_LENGTH * 0.80),
+    bm(BOAT_WOOD_DARK)
+  );
+  gwMesh.position.set(gsi * (BOAT_WIDTH / 2 - gwThick * 0.5), gwY, 0);
+  playerGroup.add(gwMesh);
 }
 
-// Paddle group (animated)
-const paddleGroup = new THREE.Group();
-paddleGroup.position.set(0, 0.54, 0.10);
+// Stern (aft) gunwale cap - camera-facing rim across back of boat
+var sternCap = new THREE.Mesh(
+  new THREE.BoxGeometry(BOAT_WIDTH * 0.60, GUNWALE_H, gwThick),
+  bm(BOAT_WOOD_DARK)
+);
+sternCap.position.set(0, gwY, BOAT_LENGTH / 2 - gwThick * 0.5);
+playerGroup.add(sternCap);
 
-const shaft = new THREE.Mesh(new THREE.BoxGeometry(1.90, 0.048, 0.048), kWood.clone());
+// Rowing thwart / seat board (deckStripe name kept for compatibility)
+const deckStripe = new THREE.Mesh(
+  new THREE.BoxGeometry(BOAT_WIDTH * 0.72, 0.03, 0.12),
+  bm(BOAT_WOOD)
+);
+deckStripe.position.set(0, ROWER_Y - 0.01, 0.10);
+playerGroup.add(deckStripe);
+
+// Invisible cockpit stub kept so no downstream reference breaks
+const cockpit = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), bm(0x000000));
+cockpit.visible = false;
+playerGroup.add(cockpit);
+
+// ---- ROWER BODY -----------------------------------------
+
+// Denim legs/lap inside hull (overalls color below gunwale)
+var legsBlock = new THREE.Mesh(
+  new THREE.BoxGeometry(0.30, 0.20, 0.22),
+  bm(0x35506B)
+);
+legsBlock.position.set(0, ROWER_Y - 0.10, 0);
+playerGroup.add(legsBlock);
+
+// Torso - red buffalo-plaid flannel shirt
+const torso = new THREE.Mesh(
+  new THREE.BoxGeometry(TORSO_W, TORSO_H, TORSO_D),
+  bm(0xB0322A)
+);
+torso.position.set(0, TORSO_Y, 0);
+playerGroup.add(torso);
+
+// Plaid accent - horizontal stripe on back face (+Z, camera side)
+var plaidH = new THREE.Mesh(
+  new THREE.BoxGeometry(TORSO_W, 0.04, 0.03),
+  bm(0x7A1F1A)
+);
+plaidH.position.set(0, TORSO_Y + 0.04, TORSO_D / 2 + 0.01);
+playerGroup.add(plaidH);
+
+// Plaid accent - vertical stripe on back face
+var plaidV = new THREE.Mesh(
+  new THREE.BoxGeometry(0.04, TORSO_H - 0.04, 0.03),
+  bm(0x7A1F1A)
+);
+plaidV.position.set(0, TORSO_Y, TORSO_D / 2 + 0.01);
+playerGroup.add(plaidV);
+
+// Overalls bib (front chest, -Z face, visible at yaw turns)
+var bib = new THREE.Mesh(
+  new THREE.BoxGeometry(0.22, 0.20, 0.03),
+  bm(0x35506B)
+);
+bib.position.set(0, TORSO_Y + 0.06, -(TORSO_D / 2 + 0.01));
+playerGroup.add(bib);
+
+// Overall straps on back (+Z, camera side) and brass clips at top
+for (var osi = -1; osi <= 1; osi += 2) {
+  var strap = new THREE.Mesh(
+    new THREE.BoxGeometry(STRAP_W, STRAP_H, 0.03),
+    bm(0x274058)
+  );
+  strap.position.set(osi * STRAP_X, TORSO_Y + TORSO_H / 2 - STRAP_H / 2 + 0.02, TORSO_D / 2 + 0.01);
+  playerGroup.add(strap);
+  var clip = new THREE.Mesh(
+    new THREE.BoxGeometry(STRAP_W + 0.01, 0.04, 0.03),
+    bm(0xC9A24B)
+  );
+  clip.position.set(osi * STRAP_X, TORSO_Y + TORSO_H / 2 + 0.01, TORSO_D / 2 + 0.01);
+  playerGroup.add(clip);
+}
+
+// Shoulder blocks (flannel red, at top corners of torso)
+for (var shi = -1; shi <= 1; shi += 2) {
+  var shldr = new THREE.Mesh(
+    new THREE.BoxGeometry(0.08, 0.08, TORSO_D + 0.02),
+    bm(0xB0322A)
+  );
+  shldr.position.set(shi * (TORSO_W / 2 + 0.04), TORSO_Y + TORSO_H / 2 - 0.04, 0);
+  playerGroup.add(shldr);
+}
+
+// Forearms (flannel red) reaching out along X to paddle grips + skin hands
+for (var fai = -1; fai <= 1; fai += 2) {
+  var forearm = new THREE.Mesh(
+    new THREE.BoxGeometry(ARM_REACH_X, 0.07, 0.08),
+    bm(0xB0322A)
+  );
+  forearm.position.set(fai * (TORSO_W / 2 + ARM_REACH_X / 2 + 0.04), ARM_Y, 0);
+  playerGroup.add(forearm);
+  var hand = new THREE.Mesh(
+    new THREE.BoxGeometry(0.06, 0.07, 0.09),
+    bm(0xE8B98A)
+  );
+  hand.position.set(fai * PADDLE_BLADE_X, ARM_Y, 0);
+  playerGroup.add(hand);
+}
+
+// ---- HEAD + HAIR + BEARD + HAT --------------------------
+
+// Head (skin)
+const head = new THREE.Mesh(
+  new THREE.BoxGeometry(HEAD_S, HEAD_S, HEAD_S),
+  bm(0xE8B98A)
+);
+head.position.set(0, HEAD_Y, 0);
+playerGroup.add(head);
+
+// Gray hair on back of head (+Z face, camera side)
+var hairBack = new THREE.Mesh(
+  new THREE.BoxGeometry(HEAD_S, 0.10, 0.04),
+  bm(0xC8C4BC)
+);
+hairBack.position.set(0, HEAD_Y + 0.02, HEAD_S / 2 + 0.01);
+playerGroup.add(hairBack);
+
+// Gray temples and sideburns (left and right)
+for (var hsi = -1; hsi <= 1; hsi += 2) {
+  var hairSide = new THREE.Mesh(
+    new THREE.BoxGeometry(0.03, 0.10, HEAD_S - 0.02),
+    bm(0xC8C4BC)
+  );
+  hairSide.position.set(hsi * (HEAD_S / 2 + 0.01), HEAD_Y + 0.01, 0);
+  playerGroup.add(hairSide);
+}
+
+// Beard (bushy block on -Z face = upriver / forward direction)
+var beard = new THREE.Mesh(
+  new THREE.BoxGeometry(BEARD_W, BEARD_H, BEARD_D),
+  bm(0xC8C4BC)
+);
+beard.position.set(0, HEAD_Y - HEAD_S * 0.20, -(HEAD_S / 2 + BEARD_D / 2 - 0.01));
+playerGroup.add(beard);
+
+// Beard shadow - darker underside gives chin depth
+var beardShadow = new THREE.Mesh(
+  new THREE.BoxGeometry(BEARD_W - 0.02, 0.05, BEARD_D - 0.01),
+  bm(0x9A968E)
+);
+beardShadow.position.set(0, HEAD_Y - HEAD_S * 0.20 - BEARD_H / 2 + 0.02, -(HEAD_S / 2 + BEARD_D / 2));
+playerGroup.add(beardShadow);
+
+// Straw hat brim (wide flat box sitting over the head)
+var hatBrim = new THREE.Mesh(
+  new THREE.BoxGeometry(HAT_BRIM_W, HAT_BRIM_H, HAT_BRIM_W),
+  bm(0xC9A24B)
+);
+hatBrim.position.set(0, HAT_Y, 0);
+playerGroup.add(hatBrim);
+
+// Hat band (dark strip at base of crown)
+var hatBand = new THREE.Mesh(
+  new THREE.BoxGeometry(HAT_CROWN_W + 0.02, HAT_BAND_H, HAT_CROWN_W + 0.02),
+  bm(0x8B6B2E)
+);
+hatBand.position.set(0, HAT_Y + HAT_BRIM_H / 2 + HAT_BAND_H / 2, 0);
+playerGroup.add(hatBand);
+
+// Hat crown (tall center block above band)
+var hatCrown = new THREE.Mesh(
+  new THREE.BoxGeometry(HAT_CROWN_W, HAT_CROWN_H, HAT_CROWN_W),
+  bm(0xC9A24B)
+);
+hatCrown.position.set(0, HAT_Y + HAT_BRIM_H / 2 + HAT_BAND_H + HAT_CROWN_H / 2, 0);
+playerGroup.add(hatCrown);
+
+// ---- PADDLE GROUP (name must stay 'paddleGroup' - rotation animated in updateVisuals3) ----
+const paddleGroup = new THREE.Group();
+paddleGroup.position.set(0, PADDLE_Y, 0);
+
+// Shaft (wooden dowel across X axis)
+var shaft = new THREE.Mesh(
+  new THREE.BoxGeometry(PADDLE_SHAFT_L, 0.04, 0.04),
+  bm(0x8B5E34)
+);
 paddleGroup.add(shaft);
 
-const bladeGeo = new THREE.BoxGeometry(0.15, 0.048, 0.36);
-for (const bx of [-0.97, 0.97]) {
-  const blade = new THREE.Mesh(bladeGeo, kDark.clone());
-  blade.position.x = bx;
+// Blades at each end of shaft
+for (var pbi = -1; pbi <= 1; pbi += 2) {
+  var blade = new THREE.Mesh(
+    new THREE.BoxGeometry(PADDLE_BLADE_W, PADDLE_BLADE_H, PADDLE_BLADE_D),
+    bm(0x6B4A2E)
+  );
+  blade.position.x = pbi * PADDLE_BLADE_X;
   paddleGroup.add(blade);
 }
 
@@ -1984,6 +2210,141 @@ const playerShadow = new THREE.Mesh(new THREE.CircleGeometry(0.58, 12), shadowMa
 playerShadow.rotation.x = -Math.PI / 2;
 playerShadow.position.set(0, 0.02, 0);
 scene.add(playerShadow);
+
+// ================================================================
+// KAYAKER GLB MODEL LOADER
+// Loads kayaker.glb (Rodin shaded export, baked emissive texture).
+// While loading, the hand-built box model above remains visible as
+// the fallback. On success, playerGroup.clear() removes all
+// hand-built children and the GLB scene is swapped in.
+// On error, the fallback stays rendered - player is never invisible.
+// ================================================================
+
+var KAYAKER_SCALE  = 1.31;    // was 1.14 (~1.53 wide); 1.34 * 1.31 = ~1.76 world units
+var KAYAKER_ROT_Y  = Math.PI; // 180 deg: bow points -Z (away from camera), we see rower's back
+var KAYAKER_Y      = 0;       // Y nudge from waterline; 0 = hull bottom sits on Y=0
+var KAYAKER_BRIGHT = 1.0;     // true baked colors; multiply above 1.0 if too dark in game
+
+// Paddle stroke animation constants (tunable)
+var STROKE_RATE = 0.8;    // phase radians added per unit of curSpd3 (scales with boat speed)
+var STROKE_DIP  = 0.35;   // radians - alternating blade dip amplitude (main L/R motion)
+var STROKE_PULL = 0.12;   // radians - fore/aft rock amplitude (secondary)
+var TORSO_ROCK  = 0.08;   // radians - counter-phase torso lean amplitude
+
+// GLB paddle animation state -- null until GLB loads (null = fallback box model is active)
+var glbPaddleGroup = null;
+var glbTorsoNode   = null;
+var strokePhase    = 0;
+var _strokeDbgTick = 0;  // throttle for per-frame stroke log
+
+if (typeof THREE.GLTFLoader === 'undefined') {
+  console.warn('[kayaker] THREE.GLTFLoader not found - keeping hand-built fallback.');
+} else {
+  var _kLoader = new THREE.GLTFLoader();
+  _kLoader.load(
+    'kayaker-bright.glb',
+    function(gltf) {
+      playerGroup.clear();
+      var model = gltf.scene;
+
+      // A1: Log ALL scene nodes so real importer names are visible in console.
+      model.traverse(function(n) {
+        console.log('[KRR GLB NODE]', n.name, n.type, n.isMesh ? 'MESH' : '');
+      });
+
+      // Convert all mesh materials to MeshBasicMaterial and collect meshes.
+      // GLB baked shading lives in emissiveMap (baseColor black, emissiveFactor white).
+      // Transferring emissiveMap -> map renders baked colors with no scene-light contribution.
+      var _allMeshes = [];
+      model.traverse(function(node) {
+        if (!node.isMesh) return;
+        _allMeshes.push(node);
+        var m = node.material;
+        node.material = new THREE.MeshBasicMaterial({
+          map:         m.emissiveMap || m.map || null,
+          transparent: m.transparent || false,
+          alphaTest:   m.alphaTest   || 0,
+          side:        m.side !== undefined ? m.side : THREE.DoubleSide
+        });
+        node.material.color.setScalar(KAYAKER_BRIGHT);
+        var _bb = new THREE.Box3().setFromObject(node);
+        var _sz = new THREE.Vector3(); _bb.getSize(_sz);
+        console.log('[KRR MESH] name=' + node.name +
+          ' sz=' + _sz.x.toFixed(3) + 'x' + _sz.y.toFixed(3) + 'x' + _sz.z.toFixed(3));
+      });
+
+      // A3: Robust paddle identification by geometry rather than by name.
+      // Importing may rename root.6 -> root_6 or similar, so getObjectByName is unreliable.
+      // Shaft: largest X span with Y and Z both < 15% of X span (very thin rod).
+      // Blades: of remaining meshes, the two with most extreme bounding-box X centers.
+      // Torso: of remaining meshes after shaft+blades removed, the one with largest Y span.
+      var _bbCache = _allMeshes.map(function(n) {
+        var bb = new THREE.Box3().setFromObject(n);
+        var sz = new THREE.Vector3(); bb.getSize(sz);
+        var ct = new THREE.Vector3(); bb.getCenter(ct);
+        return { mesh: n, sz: sz, cx: ct.x };
+      });
+
+      var _shaftE = null;
+      _bbCache.forEach(function(e) {
+        if (e.sz.x > 0 && e.sz.y / e.sz.x < 0.15 && e.sz.z / e.sz.x < 0.15) {
+          if (!_shaftE || e.sz.x > _shaftE.sz.x) _shaftE = e;
+        }
+      });
+
+      var _noShaft = _bbCache.filter(function(e) { return e !== _shaftE; });
+      _noShaft.sort(function(a, b) { return a.cx - b.cx; });
+      var _bladeLe = _noShaft.length > 0 ? _noShaft[0] : null;
+      var _bladeRe = _noShaft.length > 1 ? _noShaft[_noShaft.length - 1] : null;
+
+      var _rest = _noShaft.filter(function(e) { return e !== _bladeLe && e !== _bladeRe; });
+      _rest.sort(function(a, b) { return b.sz.y - a.sz.y; });
+      glbTorsoNode = _rest.length > 0 ? _rest[0].mesh : null;
+
+      var _nL = _bladeLe ? _bladeLe.mesh : null;
+      var _nR = _bladeRe ? _bladeRe.mesh : null;
+      var _nS = _shaftE  ? _shaftE.mesh  : null;
+
+      console.log('[KRR PADDLE] shaft=' + (_nS ? _nS.name : 'NOT_FOUND') +
+        ' bladeL=' + (_nL ? _nL.name : 'NOT_FOUND') +
+        ' bladeR=' + (_nR ? _nR.name : 'NOT_FOUND') +
+        ' torso='  + (glbTorsoNode ? glbTorsoNode.name : 'NOT_FOUND'));
+
+      if (_nL && _nR && _nS) {
+        var _shaftBB = new THREE.Box3().setFromObject(_nS);
+        var _pivot   = new THREE.Vector3();
+        _shaftBB.getCenter(_pivot);
+        glbPaddleGroup = new THREE.Group();
+        glbPaddleGroup.position.copy(_pivot);
+        var _pParent = _nS.parent;
+        var _antiPiv = _pivot.clone().negate();
+        [_nL, _nR, _nS].forEach(function(n) {
+          _pParent.remove(n);
+          n.position.copy(_antiPiv);
+          glbPaddleGroup.add(n);
+        });
+        _pParent.add(glbPaddleGroup);
+        console.log('[KRR PADDLE] groupChildren=' + glbPaddleGroup.children.length +
+          ' pivot=' + _pivot.x.toFixed(3) + ',' + _pivot.y.toFixed(3) + ',' + _pivot.z.toFixed(3));
+      } else {
+        console.warn('[KRR PADDLE] geometry identification failed - glbPaddleGroup stays null');
+      }
+
+      model.scale.setScalar(KAYAKER_SCALE);
+      model.rotation.y = KAYAKER_ROT_Y;
+      model.position.y = KAYAKER_Y;
+
+      playerGroup.add(model);
+      console.log('[kayaker] kayaker-bright.glb loaded. scale=' + KAYAKER_SCALE +
+        ' rotY=' + KAYAKER_ROT_Y + ' paddle=' + (glbPaddleGroup ? 'OK' : 'null'));
+    },
+    undefined,
+    function(err) {
+      // Load failed: hand-built model is still in playerGroup - no action needed.
+      console.warn('[kayaker] GLB load failed. Hand-built fallback active.', err);
+    }
+  );
+}
 
 // ── WATER LIFE: KAYAK WAKE + OBSTACLE RIPPLES (Part 3) ────────────
 // Created once at module level like playerGroup. Positioned each frame in updateVisuals3.
@@ -3167,9 +3528,23 @@ function updateVisuals3() {
     playerGroup.rotation.y = kayakTurnY3;
   }
 
-  // Paddle animation: Z tilt + subtle X dive
-  paddleGroup.rotation.z = Math.sin(frameN * 0.060) * 0.42;
-  paddleGroup.rotation.x = Math.cos(frameN * 0.060) * 0.12;
+  // Paddle stroke: only runs when GLB is loaded (glbPaddleGroup != null).
+  // Phase accumulates proportional to curSpd3 so rowing rate tracks boat speed.
+  if (glbPaddleGroup) {
+    strokePhase += STROKE_RATE * curSpd3;
+    glbPaddleGroup.rotation.z = Math.sin(strokePhase) * STROKE_DIP;
+    glbPaddleGroup.rotation.x = Math.cos(strokePhase) * STROKE_PULL;
+    _strokeDbgTick++;
+    if (_strokeDbgTick % 60 === 1) {
+      console.log('[KRR STROKE] phase=' + strokePhase.toFixed(2) +
+        ' curSpd3=' + curSpd3.toFixed(4) +
+        ' rotZ=' + glbPaddleGroup.rotation.z.toFixed(3) +
+        ' children=' + glbPaddleGroup.children.length);
+    }
+    if (glbTorsoNode) {
+      glbTorsoNode.rotation.x = -Math.sin(strokePhase) * TORSO_ROCK;
+    }
+  }
 
   // Refinement 2: Alternating paddle splashes at blade water entry.
   // rotation.z > 0 (sin positive) = left blade (-x) goes down toward water.
