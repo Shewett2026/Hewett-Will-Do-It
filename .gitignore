@@ -147,10 +147,7 @@ vite.config.ts.timestamp-*
 Thumbs.db
 .vscode/
 .idea/
-Brand_assets/*.mp4
-Brand_assets/*.MP4
-Brand_assets/*.heic
-Brand_assets/*.HEIC
+Brand_assets/
 *.tmp
 *.temp
 .gitignore.local-backup

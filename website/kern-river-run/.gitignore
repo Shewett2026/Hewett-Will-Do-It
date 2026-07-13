@@ -1,0 +1,37 @@
+# Kern River Run game dev workspace — exclude raw exports and junk
+
+# Audio and compressed files
+*.zip
+*.mp3
+
+# Any filename containing a space (raw Blender/Photoshop exports)
+* *
+
+# Parenthesized OS "copy" duplicates
+* (1).*
+* (2).*
+
+# Backup and experiment files
+game-2d-backup.html
+game-pixel-experiment.*
+
+# Old/unused base mesh exports (replaced by kayaker-bright.glb and lit obstacles)
+base.glb
+base_basic_pbr*.glb
+base_basic_shaded*.glb
+
+# Pre-lit obstacle GLBs (replaced by *-lit.glb versions)
+stage-1-bridge.glb
+stage-2-rafters.glb
+stage-3-bridge.glb
+stage-4-tubers.glb
+stage-5-cart.glb
+stage-5-log.glb
+
+# Unused kayaker export (game loads kayaker-bright.glb)
+kayaker.glb
+
+# Explicitly named raw art exports (also caught by "* *" above, listed for clarity)
+Shopping Cart 1.png
+Shopping Cart 2.png
+Tree Design.png

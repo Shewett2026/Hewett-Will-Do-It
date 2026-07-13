@@ -7,9 +7,25 @@
 const LANE_W    = 2.2;
 const SPAWN_Z   = -65;
 const DESPAWN_Z = 9;
-const JUMP_DUR  = 56;
-const JUMP_H    = 2.6;
-const SPF       = 2;
+var JUMP_DURATION    = 100;  // frames airborne at 60fps (~1.67 sec); was 56 (~0.93 sec)
+var JUMP_HEIGHT      = 2.8;  // world units at apex (was 4.5; lower = floaty glide, not moon-leap)
+var JUMP_ARC_FLATTEN = 0.60; // exponent < 1 broadens the sin peak into a hang plateau; 1.0 = pure sine
+// Jump body animation (layered on torso rotation, not the arc itself)
+var JUMP_CROUCH_AMOUNT = 0.18; // rad: torso leans forward at liftoff anticipation
+var JUMP_LIFT_AMOUNT   = 0.14; // rad: torso arches back during the push off
+var JUMP_LAND_SQUASH   = 0.12; // rad: torso compresses forward on re-entry
+// Boat pitch through the jump (rotation.x on playerGroup; positive = nose up)
+var JUMP_PITCH_UP   = 0.25;  // rad nose-up on launch (peak at t=0.25)
+var JUMP_PITCH_DOWN = -0.18; // rad nose-down on re-entry (peak at t=0.95; negative = nose down)
+// Tail whip: steering-driven yaw+roll kick, unwinds to 0 before landing
+var JUMP_WHIP_YAW  = 0.35;  // rad: tail swings out in the steering direction
+var JUMP_WHIP_ROLL = 0.20;  // rad: roll lean into the whip (heels toward the kick)
+// Water re-entry splash constants
+var SPLASH_COUNT    = 28;   // droplets on landing
+var SPLASH_SPREAD   = 1.8;  // X offset (world units) for port/starboard hull rings
+var SPLASH_SIZE     = 5.5;  // max ring scale on landing
+var SPLASH_LIFETIME = 42;   // ring expand duration (frames)
+const SPF           = 2;
 const MIN_GAP   = 135;
 const MI_PER_PX = 900;
 const COLL_FREQ  = 0.006;
@@ -19,6 +35,7 @@ const CAM_Y     = 4.8;
 const CAM_Z_BK  = 8.5;
 const CAM_LOOK_Z = -8.0;
 const WATER_OPACITY = 0.60;   // tune here: 0=invisible 1=solid; 0.60 = clear shallow river
+var NARROW_MILES = 1.5;        // miles over which sub-narrow squeeze animates (Shift+F7/F8 to tune)
 
 // ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) =====
 const DEV_STAGE_JUMP = true;  // flip to false or delete this whole block to disable
@@ -257,10 +274,16 @@ let horizonGrp  = null;
 let waterMesh   = null;
 let backdropMesh = null;
 let stageBackdropMesh = null;   // Stage 5 persistent backdrop handle (framing tuner)
+var obsGlbCache = {};           // path -> null (loading) | THREE.Group (ready); populated by _preloadObsGlb
 let wfGroup     = null;
 let wfStrips    = [];
 let bankTrees3   = [];   // scrolling tree sprite pool (not riverGroup children)
 let bankBoulders3 = [];  // scrolling bank boulder sprite pool (stages 2-4, decoration only)
+let bankSegs3    = [];   // { mesh, side, segW } -- all bank-segment meshes from latest buildWorld
+let bankAprons3  = [];   // { mesh, side } -- sloped apron meshes that join bank to water edge
+let laneDivs3    = [];   // { line, idx } -- lane divider Lines; each has its own cloned material
+var bankPoppies3   = [];  // scrolling bank poppy sprite pool (all stages; scrolls at full spd)
+var _activePopBloom = []; // transient bloom sprites spawned on poppy pickup
 let bankHouses3   = [];  // scrolling lake-house sprite pool (Stage 3 only)
 let canyonWalls4  = [];  // scrolling canyon-wall boulder sprite pool (Stage 4 only)
 let canyonFill4   = [];  // opaque rock wall mesh refs (Stage 4 only); lives inside riverGroup
@@ -273,7 +296,6 @@ var s5GndScrollTex = null; // Stage 5 ground plane scroll clone; re-acquired eac
 let bankStumps5    = [];  // Stage 5 tree-stump sprite pool
 let bankFarms5     = [];  // Stage 5 farm-house sprite pool (farm-house-1 and farm-house-2)
 let bankFishing5   = [];  // Stage 5 fishing-supplies sprite pool
-let bankCars5      = [];  // Stage 5 broken-down-car sprite pool
 let sparkles3         = [];   // Part 2: water sparkle glints (rebuilt each buildWorld)
 let kayakTurnY3       = 0;    // Polish 3: lane-change tilt angle (radians)
 let kayakWasSpinning3 = false; // Polish 3: spinout-exit guard for smooth rotation handoff
@@ -472,7 +494,6 @@ var lakeHouseTexNames = ['lake-house-1.png', 'lake-house-2.png', 'lake-house-3.p
 var stumpTex5   = null;
 var farmTex5    = [null, null];   // index 0 = farm-house-1, index 1 = farm-house-2
 var fishingTex5 = null;
-var carTex5     = null;
 
 (function() {
   var ldr = new THREE.TextureLoader();
@@ -536,20 +557,6 @@ var carTex5     = null;
       }
     }
   }, undefined, function(e) { console.error('[KRR] fishing-supplies.png FAILED', e); });
-  ldr.load('broken-down-car.png', function(tex) {
-    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
-    tex.generateMipmaps = false; tex.needsUpdate = true;
-    carTex5 = tex;
-    if (tex.image && tex.image.naturalHeight > 0) {
-      var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
-      console.log('[KRR S5DECO] broken-down-car ' + natW + 'x' + natH + ' -> world ' + (S5_CAR_SCALE * natW / natH).toFixed(2) + 'x' + S5_CAR_SCALE.toFixed(2));
-      var asp = natW / natH;
-      for (var i = 0; i < bankCars5.length; i++) {
-        bankCars5[i].sprite.material.map = tex; bankCars5[i].sprite.material.needsUpdate = true;
-        bankCars5[i].sprite.scale.set(S5_CAR_SCALE * asp, S5_CAR_SCALE, 1);
-      }
-    }
-  }, undefined, function(e) { console.error('[KRR] broken-down-car.png FAILED', e); });
 })();
 
 // Stage 5 in-water obstacle textures (shopping cart art)
@@ -791,9 +798,60 @@ buildRwSpiral();
 
 let stageIdx    = 0;
 let curLanes    = STAGES3[0].lanes;
+let rwCur       = curLanes * LANE_W;   // live river width; set in lockstep with curLanes
 
-function riverWidth()  { return curLanes * LANE_W; }
-function laneXPos(l)   { return (l - (curLanes - 1) / 2) * LANE_W; }
+function riverWidth()  { return rwCur; }
+function laneXPos(l)   { const lw = rwCur / curLanes; return (l - (curLanes - 1) / 2) * lw; }
+
+// Sync water/banks/dividers to rwCur without a full buildWorld rebuild.
+// Called once at the end of buildWorld and every frame in update3.
+function applyRiverWidth() {
+  // Water: scale.x to match rwCur (skip Stage 2 -- its water is hardcoded 200 wide)
+  if (waterMesh && waterMesh.userData.builtRw && STAGES3[stageIdx].num !== 2) {
+    waterMesh.scale.x = rwCur / waterMesh.userData.builtRw;
+  }
+  // Bank segments: inner edge at rwCur/2 + SHORE_W (apron fills the gap)
+  for (var _bsi = 0; _bsi < bankSegs3.length; _bsi++) {
+    var _bs = bankSegs3[_bsi];
+    _bs.mesh.position.x = _bs.side * (rwCur / 2 + SHORE_W + _bs.segW / 2);
+  }
+  // Aprons: toe stays exactly at the water edge
+  for (var _api = 0; _api < bankAprons3.length; _api++) {
+    bankAprons3[_api].mesh.position.x = bankAprons3[_api].side * (rwCur / 2);
+  }
+  // Lane dividers: handled separately during narrowing (see per-frame narrow block in update3)
+  if (!narrowing) {
+    var _ldw = rwCur / curLanes;
+    for (var _ldi = 0; _ldi < laneDivs3.length; _ldi++) {
+      laneDivs3[_ldi].line.position.x = -rwCur / 2 + laneDivs3[_ldi].idx * _ldw;
+    }
+  }
+}
+
+// Tear down and recreate only the lane-divider Lines, leaving everything else untouched.
+// Called once when a sub-narrow squeeze completes (t=1) to install the new divider count.
+function rebuildDividers3() {
+  for (var _rdi = 0; _rdi < laneDivs3.length; _rdi++) {
+    var _rd = laneDivs3[_rdi];
+    if (_rd.line.material) _rd.line.material.dispose();
+    _rd.line.geometry.dispose();
+    riverGroup.remove(_rd.line);
+  }
+  laneDivs3 = [];
+  var _rdBase = new THREE.LineBasicMaterial({ color: 0x93C5FD, transparent: true, opacity: 0.22 });
+  for (var _rl = 1; _rl < curLanes; _rl++) {
+    var _rdiv = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0.04, SPAWN_Z - 5),
+        new THREE.Vector3(0, 0.04, DESPAWN_Z)
+      ]),
+      _rdBase.clone()
+    );
+    riverGroup.add(_rdiv);
+    laneDivs3.push({ line: _rdiv, idx: _rl });
+  }
+  applyRiverWidth();
+}
 
 function buildWorld() {
   if (riverGroup) {
@@ -809,6 +867,17 @@ function buildWorld() {
   bankTrees3 = [];
   bankBoulders3.forEach(function(bb) { scene.remove(bb.sprite); if (bb.sprite.material) bb.sprite.material.dispose(); });
   bankBoulders3 = [];
+  bankSegs3   = [];
+  bankAprons3 = [];   // geometries disposed by riverGroup traverse above
+  laneDivs3   = [];
+  bankPoppies3.forEach(function(pp) {
+    scene.remove(pp.sprite);
+    if (pp.sprite.material) pp.sprite.material.dispose();
+    if (pp.glow) { scene.remove(pp.glow); if (pp.glow.material) pp.glow.material.dispose(); }
+  });
+  bankPoppies3 = [];
+  _activePopBloom.forEach(function(bl) { scene.remove(bl.sprite); if (bl.sprite.material) bl.sprite.material.dispose(); });
+  _activePopBloom = [];
   bankHouses3.forEach(function(bh) { scene.remove(bh.sprite); if (bh.sprite.material) bh.sprite.material.dispose(); });
   bankHouses3 = [];
   bankStumps5.forEach(function(b5) { scene.remove(b5.sprite); if (b5.sprite.material) b5.sprite.material.dispose(); });
@@ -817,8 +886,6 @@ function buildWorld() {
   bankFarms5 = [];
   bankFishing5.forEach(function(b5) { scene.remove(b5.sprite); if (b5.sprite.material) b5.sprite.material.dispose(); });
   bankFishing5 = [];
-  bankCars5.forEach(function(b5) { scene.remove(b5.sprite); if (b5.sprite.material) b5.sprite.material.dispose(); });
-  bankCars5 = [];
   canyonWalls4.forEach(function(cw) { scene.remove(cw.sprite); if (cw.sprite.material) cw.sprite.material.dispose(); });
   canyonWalls4 = [];
   canyonFill4.forEach(function(m) { if (m.parent) m.parent.remove(m); if (m.geometry) m.geometry.dispose(); if (m.material) m.material.dispose(); });
@@ -989,6 +1056,7 @@ function buildWorld() {
   water.renderOrder = 2;
   riverGroup.add(water);
   waterMesh = water;
+  water.userData.builtRw = rw;
   console.log('[KRR] Water mesh   | y=' + water.position.y + ' renderOrder=' + water.renderOrder + ' (water above riverbed: ' + (water.renderOrder > (riverbedMesh ? riverbedMesh.renderOrder : -1)) + ')');
 
   // Banks -- segmented curved geometry. Stage 2 skips banks entirely (wide-water design).
@@ -1014,8 +1082,8 @@ function buildWorld() {
         const bkZCtr = BK_Z0 + bkSi * BK_SEG_Z + BK_SEG_Z * 0.5;
         let   segW   = BANK_W0 + BANK_AMP * Math.sin(bkZCtr * BANK_FREQ + bkPhase);
         if (segW < 2.2) segW = 2.2;
-        // Inner edge invariant: bkXCtr = side*(rw/2 + segW/2) keeps edge exactly at side*rw/2
-        const bkXCtr = bkSide * (rw / 2 + segW / 2);
+        // Bank pushed out by SHORE_W; apron fills the gap from rw/2 to rw/2+SHORE_W
+        const bkXCtr = bkSide * (rw / 2 + SHORE_W + segW / 2);
         var bkSegMat;
         if (stg.num === 1 && bankStageTex) {
           // Stage 1: pixel-art grass texture
@@ -1063,26 +1131,52 @@ function buildWorld() {
         bkSeg.position.set(bkXCtr, 0.30, bkZCtr);
         bkSeg.castShadow = true; bkSeg.receiveShadow = true;
         riverGroup.add(bkSeg);
+        bankSegs3.push({ mesh: bkSeg, side: bkSide, segW: segW });
+
+        // Sloped apron: build per-side so each has correct winding without scale.x=-1 inversion.
+        // outerX = bkSide * SHORE_W: right bank goes +x, left bank goes -x.
+        // Winding chosen so computeVertexNormals() produces normal pointing UP and toward water center.
+        //   right (bkSide=+1): [0,1,2,1,3,2] → normal (-0.53, +0.85, 0) toward -x and up
+        //   left  (bkSide=-1): [0,2,1,1,2,3] → normal (+0.53, +0.85, 0) toward +x and up
+        var _shHZ    = (BK_SEG_Z + 0.25) / 2;
+        var _shOuter = bkSide * SHORE_W;
+        var _shV = new Float32Array([
+          0,         SHORE_TOE_Y, _shHZ,
+          _shOuter,  0.60,        _shHZ,
+          0,         SHORE_TOE_Y, -_shHZ,
+          _shOuter,  0.60,        -_shHZ
+        ]);
+        var _shUV = new Float32Array([0, 1,  1, 1,  0, 0,  1, 0]);
+        var _shG = new THREE.BufferGeometry();
+        _shG.setAttribute('position', new THREE.BufferAttribute(_shV, 3));
+        _shG.setAttribute('uv',       new THREE.BufferAttribute(_shUV, 2));
+        _shG.setIndex(bkSide > 0 ? [0, 1, 2, 1, 3, 2] : [0, 2, 1, 1, 2, 3]);
+        _shG.computeVertexNormals();
+        var _shM = new THREE.Mesh(_shG, bkSegMat);
+        _shM.position.set(bkSide * (rw / 2), 0, bkZCtr);
+        _shM.receiveShadow = true;
+        riverGroup.add(_shM);
+        bankAprons3.push({ mesh: _shM, side: bkSide });
       }
     }
   }
 
-  // Lane dividers
-  const divMat = new THREE.LineBasicMaterial({ color: 0x93C5FD, transparent: true, opacity: 0.22 });
+  // Lane dividers -- geometry built at x=0; position.x set by applyRiverWidth()
+  const divMatBase = new THREE.LineBasicMaterial({ color: 0x93C5FD, transparent: true, opacity: 0.22 });
   for (let l = 1; l < curLanes; l++) {
-    const x  = -rw / 2 + l * LANE_W;
     const div = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, 0.04, SPAWN_Z - 5), new THREE.Vector3(x, 0.04, DESPAWN_Z)]),
-      divMat
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0.04, SPAWN_Z - 5), new THREE.Vector3(0, 0.04, DESPAWN_Z)]),
+      divMatBase.clone()
     );
     riverGroup.add(div);
+    laneDivs3.push({ line: div, idx: l });
   }
 
   addBankDecor(riverGroup, rw, stg);
   addShoreline3(riverGroup, rw, stg);
   scene.add(riverGroup);
   if (stg.backdrop && stg.num === 1) { initBankTrees3(rw, stg.backdrop); }
-  if (stg.backdrop && stg.num === 5) { initBankTrees3(rw, stg.backdrop, 16); }
+  if (stg.backdrop && stg.num === 5) { initBankTrees3(rw, stg.backdrop, S5_TREE_COUNT); initBankBoulders3(rw, S5_BOULDER_COUNT); }
   if (stg.backdrop && stg.num === 3) { initBankTrees3(rw, stg.backdrop, STAGE3_TREE_COUNT); }
   if (stg.num === 2) { initStage2RockyShores(rw); }
   else if (stg.num === 3) { initBankBoulders3(rw, STAGE3_BOULDER_COUNT); initBankHouses3(rw); }
@@ -1092,6 +1186,8 @@ function buildWorld() {
     addCanyonBackfill4(riverGroup, rw);
     console.log('[KRR S4 AUDIT] wallBoulders=' + canyonWalls4.length + ' otherBankBoulders=' + bankBoulders3.length);
   }
+  initBankPoppies3(rw);
+  applyRiverWidth();
 
   // Part 1: Current flow streaks -- z-aligned lines above the water surface (y=0.16).
   // Each streak is a short segment at a random x position with a slight downstream drift,
@@ -1185,6 +1281,9 @@ function addBankDecor(group, rw, stg) {
 // Foam: transparent strip just inside the water edge, renderOrder=3.
 // Rocks: small opaque BoxGeometry pebbles at the shoreline, y=0.16 (above water y=0.15).
 // Nothing extends more than 0.22 units into the water: no collision impact.
+var SHORE_SPECKS  = false;  // set true to restore static pebbles at water edge (all stages except 2)
+var SHORE_W       = 0.8;    // horizontal run of slope apron (tune Ctrl+Shift+F1/F2)
+var SHORE_TOE_Y   = 0.10;   // y where apron meets the water (water surface at 0.15); tune Ctrl+Shift+F3/F4
 var SHORE3_EDGE_COLOR   = 0x607848;  // Stage 3: damp green-brown bank edge (shows through water)
 var SHORE3_FOAM_COLOR   = 0xA8C490;  // Stage 3: muted green-tinted wet shoreline (no bright curb)
 var SHORE3_FOAM_OPACITY = 0.12;      // Stage 3: near-invisible foam so edge reads as natural lake
@@ -1200,20 +1299,67 @@ var S5_TERR_REPEAT_X = 12;   // Stage 5 swamp terrain X repeat (TEMP tuner; bake
 var S5_TERR_REPEAT_Y = 12;   // Stage 5 swamp terrain Y repeat
 var S5_TERR_SCROLL   = 1.0;  // Stage 5 swamp terrain scroll multiplier
 var S5_TERR_Y        = 0.0;  // Stage 5 swamp terrain UV seat (phase offset)
-// Stage 5 bank decoration spawn frequencies (relative to the halved tree pool of 16)
-// pool count = Math.max(1, Math.round(freq * 16)); tune by screenshot
+// Stage 5 bank decoration pool sizes (module-level; tunable live via Ctrl+F7-F12)
+var S5_POOL_BASE     = 8;   // decor pool multiplier (Ctrl+F11/-F12 tune)
+var S5_TREE_COUNT    = 16;  // bank tree count for stage 5 only (Ctrl+F9/F10)
+var S5_BOULDER_COUNT = 11;  // bank boulder count for stage 5 only (Ctrl+F7/F8)
+// Stage 5 bank decoration spawn frequencies (relative to S5_POOL_BASE)
+// pool count = Math.max(1, Math.round(freq * S5_POOL_BASE))
 var S5_FREQ_TREE_STUMP   = 0.60;   // semi-frequent ground clutter
 var S5_FREQ_FARMHOUSE    = 0.35;   // less common; farm-house-1 and farm-house-2 share this
 var S5_FREQ_FISHING      = 0.15;   // rare
-var S5_FREQ_BROKEN_CAR   = 0.08;   // rarest
 // Stage 5 bank decoration sprite heights (world units); aspect width computed from image
 var S5_STUMP_SCALE     = 2.5;
 var S5_FARMHOUSE_SCALE = 11.9;
 var S5_FARMHOUSE_SEAT_Y = -3.00; // bottom anchor Y; large negative corrects ~27% bottom padding in farm-house art; tune with , / . keys
 var S5_FISHING_SCALE   = 3.50;  // 2.0 base x 2.5 x 0.7
-var S5_CAR_SCALE       = 2.0;
 var S5_CART_SEAT_Y     = -0.20;  // bottom anchor Y; sinks lower ~third of cart below water surface (y=0.15)
 var S5_LOG_SEAT_Y      = -2.70;  // bottom anchor Y; corrects ~47-50% transparent bottom padding in fallen-log art; tune with ; / ' keys
+var OBS_CUTOFF_MILE = 161.5; // no new obstacles spawn at or past this mile
+// Stage 5 cinematic ending constants (tunable)
+var ENDING_DECEL_START    = 161.5; // mile where cosine decel curve begins (was 158; halved 7-mile ramp to 3.5)
+var ENDING_STOP_MILE      = 165;   // cosine curve endpoint (boat approaches zero speed)
+var ENDING_STOP_THRESH    = 0.02;  // beaching fires when speedMult drops below this
+var ENDING_WATER_START    = 161;   // mile where water starts receding (safely after last narrow at 160)
+var ENDING_WATER_GONE     = 164;   // mile where water is fully receded
+var ENDING_PAUSE_MS       = 3000;  // dead pause after boat beaches (ms)
+var ENDING_FADE_DUR_MS    = 1500;  // "Victory?" fade-in duration (ms)
+var ENDING_VICTORY_HOLD_MS = 2500; // hold time after "Victory?" is fully visible (ms) -- legacy, unused by new card
+var VICTORY_FONT_PX = 44;          // "Victory?" letter size in px; live-tune with F2 (down) / F3 (up)
+var ENDING_MSG_FADE_MS = 2500;     // final message fade-in duration (ms); tune with Shift+F2/F3
+// ── OBSTACLE GLB CONSTANTS ──────────────────────────────────────────
+// OBS_GLB_BRIGHT: color multiplier for MeshBasicMaterial (1.0 = full brightness).
+// <NAME>_SCALE: applied on top of auto-fit scale (rw / rawW for full-width, LANE_W / rawW for cart).
+// <NAME>_ROT_Y: radians; rotate if model faces a different axis.
+// <NAME>_SEAT_Y: Y of GLB clone inside its group (0 = base sits on water at group origin).
+// fallen_log note: world Y = S5_LOG_SEAT_Y + (LOG5_SEAT_Y - S5_LOG_SEAT_Y) = LOG5_SEAT_Y.
+var OBS_GLB_BRIGHT    = 1.0;
+var BRIDGE1_SCALE  = 1.0;  var BRIDGE1_ROT_Y  = 0;  var BRIDGE1_SEAT_Y  = 0.0;
+var RAFTERS2_SCALE = 0.90; var RAFTERS2_ROT_Y = 0;  var RAFTERS2_SEAT_Y = 0.0;
+var BRIDGE3_SCALE  = 1.0;  var BRIDGE3_ROT_Y  = 0;  var BRIDGE3_SEAT_Y  = 0.0;
+var TUBERS4_SCALE  = 1.0;  var TUBERS4_ROT_Y  = 0;  var TUBERS4_SEAT_Y  = 0.0;
+var LOG5_SCALE     = 1.0;  var LOG5_ROT_Y     = 0;  var LOG5_SEAT_Y     = 0.0;
+var CART5_SCALE    = 0.35; var CART5_ROT_Y    = 0;  var CART5_SEAT_Y    = 0.0;
+var _bridge1GlbLogged = false;  var _rafters2GlbLogged = false;
+var _bridge3GlbLogged = false;  var _tubers4GlbLogged  = false;
+var _log5GlbLogged    = false;  var _cart5GlbLogged    = false;
+var BOULDER_GLB_FILES  = ['boulder-2-lit.glb', 'boulder-3-lit.glb', 'boulder-5-lit.glb'];
+var BOULDER_GLB_SCALE  = [1.00, 1.25, 1.00];  // per-model tweak on top of lane fit; tune with F9/F10
+var BOULDER_GLB_SEAT_Y = 0.02;                 // clone local Y inside group; tune with F7/F8
+var _boulderTunerSel   = 0;                    // active index for F9/F10 scale tuner (F6 cycles)
+// Poppy bank constants
+var POPPY_BANK_OFF   = 0.95;  // distance from water edge to tuft anchor; tune F11/F12
+var POPPY_GAP_MIN    = 150;   // minimum z-gap between poppies on recycle
+var POPPY_GAP_RANGE  = 150;   // extra random gap range
+var POPPY_W          = 2.2;   // sprite width; height = 0.53*W; tune Shift+F11/F12
+var POPPY_SEAT_Y     = 0.52;  // y at sprite base (center(0.5,0)); tune Shift+F9/F10
+var POPPY_GLOW_SCALE = 1.4;   // glow blob scale multiplier (relative to POPPY_W)
+var POPPY_LEAN_ANG  = 0.38;  // max glbTorsoNode rotation.z toward bank on pickup
+var POPPY_LEAN_DUR  = 27;    // frames for reach animation (~0.45s at 60fps)
+var POPPY_REACH_Z   = -4.0;  // z where reach detection starts (poppy approaching; pops earlier than old COLL_FRONT)
+// ===== TEMP DEV ENDING-JUMP (REMOVE BEFORE LAUNCH) =====
+var ENDING_TEST_MILE = 155;
+// ===== END TEMP DEV ENDING-JUMP =====
 var FW2_SEAT_Y         = -7.50;  // Stage 2 raft_train sprite y-offset within group; corrects ~44% transparent bottom padding in tubing-obstacle-2.png; tune with f / r keys
 var FW4_SEAT_Y         = -4.55;  // Stage 4 old_mining_bridge donut-raft y-offset; asp=0.773, tr4H=11.38, seat=-(11.38*0.40); tune with l / s keys
 var FW1_SEAT_Y         = -8.55;  // Stage 1 fallen_sequoia bridge y-offset; piling legs dip ~0.58 below waterline; tune with 6 / 7 keys
@@ -1261,19 +1407,21 @@ function addShoreline3(rg, rw, stg) {
     foamMesh.renderOrder = 3;
     rg.add(foamMesh);
 
-    // Rocks scattered along the shoreline: 20 per side, random size + orientation
-    for (var rki = 0; rki < 20; rki++) {
-      var rkZ  = -65 + rki * 3.6 + (Math.random() - 0.5) * 2.8;
-      var rkX  = shX - shSide * (0.04 + Math.random() * 0.18);
-      var rkS  = 0.05 + Math.random() * 0.08;
-      var rkV  = Math.floor(Math.random() * 32);
-      var rkC  = 0x7A6955 + rkV * 0x010101;
-      var rkMt = new THREE.MeshLambertMaterial({ color: rkC });
-      var rkG  = new THREE.BoxGeometry(rkS, rkS * 0.55, rkS * (0.75 + Math.random() * 0.5));
-      var rkM  = new THREE.Mesh(rkG, rkMt);
-      rkM.position.set(rkX, 0.16, rkZ);
-      rkM.rotation.y = Math.random() * Math.PI;
-      rg.add(rkM);
+    // Rocks scattered along the shoreline (disabled by default; set SHORE_SPECKS=true to restore)
+    if (SHORE_SPECKS) {
+      for (var rki = 0; rki < 20; rki++) {
+        var rkZ  = -65 + rki * 3.6 + (Math.random() - 0.5) * 2.8;
+        var rkX  = shX - shSide * (0.04 + Math.random() * 0.18);
+        var rkS  = 0.05 + Math.random() * 0.08;
+        var rkV  = Math.floor(Math.random() * 32);
+        var rkC  = 0x7A6955 + rkV * 0x010101;
+        var rkMt = new THREE.MeshLambertMaterial({ color: rkC });
+        var rkG  = new THREE.BoxGeometry(rkS, rkS * 0.55, rkS * (0.75 + Math.random() * 0.5));
+        var rkM  = new THREE.Mesh(rkG, rkMt);
+        rkM.position.set(rkX, 0.16, rkZ);
+        rkM.rotation.y = Math.random() * Math.PI;
+        rg.add(rkM);
+      }
     }
   }
 }
@@ -1310,15 +1458,15 @@ function initBankTrees3(rw, bd, count) {
   for (var ti = 0; ti < TREE_COUNT; ti++) {
     var side    = ti % 2 === 0 ? -1 : 1;
     var variety = Math.floor(Math.random() * 4);
-    var xOff    = Math.floor(Math.random() * 4) * 1.8;
-    var xBase   = side * (rw / 2 + 1.4 + xOff);
+    var xOff    = 1.4 + Math.floor(Math.random() * 4) * 1.8;
+    var xBase   = side * (rw / 2 + SHORE_W + xOff);
     // Spread evenly across the full visible river length at start
     var zInit   = SPAWN_Z + (ti / TREE_COUNT) * (Math.abs(SPAWN_Z) + 12);
     var h       = makeBankTreeHeight(variety);
     var spr     = makeBankTreeSprite(variety, h);
     spr.position.set(xBase, 0.30, zInit);
     scene.add(spr);
-    bankTrees3.push({ sprite: spr, side: side, z: zInit });
+    bankTrees3.push({ sprite: spr, side: side, z: zInit, xOff: xOff });
   }
 }
 
@@ -1331,8 +1479,8 @@ function initBankBoulders3(rw, count) {
   for (var bi = 0; bi < BOULDER_COUNT; bi++) {
     var side   = bi % 2 === 0 ? -1 : 1;
     var texIdx = Math.floor(Math.random() * bankBoulderTex.length);
-    var xOff   = Math.floor(Math.random() * 4) * 1.6 + 0.3;
-    var xBase  = side * (rw / 2 + 1.0 + xOff);
+    var xOff   = 1.0 + Math.floor(Math.random() * 4) * 1.6 + 0.3;
+    var xBase  = side * (rw / 2 + SHORE_W + xOff);
     var zInit  = SPAWN_Z + (bi / BOULDER_COUNT) * (Math.abs(SPAWN_Z) + 12);
     var bH     = 1.2 + Math.random() * 1.6;
     var bW     = bH * (0.85 + Math.random() * 0.70);
@@ -1348,7 +1496,40 @@ function initBankBoulders3(rw, count) {
     spr.scale.set(bW, bH, 1);
     spr.position.set(xBase, 0, zInit);
     scene.add(spr);
-    bankBoulders3.push({ sprite: spr, side: side, z: zInit });
+    bankBoulders3.push({ sprite: spr, side: side, z: zInit, xOff: xOff, shoreW: SHORE_W });
+  }
+}
+
+function initBankPoppies3(rw) {
+  var POOL = 3;
+  for (var pi = 0; pi < POOL; pi++) {
+    var side  = (pi % 2 === 0) ? -1 : 1;
+    var tuftU = side === -1 ? 0.16 : 0.81;
+    var bloomU = side === -1 ? 0.80 : 0.19;
+    var tex   = side === -1 ? _poppyTexL : _poppyTexR;
+    var mat   = new THREE.SpriteMaterial({ map: tex || null, transparent: true, depthWrite: false });
+    var spr   = new THREE.Sprite(mat);
+    spr.center.set(0.5, 0);
+    spr.scale.set(POPPY_W, 0.53 * POPPY_W, 1);
+    // tuftX: the real-world x of the tuft anchor (no SHORE_W -- POPPY_BANK_OFF is absolute from water edge)
+    var tuftX = side * (rw / 2 + POPPY_BANK_OFF);
+    var zInit = SPAWN_Z - (POPPY_GAP_MIN + Math.random() * POPPY_GAP_RANGE) * (pi + 1);
+    spr.position.set(tuftX + (0.5 - tuftU) * POPPY_W, POPPY_SEAT_Y, zInit);
+    scene.add(spr);
+    // Glow sprite: centered on the bloom, additive blending, pulses each frame
+    var bloomX = tuftX + (bloomU - tuftU) * POPPY_W;
+    var bloomY = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
+    var glowMat = new THREE.SpriteMaterial({
+      map: _poppyGlowTex || null, transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.30
+    });
+    var glowSpr = new THREE.Sprite(glowMat);
+    glowSpr.center.set(0.5, 0.5);
+    glowSpr.scale.setScalar(POPPY_GLOW_SCALE * POPPY_W);
+    glowSpr.renderOrder = -1;
+    glowSpr.position.set(bloomX, bloomY, zInit);
+    scene.add(glowSpr);
+    bankPoppies3.push({ sprite: spr, glow: glowSpr, side: side, z: zInit, picked: false, claimed: false, tuftU: tuftU, bloomU: bloomU, glowFlareSt: 0 });
   }
 }
 
@@ -1552,8 +1733,8 @@ function initBankHouses3(rw) {
   for (var hi = 0; hi < STAGE3_HOUSE_COUNT; hi++) {
     var side   = hi % 2 === 0 ? -1 : 1;
     var texIdx = Math.floor(Math.random() * lakeHouseTex.length);
-    var xOff   = 2.0 + Math.random() * 4.0;    // set back 2-6 units behind the tree line
-    var xBase  = side * (rw / 2 + 4.0 + xOff); // minimum 4 units outside the play lane
+    var xOff   = 4.0 + 2.0 + Math.random() * 4.0;  // minimum 4 units outside play lane + 2-6 more
+    var xBase  = side * (rw / 2 + xOff);
     var zInit  = SPAWN_Z + (hi / STAGE3_HOUSE_COUNT) * (Math.abs(SPAWN_Z) + 12);
     var tex    = lakeHouseTex[texIdx];
     var mat;
@@ -1570,20 +1751,18 @@ function initBankHouses3(rw) {
     spr.scale.set(STAGE3_HOUSE_SCALE * hAspInit, STAGE3_HOUSE_SCALE, 1);
     spr.position.set(xBase, 0, zInit);
     scene.add(spr);
-    bankHouses3.push({ sprite: spr, side: side, z: zInit, texIdx: texIdx });
+    bankHouses3.push({ sprite: spr, side: side, z: zInit, texIdx: texIdx, xOff: xOff });
   }
 }
 
-// Stage 5 bank decoration: tree stumps, farm houses, fishing supplies, broken-down cars.
+// Stage 5 bank decoration: tree stumps, farm houses, fishing supplies.
 // All bottom-anchored (center.y=0), aspect-correct from naturalWidth/naturalHeight,
 // scattered on the banks (either side, outside the play channel), scrolling as a pool.
-// Pool count = Math.max(1, Math.round(S5_FREQ_* * 16)) where 16 is the halved tree pool.
+// Pool counts driven by module-level S5_POOL_BASE (tunable via Ctrl+F11/F12).
 function initBankDecor5(rw) {
-  var S5_POOL_BASE = 16;
-  var stumpCount = Math.max(1, Math.round(S5_FREQ_TREE_STUMP   * S5_POOL_BASE));  // ~10
-  var farmCount  = Math.max(1, Math.round(S5_FREQ_FARMHOUSE    * S5_POOL_BASE));  // ~6
-  var fishCount  = Math.max(1, Math.round(S5_FREQ_FISHING      * S5_POOL_BASE));  // ~2
-  var carCount   = Math.max(1, Math.round(S5_FREQ_BROKEN_CAR   * S5_POOL_BASE));  // ~1
+  var stumpCount = Math.max(1, Math.round(S5_FREQ_TREE_STUMP   * S5_POOL_BASE));
+  var farmCount  = Math.max(1, Math.round(S5_FREQ_FARMHOUSE    * S5_POOL_BASE));
+  var fishCount  = Math.max(1, Math.round(S5_FREQ_FISHING      * S5_POOL_BASE));
   var zSpan = Math.abs(SPAWN_Z) + 12;
 
   function makeDecorSpr(tex, fallbackCol) {
@@ -1594,12 +1773,10 @@ function initBankDecor5(rw) {
     spr.center.set(0.5, 0);
     return spr;
   }
-  function groundClutterX(rw5, side5) {
-    return side5 * (rw5 / 2 + 1.2 + Math.random() * 3.0);
-  }
-  function setbackX(rw5, side5) {
-    return side5 * (rw5 / 2 + 4.0 + 2.0 + Math.random() * 4.0);
-  }
+  function groundClutterXOff() { return 1.2 + Math.random() * 3.0; }
+  function groundClutterX(rw5, side5, off) { return side5 * (rw5 / 2 + SHORE_W + off); }
+  function setbackXOff() { return 6.0 + Math.random() * 4.0; }
+  function setbackX(rw5, side5, off) { return side5 * (rw5 / 2 + SHORE_W + off); }
 
   // Tree stumps (ground clutter, close to bank)
   for (var si = 0; si < stumpCount; si++) {
@@ -1609,11 +1786,12 @@ function initBankDecor5(rw) {
       ? sTex.image.naturalWidth / sTex.image.naturalHeight : 1.0;
     var sspr  = makeDecorSpr(sTex, 0x5A4A30);
     sspr.scale.set(S5_STUMP_SCALE * sAsp, S5_STUMP_SCALE, 1);
-    var sX = groundClutterX(rw, sSide);
+    var sXOff = groundClutterXOff();
+    var sX = groundClutterX(rw, sSide, sXOff);
     var sZ = SPAWN_Z + (si / stumpCount) * zSpan;
     sspr.position.set(sX, 0, sZ);
     scene.add(sspr);
-    bankStumps5.push({ sprite: sspr, side: sSide, z: sZ });
+    bankStumps5.push({ sprite: sspr, side: sSide, z: sZ, xOff: sXOff });
   }
 
   // Farm houses (largest, set back from water, alternating farm-house-1 and farm-house-2)
@@ -1625,11 +1803,12 @@ function initBankDecor5(rw) {
       ? fTex.image.naturalWidth / fTex.image.naturalHeight : 1.0;
     var fspr   = makeDecorSpr(fTex, 0xC8A870);
     fspr.scale.set(S5_FARMHOUSE_SCALE * fAsp, S5_FARMHOUSE_SCALE, 1);
-    var fX = setbackX(rw, fSide);
+    var fXOff = setbackXOff();
+    var fX = setbackX(rw, fSide, fXOff);
     var fZ = SPAWN_Z + (fi / farmCount) * zSpan;
     fspr.position.set(fX, S5_FARMHOUSE_SEAT_Y, fZ);
     scene.add(fspr);
-    bankFarms5.push({ sprite: fspr, side: fSide, z: fZ, texIdx: fTexI });
+    bankFarms5.push({ sprite: fspr, side: fSide, z: fZ, texIdx: fTexI, xOff: fXOff });
   }
 
   // Fishing supplies (ground clutter, close to bank)
@@ -1640,27 +1819,14 @@ function initBankDecor5(rw) {
       ? fsTex.image.naturalWidth / fsTex.image.naturalHeight : 1.0;
     var fsspr  = makeDecorSpr(fsTex, 0x8A7A60);
     fsspr.scale.set(S5_FISHING_SCALE * fsAsp, S5_FISHING_SCALE, 1);
-    var fsX = groundClutterX(rw, fsSide);
+    var fsXOff = groundClutterXOff();
+    var fsX = groundClutterX(rw, fsSide, fsXOff);
     var fsZ = SPAWN_Z + (fsi / fishCount) * zSpan;
     fsspr.position.set(fsX, 0, fsZ);
     scene.add(fsspr);
-    bankFishing5.push({ sprite: fsspr, side: fsSide, z: fsZ });
+    bankFishing5.push({ sprite: fsspr, side: fsSide, z: fsZ, xOff: fsXOff });
   }
 
-  // Broken-down cars (ground clutter, close to bank)
-  for (var ci = 0; ci < carCount; ci++) {
-    var cSide = ci % 2 === 0 ? -1 : 1;
-    var cTex  = carTex5;
-    var cAsp  = (cTex && cTex.image && cTex.image.naturalHeight > 0)
-      ? cTex.image.naturalWidth / cTex.image.naturalHeight : 1.0;
-    var cspr  = makeDecorSpr(cTex, 0x6A5A4A);
-    cspr.scale.set(S5_CAR_SCALE * cAsp, S5_CAR_SCALE, 1);
-    var cX = groundClutterX(rw, cSide);
-    var cZ = SPAWN_Z + (ci / Math.max(carCount, 1)) * zSpan;
-    cspr.position.set(cX, 0, cZ);
-    scene.add(cspr);
-    bankCars5.push({ sprite: cspr, side: cSide, z: cZ });
-  }
 }
 
 // Stage 2 (Upper Kern) only: dense boulder shoreline using bankBoulderTex sprites.
@@ -1705,7 +1871,7 @@ function initStage2RockyShores(rw) {
     spr.scale.set(bW * flipX, bH, 1);
     spr.position.set(xBase, bY, zInit);
     scene.add(spr);
-    bankBoulders3.push({ sprite: spr, side: side, z: zInit, spread: isPerim ? 'perimeter' : 'field' });
+    bankBoulders3.push({ sprite: spr, side: side, z: zInit, spread: isPerim ? 'perimeter' : 'field', xOff: xOff, shoreW: 0 });
   }
 }
 
@@ -2232,9 +2398,10 @@ var STROKE_PULL = 0.12;   // radians - fore/aft rock amplitude (secondary)
 var TORSO_ROCK  = 0.08;   // radians - counter-phase torso lean amplitude
 
 // GLB paddle animation state -- null until GLB loads (null = fallback box model is active)
-var glbPaddleGroup = null;
-var glbTorsoNode   = null;
-var strokePhase    = 0;
+var glbPaddleGroup       = null;
+var glbTorsoNode         = null;
+var strokePhase          = 0;
+var glbTorsoSquashFrames = 0;  // counts down from 8 on landing; drives JUMP_LAND_SQUASH decay
 var _strokeDbgTick = 0;  // throttle for per-frame stroke log
 
 if (typeof THREE.GLTFLoader === 'undefined') {
@@ -2264,7 +2431,7 @@ if (typeof THREE.GLTFLoader === 'undefined') {
           map:         m.emissiveMap || m.map || null,
           transparent: m.transparent || false,
           alphaTest:   m.alphaTest   || 0,
-          side:        m.side !== undefined ? m.side : THREE.DoubleSide
+          side:        THREE.DoubleSide  // always DoubleSide; FrontSide (=0) is not undefined so the old guard always chose FrontSide, causing back-face culling when the torso rocked
         });
         node.material.color.setScalar(KAYAKER_BRIGHT);
         var _bb = new THREE.Box3().setFromObject(node);
@@ -2345,6 +2512,76 @@ if (typeof THREE.GLTFLoader === 'undefined') {
     }
   );
 }
+
+// ── OBSTACLE GLB CACHE ───────────────────────────────────────────────
+// Pre-loads all obstacle GLBs at script start. Materials are converted to
+// MeshBasicMaterial so baked emissive textures render at full brightness
+// (no lighting washout from the ambient + sun lights in the scene).
+// makeObsMesh() clones from cache; sprite/geometry fallback used until loaded.
+function _preloadObsGlb(path) {
+  if (obsGlbCache.hasOwnProperty(path)) return;
+  obsGlbCache[path] = null; // null = loading in progress
+  if (typeof THREE.GLTFLoader === 'undefined') return;
+  var _ol = new THREE.GLTFLoader();
+  _ol.load(path, function(gltf) {
+    var mdl = gltf.scene;
+    var _rbb = new THREE.Box3().setFromObject(mdl);
+    var _rsz = new THREE.Vector3(); _rbb.getSize(_rsz);
+    mdl.traverse(function(nd) {
+      if (!nd.isMesh) return;
+      var om = nd.material;
+      nd.material = new THREE.MeshBasicMaterial({
+        map:         om.emissiveMap || om.map || null,
+        transparent: om.transparent || false,
+        alphaTest:   om.alphaTest   || 0,
+        side:        THREE.DoubleSide
+      });
+      nd.material.color.setScalar(OBS_GLB_BRIGHT);
+    });
+    mdl.userData.rawW = _rsz.x;
+    mdl.userData.rawH = _rsz.y;
+    mdl.userData.rawD = _rsz.z;
+    obsGlbCache[path] = mdl;
+    console.log('[KRR OBSGLB] ' + path + ' ready  rawW=' + _rsz.x.toFixed(3) + ' rawH=' + _rsz.y.toFixed(3) + ' rawD=' + _rsz.z.toFixed(3));
+  }, undefined, function(err) {
+    console.error('[KRR OBSGLB] load failed: ' + path, err);
+  });
+}
+function _cloneObsGlb(path) {
+  var c = obsGlbCache[path];
+  return c ? c.clone(true) : null;
+}
+_preloadObsGlb('stage-1-bridge-lit.glb');
+_preloadObsGlb('stage-2-rafters-lit.glb');
+_preloadObsGlb('stage-3-bridge-lit.glb');
+_preloadObsGlb('stage-4-tubers-lit.glb');
+_preloadObsGlb('stage-5-log-lit.glb');
+_preloadObsGlb('stage-5-cart-lit.glb');
+_preloadObsGlb('boulder-2-lit.glb');
+_preloadObsGlb('boulder-3-lit.glb');
+_preloadObsGlb('boulder-5-lit.glb');
+
+// ── POPPY BANK TEXTURES ──────────────────────────────────────────
+var _poppyTexL  = null, _poppyTexLP = null, _poppyTexLB = null;
+var _poppyTexR  = null, _poppyTexRP = null, _poppyTexRB = null;
+var _poppyGlowTex = null;
+(function() {
+  var _pldr = new THREE.TextureLoader();
+  function _pLoad(name, cb) {
+    _pldr.load(name, function(t) {
+      t.magFilter = THREE.NearestFilter;
+      t.minFilter = THREE.NearestFilter;
+      cb(t);
+    });
+  }
+  _pLoad('poppy-leftbank.png',               function(t) { _poppyTexL  = t; });
+  _pLoad('poppy-leftbank-picked.png?v=2',   function(t) { _poppyTexLP = t; });
+  _pLoad('poppy-leftbank-bloom.png?v=2',    function(t) { _poppyTexLB = t; });
+  _pLoad('poppy-rightbank.png',              function(t) { _poppyTexR  = t; });
+  _pLoad('poppy-rightbank-picked.png?v=2',  function(t) { _poppyTexRP = t; });
+  _pLoad('poppy-rightbank-bloom.png?v=2',   function(t) { _poppyTexRB = t; });
+  _pLoad('poppy-glow.png',                   function(t) { _poppyGlowTex = t; });
+})();
 
 // ── WATER LIFE: KAYAK WAKE + OBSTACLE RIPPLES (Part 3) ────────────
 // Created once at module level like playerGroup. Positioned each frame in updateVisuals3.
@@ -2500,15 +2737,6 @@ function makeCollMesh3(type) {
   let grp, mesh;
 
   switch (type) {
-    case 'poppy': {
-      grp = new THREE.Group();
-      const pMat = new THREE.MeshPhongMaterial({ color: 0xF97316, emissive: 0xEA580C, emissiveIntensity: 0.60, shininess: 60 });
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.085, 4, 8), pMat);
-      ring.rotation.x = Math.PI / 2; grp.add(ring);
-      const center = new THREE.Mesh(new THREE.SphereGeometry(0.10, 6, 4), new THREE.MeshPhongMaterial({ color: 0xFBBF24, emissive: 0xF59E0B, emissiveIntensity: 0.55, shininess: 80 }));
-      grp.add(center);
-      return grp;
-    }
     case 'golden_trout': {
       grp = new THREE.Group();
       const fMat = new THREE.MeshPhongMaterial({ color: 0xFBBF24, emissive: 0xD97706, emissiveIntensity: 0.45, shininess: 75 });
@@ -2616,129 +2844,187 @@ function makeObsMesh(type, fullWidth) {
     const grp = new THREE.Group();
 
     if (type === 'fallen_sequoia') {
-      if (bridge1Tex) {
-        var br1W = rw;
-        var br1H = br1W / bridge1Asp;
-        var br1Geo = new THREE.PlaneGeometry(br1W, br1H);
-        br1Geo.translate(0, br1H / 2, 0);
-        var br1Mat = new THREE.MeshBasicMaterial({ map: bridge1Tex, transparent: true, alphaTest: 0.05, depthWrite: false });
-        var br1Plane = new THREE.Mesh(br1Geo, br1Mat);
-        br1Plane.position.y = FW1_SEAT_Y;
-        br1Plane.renderOrder = 3;
-        grp.userData.bridgeSpriteMesh = br1Plane;
-        grp.add(br1Plane);
+      var _br1c = _cloneObsGlb('stage-1-bridge-lit.glb');
+      if (_br1c) {
+        var _br1raw = obsGlbCache['stage-1-bridge-lit.glb'].userData.rawW;
+        var _br1s = ((_br1raw > 0.01) ? (rw / _br1raw) : 1) * BRIDGE1_SCALE;
+        _br1c.scale.setScalar(_br1s);
+        _br1c.rotation.y = BRIDGE1_ROT_Y;
+        _br1c.position.y = BRIDGE1_SEAT_Y;
+        grp.add(_br1c);
+        if (!_bridge1GlbLogged) {
+          _bridge1GlbLogged = true;
+          var _br1bb = new THREE.Box3().setFromObject(grp); var _br1sz = new THREE.Vector3(); _br1bb.getSize(_br1sz);
+          console.log('[KRR OBSGLB] stage-1-bridge world W=' + _br1sz.x.toFixed(3) + ' H=' + _br1sz.y.toFixed(3) + ' D=' + _br1sz.z.toFixed(3) + ' scale=' + _br1s.toFixed(4) + ' seatY=' + BRIDGE1_SEAT_Y);
+        }
       } else {
-        const logGeo = new THREE.CylinderGeometry(0.30, 0.38, rw + 1.4, 6);
-        logGeo.rotateZ(Math.PI / 2);
-        const log = new THREE.Mesh(logGeo, lm(0x78350F));
-        log.position.y = 0.34; grp.add(log);
-        const topGeo = new THREE.CylinderGeometry(0.31, 0.31, rw + 1.4, 6);
-        topGeo.rotateZ(Math.PI / 2);
-        const top = new THREE.Mesh(topGeo, lm(0x92400E));
-        top.position.set(0, 0.60, 0); top.scale.y = 0.18; grp.add(top);
-        for (const sx of [-(rw / 2 + 0.55), rw / 2 + 0.55]) {
-          const endGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.07, 6);
-          const end = new THREE.Mesh(endGeo, lm(0x5C2002));
-          end.rotation.z = Math.PI / 2; end.position.set(sx, 0.34, 0); grp.add(end);
+        // Sprite fallback until GLB loads
+        if (bridge1Tex) {
+          var br1W = rw;
+          var br1H = br1W / bridge1Asp;
+          var br1Geo = new THREE.PlaneGeometry(br1W, br1H);
+          br1Geo.translate(0, br1H / 2, 0);
+          var br1Mat = new THREE.MeshBasicMaterial({ map: bridge1Tex, transparent: true, alphaTest: 0.05, depthWrite: false });
+          var br1Plane = new THREE.Mesh(br1Geo, br1Mat);
+          br1Plane.position.y = FW1_SEAT_Y;
+          br1Plane.renderOrder = 3;
+          grp.userData.bridgeSpriteMesh = br1Plane;
+          grp.add(br1Plane);
+        } else {
+          const logGeo = new THREE.CylinderGeometry(0.30, 0.38, rw + 1.4, 6);
+          logGeo.rotateZ(Math.PI / 2);
+          const log = new THREE.Mesh(logGeo, lm(0x78350F));
+          log.position.y = 0.34; grp.add(log);
+          const topGeo = new THREE.CylinderGeometry(0.31, 0.31, rw + 1.4, 6);
+          topGeo.rotateZ(Math.PI / 2);
+          const top = new THREE.Mesh(topGeo, lm(0x92400E));
+          top.position.set(0, 0.60, 0); top.scale.y = 0.18; grp.add(top);
+          for (const sx of [-(rw / 2 + 0.55), rw / 2 + 0.55]) {
+            const endGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.07, 6);
+            const end = new THREE.Mesh(endGeo, lm(0x5C2002));
+            end.rotation.z = Math.PI / 2; end.position.set(sx, 0.34, 0); grp.add(end);
+          }
         }
       }
 
     } else if (type === 'raft_train') {
-      if (raftTrainTex) {
-        var rtW = rw;
-        var rtH = rtW / raftTrainAsp;
-        // Plane: fixed orientation (normal +Z toward camera), bottom-anchored via geometry translate.
-        // depthWrite:false avoids depth-buffer occlusion through transparent pixels.
-        var rtGeo = new THREE.PlaneGeometry(rtW, rtH);
-        rtGeo.translate(0, rtH / 2, 0);
-        var rtMat = new THREE.MeshBasicMaterial({ map: raftTrainTex, transparent: true, alphaTest: 0.05, depthWrite: false });
-        var rtPlane = new THREE.Mesh(rtGeo, rtMat);
-        rtPlane.position.y = FW2_SEAT_Y;
-        rtPlane.renderOrder = 3;
-        // Hull strip: thin low strip at waterline base of visible art.
-        // Visible art occupies top 56% of portrait; its base is at FW2_SEAT_Y + rtH*0.44.
-        // Strip TOP anchored there; strip CENTER at TOP - FW_HULL_H/2. Subtle -- NOT a wall.
-        var rtHullBaseOff = rtH * 0.44;
-        var rtHullGeo = new THREE.BoxGeometry(rtW * 0.9, FW_HULL_H, FW_HULL_D);
-        var rtHullMat = new THREE.MeshBasicMaterial({ color: FW_HULL_TINT });
-        var rtHull = new THREE.Mesh(rtHullGeo, rtHullMat);
-        rtHull.position.set(0, FW2_SEAT_Y + rtHullBaseOff - FW_HULL_H / 2, -FW_HULL_D / 2);
-        rtHull.renderOrder = 2;
-        grp.userData.raftSpriteGroup = true;
-        grp.userData.raftSpriteMesh  = rtPlane;       // ref for seat tuner (.position.y)
-        grp.userData.raftHullMesh    = rtHull;        // ref for hull tuner
-        grp.userData.raftHullBaseOff = rtHullBaseOff; // rtH*0.44; used by seat and hull tuners
-        grp.add(rtHull);
-        grp.add(rtPlane);
+      var _rt2c = _cloneObsGlb('stage-2-rafters-lit.glb');
+      if (_rt2c) {
+        var _rt2raw = obsGlbCache['stage-2-rafters-lit.glb'].userData.rawW;
+        var _rt2s = ((_rt2raw > 0.01) ? (rw / _rt2raw) : 1) * RAFTERS2_SCALE;
+        _rt2c.scale.setScalar(_rt2s);
+        _rt2c.rotation.y = RAFTERS2_ROT_Y;
+        _rt2c.position.y = RAFTERS2_SEAT_Y;
+        grp.add(_rt2c);
+        if (!_rafters2GlbLogged) {
+          _rafters2GlbLogged = true;
+          var _rt2bb = new THREE.Box3().setFromObject(grp); var _rt2sz = new THREE.Vector3(); _rt2bb.getSize(_rt2sz);
+          console.log('[KRR OBSGLB] stage-2-rafters world W=' + _rt2sz.x.toFixed(3) + ' H=' + _rt2sz.y.toFixed(3) + ' D=' + _rt2sz.z.toFixed(3) + ' scale=' + _rt2s.toFixed(4) + ' seatY=' + RAFTERS2_SEAT_Y);
+        }
       } else {
-        // Geometry fallback until texture loads (identical to original raft_train branch)
-        var raftWf = rw * 0.28;
-        for (var rfi = 0; rfi < 3; rfi++) {
-          var rxf = -rw * 0.29 + rfi * rw * 0.29;
-          var raftf = new THREE.Mesh(new THREE.BoxGeometry(raftWf - 0.12, 0.12, 0.72), lm(0x92400E));
-          raftf.position.set(rxf, 0.06, 0); grp.add(raftf);
-          var deckf = new THREE.Mesh(new THREE.BoxGeometry(raftWf - 0.14, 0.04, 0.70), lm(0xB45309));
-          deckf.position.set(rxf, 0.14, 0); grp.add(deckf);
-          if (rfi < 2) {
-            var ropeGf = new THREE.CylinderGeometry(0.026, 0.026, 0.22, 4);
-            ropeGf.rotateZ(Math.PI / 2);
-            var ropef = new THREE.Mesh(ropeGf, lm(0x78350F));
-            ropef.position.set(rxf + raftWf * 0.5 + 0.11, 0.06, 0); grp.add(ropef);
+        // Sprite fallback until GLB loads
+        if (raftTrainTex) {
+          var rtW = rw;
+          var rtH = rtW / raftTrainAsp;
+          var rtGeo = new THREE.PlaneGeometry(rtW, rtH);
+          rtGeo.translate(0, rtH / 2, 0);
+          var rtMat = new THREE.MeshBasicMaterial({ map: raftTrainTex, transparent: true, alphaTest: 0.05, depthWrite: false });
+          var rtPlane = new THREE.Mesh(rtGeo, rtMat);
+          rtPlane.position.y = FW2_SEAT_Y;
+          rtPlane.renderOrder = 3;
+          var rtHullBaseOff = rtH * 0.44;
+          var rtHullGeo = new THREE.BoxGeometry(rtW * 0.9, FW_HULL_H, FW_HULL_D);
+          var rtHullMat = new THREE.MeshBasicMaterial({ color: FW_HULL_TINT });
+          var rtHull = new THREE.Mesh(rtHullGeo, rtHullMat);
+          rtHull.position.set(0, FW2_SEAT_Y + rtHullBaseOff - FW_HULL_H / 2, -FW_HULL_D / 2);
+          rtHull.renderOrder = 2;
+          grp.userData.raftSpriteGroup = true;
+          grp.userData.raftSpriteMesh  = rtPlane;
+          grp.userData.raftHullMesh    = rtHull;
+          grp.userData.raftHullBaseOff = rtHullBaseOff;
+          grp.add(rtHull);
+          grp.add(rtPlane);
+        } else {
+          var raftWf = rw * 0.28;
+          for (var rfi = 0; rfi < 3; rfi++) {
+            var rxf = -rw * 0.29 + rfi * rw * 0.29;
+            var raftf = new THREE.Mesh(new THREE.BoxGeometry(raftWf - 0.12, 0.12, 0.72), lm(0x92400E));
+            raftf.position.set(rxf, 0.06, 0); grp.add(raftf);
+            var deckf = new THREE.Mesh(new THREE.BoxGeometry(raftWf - 0.14, 0.04, 0.70), lm(0xB45309));
+            deckf.position.set(rxf, 0.14, 0); grp.add(deckf);
+            if (rfi < 2) {
+              var ropeGf = new THREE.CylinderGeometry(0.026, 0.026, 0.22, 4);
+              ropeGf.rotateZ(Math.PI / 2);
+              var ropef = new THREE.Mesh(ropeGf, lm(0x78350F));
+              ropef.position.set(rxf + raftWf * 0.5 + 0.11, 0.06, 0); grp.add(ropef);
+            }
           }
         }
       }
 
     } else if (type === 'pontoon_party') {
-      if (bridge2Tex) {
-        var br2W = rw * FW3_WIDTH_MULT;
-        var br2H = (rw / bridge2Asp) * FW3_HEIGHT_MULT;
-        var br2Geo = new THREE.PlaneGeometry(br2W, br2H);
-        br2Geo.translate(0, br2H / 2, 0);
-        var br2Mat = new THREE.MeshBasicMaterial({ map: bridge2Tex, transparent: true, alphaTest: 0.05, depthWrite: false });
-        var br2Plane = new THREE.Mesh(br2Geo, br2Mat);
-        br2Plane.position.y = FW3_SEAT_Y;
-        br2Plane.renderOrder = 3;
-        grp.userData.bridgeSpriteMesh3 = br2Plane;
-        grp.add(br2Plane);
+      var _br3c = _cloneObsGlb('stage-3-bridge-lit.glb');
+      if (_br3c) {
+        var _br3raw = obsGlbCache['stage-3-bridge-lit.glb'].userData.rawW;
+        var _br3s = ((_br3raw > 0.01) ? (rw / _br3raw) : 1) * BRIDGE3_SCALE;
+        _br3c.scale.setScalar(_br3s);
+        _br3c.rotation.y = BRIDGE3_ROT_Y;
+        _br3c.position.y = BRIDGE3_SEAT_Y;
+        grp.add(_br3c);
+        if (!_bridge3GlbLogged) {
+          _bridge3GlbLogged = true;
+          var _br3bb = new THREE.Box3().setFromObject(grp); var _br3sz = new THREE.Vector3(); _br3bb.getSize(_br3sz);
+          console.log('[KRR OBSGLB] stage-3-bridge world W=' + _br3sz.x.toFixed(3) + ' H=' + _br3sz.y.toFixed(3) + ' D=' + _br3sz.z.toFixed(3) + ' scale=' + _br3s.toFixed(4) + ' seatY=' + BRIDGE3_SEAT_Y);
+        }
       } else {
-        const plat = new THREE.Mesh(new THREE.BoxGeometry(rw + 0.9, 0.12, 0.82), lm(0x1D4ED8));
-        plat.position.y = 0.06; grp.add(plat);
-        const deck = new THREE.Mesh(new THREE.BoxGeometry(rw + 0.9, 0.04, 0.82), lm(0xEFF6FF));
-        deck.position.y = 0.14; grp.add(deck);
-        const bColors = [0xF97316, 0xFBBF24, 0x34D399, 0xF472B6];
-        const spacing = rw / 3.5;
-        for (let i = 0; i < 4; i++) {
-          const bx = -rw * 0.33 + i * spacing;
-          const balloon = new THREE.Mesh(new THREE.SphereGeometry(0.19, 6, 5), lm(bColors[i]));
-          balloon.position.set(bx, 0.52, 0); grp.add(balloon);
-          const str = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.22, 0.022), lm(0x9CA3AF));
-          str.position.set(bx, 0.29, 0); grp.add(str);
+        // Sprite fallback until GLB loads
+        if (bridge2Tex) {
+          var br2W = rw * FW3_WIDTH_MULT;
+          var br2H = (rw / bridge2Asp) * FW3_HEIGHT_MULT;
+          var br2Geo = new THREE.PlaneGeometry(br2W, br2H);
+          br2Geo.translate(0, br2H / 2, 0);
+          var br2Mat = new THREE.MeshBasicMaterial({ map: bridge2Tex, transparent: true, alphaTest: 0.05, depthWrite: false });
+          var br2Plane = new THREE.Mesh(br2Geo, br2Mat);
+          br2Plane.position.y = FW3_SEAT_Y;
+          br2Plane.renderOrder = 3;
+          grp.userData.bridgeSpriteMesh3 = br2Plane;
+          grp.add(br2Plane);
+        } else {
+          const plat = new THREE.Mesh(new THREE.BoxGeometry(rw + 0.9, 0.12, 0.82), lm(0x1D4ED8));
+          plat.position.y = 0.06; grp.add(plat);
+          const deck = new THREE.Mesh(new THREE.BoxGeometry(rw + 0.9, 0.04, 0.82), lm(0xEFF6FF));
+          deck.position.y = 0.14; grp.add(deck);
+          const bColors = [0xF97316, 0xFBBF24, 0x34D399, 0xF472B6];
+          const spacing = rw / 3.5;
+          for (let i = 0; i < 4; i++) {
+            const bx = -rw * 0.33 + i * spacing;
+            const balloon = new THREE.Mesh(new THREE.SphereGeometry(0.19, 6, 5), lm(bColors[i]));
+            balloon.position.set(bx, 0.52, 0); grp.add(balloon);
+            const str = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.22, 0.022), lm(0x9CA3AF));
+            str.position.set(bx, 0.29, 0); grp.add(str);
+          }
         }
       }
 
     } else if (type === 'old_mining_bridge') {
-      if (tubeRaftTex) {
-        var tr4W = rw;
-        var tr4H = tr4W / tubeRaftAsp;
-        var tr4Geo = new THREE.PlaneGeometry(tr4W, tr4H);
-        tr4Geo.translate(0, tr4H / 2, 0);
-        var tr4Mat = new THREE.MeshBasicMaterial({ map: tubeRaftTex, transparent: true, alphaTest: 0.05, depthWrite: false });
-        var tr4Plane = new THREE.Mesh(tr4Geo, tr4Mat);
-        tr4Plane.position.y = FW4_SEAT_Y;
-        tr4Plane.renderOrder = 3;
-        grp.userData.mineSpriteMesh = tr4Plane;
-        grp.add(tr4Plane);
-      } else {
-        const main = new THREE.Mesh(new THREE.BoxGeometry(rw + 1.3, 0.16, 0.58), lm(0x44403C));
-        main.position.y = 0.42; grp.add(main);
-        const rail = new THREE.Mesh(new THREE.BoxGeometry(rw + 1.3, 0.08, 0.08), lm(0x78350F));
-        rail.position.y = 0.54; grp.add(rail);
-        for (const sx of [-(rw / 2 + 0.52), rw / 2 + 0.52]) {
-          const post = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.72, 0.19), lm(0x292524));
-          post.position.set(sx, 0.36, 0); grp.add(post);
+      var _tb4c = _cloneObsGlb('stage-4-tubers-lit.glb');
+      if (_tb4c) {
+        var _tb4raw = obsGlbCache['stage-4-tubers-lit.glb'].userData.rawW;
+        var _tb4s = ((_tb4raw > 0.01) ? (rw / _tb4raw) : 1) * TUBERS4_SCALE;
+        _tb4c.scale.setScalar(_tb4s);
+        _tb4c.rotation.y = TUBERS4_ROT_Y;
+        _tb4c.position.y = TUBERS4_SEAT_Y;
+        grp.add(_tb4c);
+        if (!_tubers4GlbLogged) {
+          _tubers4GlbLogged = true;
+          var _tb4bb = new THREE.Box3().setFromObject(grp); var _tb4sz = new THREE.Vector3(); _tb4bb.getSize(_tb4sz);
+          console.log('[KRR OBSGLB] stage-4-tubers world W=' + _tb4sz.x.toFixed(3) + ' H=' + _tb4sz.y.toFixed(3) + ' D=' + _tb4sz.z.toFixed(3) + ' scale=' + _tb4s.toFixed(4) + ' seatY=' + TUBERS4_SEAT_Y);
         }
-        const crossbar = new THREE.Mesh(new THREE.BoxGeometry(rw + 1.3, 0.07, 0.07), lm(0x1C1917));
-        crossbar.position.y = 0.11; grp.add(crossbar);
+      } else {
+        // Sprite fallback until GLB loads
+        if (tubeRaftTex) {
+          var tr4W = rw;
+          var tr4H = tr4W / tubeRaftAsp;
+          var tr4Geo = new THREE.PlaneGeometry(tr4W, tr4H);
+          tr4Geo.translate(0, tr4H / 2, 0);
+          var tr4Mat = new THREE.MeshBasicMaterial({ map: tubeRaftTex, transparent: true, alphaTest: 0.05, depthWrite: false });
+          var tr4Plane = new THREE.Mesh(tr4Geo, tr4Mat);
+          tr4Plane.position.y = FW4_SEAT_Y;
+          tr4Plane.renderOrder = 3;
+          grp.userData.mineSpriteMesh = tr4Plane;
+          grp.add(tr4Plane);
+        } else {
+          const main = new THREE.Mesh(new THREE.BoxGeometry(rw + 1.3, 0.16, 0.58), lm(0x44403C));
+          main.position.y = 0.42; grp.add(main);
+          const rail = new THREE.Mesh(new THREE.BoxGeometry(rw + 1.3, 0.08, 0.08), lm(0x78350F));
+          rail.position.y = 0.54; grp.add(rail);
+          for (const sx of [-(rw / 2 + 0.52), rw / 2 + 0.52]) {
+            const post = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.72, 0.19), lm(0x292524));
+            post.position.set(sx, 0.36, 0); grp.add(post);
+          }
+          const crossbar = new THREE.Mesh(new THREE.BoxGeometry(rw + 1.3, 0.07, 0.07), lm(0x1C1917));
+          crossbar.position.y = 0.11; grp.add(crossbar);
+        }
       }
 
     } else if (type === 'tube_float_parade') {
@@ -2775,10 +3061,27 @@ function makeObsMesh(type, fullWidth) {
     return rwGrp;
   }
   if (type === 'boulder') {
-    // scale(1.60, 1.60): ~73% of lane width (LANE_W=2.2), visually fills the lane.
-    // center(0.5, 0): bottom-anchored so yPos=0.08 puts the base just at the waterline.
+    // GLB first (BOULDER_GLB_FILES); sprite fallback until cache is populated.
+    // scale = (LANE_W / rawW) * BOULDER_GLB_SCALE[i] fits the model to one lane.
     // Collision is single-lane/z-range -- unchanged in checkCollisions3().
-    // renderOrder=3 renders above water (renderOrder=2).
+    var bGlbI     = Math.floor(Math.random() * BOULDER_GLB_FILES.length);
+    var bGlbPath  = BOULDER_GLB_FILES[bGlbI];
+    var bGlbClone = _cloneObsGlb(bGlbPath);
+    if (bGlbClone) {
+      var bGlbRaw = obsGlbCache[bGlbPath].userData.rawW;
+      var bGlbS   = (bGlbRaw > 0.01 ? (LANE_W / bGlbRaw) : 1) * BOULDER_GLB_SCALE[bGlbI];
+      bGlbClone.scale.setScalar(bGlbS);
+      bGlbClone.rotation.y = Math.random() * Math.PI * 2;
+      bGlbClone.position.y = BOULDER_GLB_SEAT_Y;
+      var bGlbGrp = new THREE.Group();
+      bGlbGrp.userData.isBoulderGlb  = true;
+      bGlbGrp.userData.boulderGlbIdx = bGlbI;
+      bGlbGrp.userData.boulderGlbRaw = bGlbRaw;
+      bGlbGrp.userData.boulderLanes  = 1;
+      bGlbGrp.add(bGlbClone);
+      return bGlbGrp;
+    }
+    // Sprite fallback while GLBs are still loading
     var bIdx = Math.floor(Math.random() * boulderObsTex.length);
     var bTex = boulderObsTex[bIdx];
     var bMat;
@@ -2794,10 +3097,27 @@ function makeObsMesh(type, fullWidth) {
     return bSpr;
   }
   if (type === 'boulder_wide') {
-    // 2-lane boulder: sprite spans two adjacent lanes (~LANE_W*1.85 wide, 1.9 tall).
-    // center(0.5, 0): bottom-anchored at yPos=0.08 so base sits at the waterline.
+    // GLB first; sprite fallback until cache is populated.
+    // scale = ((LANE_W * 2) / rawW) * BOULDER_GLB_SCALE[i] fits the model to two lanes.
     // Collision handled by lane + lane2 check in checkCollisions3().
-    // renderOrder=3 renders above water.
+    var bwGlbI     = Math.floor(Math.random() * BOULDER_GLB_FILES.length);
+    var bwGlbPath  = BOULDER_GLB_FILES[bwGlbI];
+    var bwGlbClone = _cloneObsGlb(bwGlbPath);
+    if (bwGlbClone) {
+      var bwGlbRaw = obsGlbCache[bwGlbPath].userData.rawW;
+      var bwGlbS   = (bwGlbRaw > 0.01 ? ((LANE_W * 2) / bwGlbRaw) : 1) * BOULDER_GLB_SCALE[bwGlbI];
+      bwGlbClone.scale.setScalar(bwGlbS);
+      bwGlbClone.rotation.y = Math.random() * Math.PI * 2;
+      bwGlbClone.position.y = BOULDER_GLB_SEAT_Y;
+      var bwGlbGrp = new THREE.Group();
+      bwGlbGrp.userData.isBoulderGlb  = true;
+      bwGlbGrp.userData.boulderGlbIdx = bwGlbI;
+      bwGlbGrp.userData.boulderGlbRaw = bwGlbRaw;
+      bwGlbGrp.userData.boulderLanes  = 2;
+      bwGlbGrp.add(bwGlbClone);
+      return bwGlbGrp;
+    }
+    // Sprite fallback while GLBs are still loading
     var bwIdx = Math.floor(Math.random() * boulderObsTex.length);
     var bwTex = boulderObsTex[bwIdx];
     var bwMat;
@@ -2866,6 +3186,27 @@ function makeObsMesh(type, fullWidth) {
     return grp;
   }
   if (type === 'shopping_cart') {
+    var _ct5c = _cloneObsGlb('stage-5-cart-lit.glb');
+    if (_ct5c) {
+      var _ct5grp = new THREE.Group();
+      var _ct5raw = obsGlbCache['stage-5-cart-lit.glb'].userData.rawW;
+      var _ct5s = ((_ct5raw > 0.01) ? (LANE_W / _ct5raw) : 1) * CART5_SCALE;
+      _ct5c.scale.setScalar(_ct5s);
+      // Per-spawn random orientation: each cart faces a different direction.
+      // CART5_ROT_Y is a global bias (default 0); Math.random() adds per-instance variation.
+      _ct5c.rotation.y = CART5_ROT_Y + Math.random() * Math.PI * 2;
+      // Small random tilt so they look haphazardly dumped rather than neatly placed.
+      _ct5c.rotation.z = (Math.random() - 0.5) * 0.4;
+      _ct5c.position.y = CART5_SEAT_Y;
+      _ct5grp.add(_ct5c);
+      if (!_cart5GlbLogged) {
+        _cart5GlbLogged = true;
+        var _ct5bb = new THREE.Box3().setFromObject(_ct5grp); var _ct5sz = new THREE.Vector3(); _ct5bb.getSize(_ct5sz);
+        console.log('[KRR OBSGLB] stage-5-cart world W=' + _ct5sz.x.toFixed(3) + ' H=' + _ct5sz.y.toFixed(3) + ' D=' + _ct5sz.z.toFixed(3) + ' scale=' + _ct5s.toFixed(4) + ' seatY=' + CART5_SEAT_Y + ' groupY=S5_CART_SEAT_Y=' + S5_CART_SEAT_Y);
+      }
+      return _ct5grp;
+    }
+    // Sprite fallback until GLB loads
     var cIdx = Math.floor(Math.random() * cartTex5Obs.length);
     var cTex = cartTex5Obs[cIdx];
     var cMat;
@@ -2882,10 +3223,30 @@ function makeObsMesh(type, fullWidth) {
     return cSpr;
   }
   if (type === 'fallen_log') {
-    // Sprite spans (curLanes-1) lanes; gap lane is one edge lane.
-    // Width forced to the blocked span; height derived from cached aspect ratio.
-    // fallenLogAlt5 was already incremented by spawnObs3 before this call.
-    var lgIdx = fallenLogAlt5 % 2;
+    // fallenLogAlt5 already incremented by spawnObs3 before this call.
+    var lgIdx = fallenLogAlt5 % 2; // 0 = gap-right (default), 1 = gap-left (mirror X)
+    var _lg5c = _cloneObsGlb('stage-5-log-lit.glb');
+    if (_lg5c) {
+      var _lg5grp = new THREE.Group();
+      var lgTargetW = (curLanes - 1) * LANE_W;
+      var _lg5raw = obsGlbCache['stage-5-log-lit.glb'].userData.rawW;
+      var _lg5s = ((_lg5raw > 0.01) ? (lgTargetW / _lg5raw) : 1) * LOG5_SCALE;
+      _lg5c.scale.setScalar(_lg5s);
+      // Mirror X for gap-left: roots face right when scale.x is negated.
+      if (lgIdx === 1) _lg5c.scale.x = -_lg5s;
+      _lg5c.rotation.y = LOG5_ROT_Y;
+      // spawnObs3 places this group at S5_LOG_SEAT_Y. Compensate so the
+      // model base lands at LOG5_SEAT_Y (default 0.0 = on the water surface).
+      _lg5c.position.y = LOG5_SEAT_Y - S5_LOG_SEAT_Y;
+      _lg5grp.add(_lg5c);
+      if (!_log5GlbLogged) {
+        _log5GlbLogged = true;
+        var _lg5bb = new THREE.Box3().setFromObject(_lg5grp); var _lg5sz = new THREE.Vector3(); _lg5bb.getSize(_lg5sz);
+        console.log('[KRR OBSGLB] stage-5-log world W=' + _lg5sz.x.toFixed(3) + ' H=' + _lg5sz.y.toFixed(3) + ' D=' + _lg5sz.z.toFixed(3) + ' scale=' + _lg5s.toFixed(4) + ' mirror=' + (lgIdx === 1) + ' worldY=' + LOG5_SEAT_Y);
+      }
+      return _lg5grp;
+    }
+    // Sprite fallback until GLB loads
     var lgTex = fallenLogTex5[lgIdx];
     var lgMat;
     if (lgTex) {
@@ -2921,6 +3282,22 @@ let transMsg3   = null;
 let frameN      = 0;
 let camXSmooth  = 0;
 let endingSpeedMult = 1.0;
+var endingBeachStartMs   = 0;     // Date.now() when beaching phase started
+var endingCinematicFired = false; // prevents double-trigger of ending dialog
+var victoryEl3           = null;  // reference to the active victory card div (for cleanup)
+var _victoryCancelFn     = null;  // set by buildVictoryCard3; called by startGame3 to abort the rAF loop
+var _poppyReachSide      = 0;    // -1 or +1; which bank side was reached for
+var _poppyReachFrame     = 0;    // counts down from POPPY_LEAN_DUR; 0 = animation done
+var _poppyReachPp        = null; // pool entry currently being reached for
+var _poppyReachApexFired = false; // true once the apex effect (texture/bloom/shield) has fired
+
+var narrowing        = false;    // true while a sub-narrow squeeze is animating
+var narrowFromRw     = 0;        // rwCur at the moment narrowing began
+var narrowToRw       = 0;        // target rwCur (= narrowToLanes * LANE_W)
+var narrowStartMile  = 0;        // curMile3 when narrowing began
+var narrowToLanes    = 0;        // lane count after the squeeze
+var narrowToObsFreq  = 0;        // obsFreq to apply after the squeeze
+var narrowFromLanes  = 0;        // curLanes at the moment narrowing began
 
 const player3 = {
   lane: 3, targetLane: 3, x: 0,
@@ -2933,8 +3310,10 @@ let collectibles3 = [];
 
 // ── STAGE MANAGEMENT ─────────────────────────────────────────────
 function applyStage3(idx, msg) {
+  narrowing   = false;
   stageIdx    = idx;
   curLanes    = STAGES3[idx].lanes;
+  rwCur       = curLanes * LANE_W;
   curSpeed3   = STAGES3[idx].speed;
   curObsFreq3 = STAGES3[idx].obsFreq;
   endingSpeedMult = 1.0;
@@ -3015,7 +3394,6 @@ function flash3(text, life) {
 function pickCollType3() {
   const stg = STAGES3[stageIdx];
   const r   = Math.random();
-  if (r < 0.12) return 'poppy';
   if (r < 0.22) return stg.collB;
   return stg.collA;
 }
@@ -3101,10 +3479,22 @@ function spawnColl3() {
 function update3() {
   frameN++;
 
-  // Gradual slowdown approaching the end
-  if (curMile3 >= 163) {
-    const t = Math.min(1, (curMile3 - 163) / 2);
-    endingSpeedMult = Math.max(0.15, 1 - t * 0.85);
+  // Stage 5 cinematic deceleration: cosine ease from ENDING_DECEL_START down to ~0
+  if (stageIdx === 4 && curMile3 >= ENDING_DECEL_START) {
+    var _edT = Math.min(1, (curMile3 - ENDING_DECEL_START) / (ENDING_STOP_MILE - ENDING_DECEL_START));
+    endingSpeedMult = (1 + Math.cos(_edT * Math.PI)) / 2;
+    if (endingSpeedMult < ENDING_STOP_THRESH) {
+      endingSpeedMult = 0;
+      curSpd3 = 0;
+      if (gameState3 === 'playing') {
+        if (score3 > highScore3) { highScore3 = Math.floor(score3); localStorage.setItem('krr3d_hs', highScore3); }
+        gameState3 = 'beaching';
+        endingBeachStartMs   = Date.now();
+        endingCinematicFired = false;
+        document.getElementById('hud3').classList.remove('visible');
+      }
+      return;
+    }
   }
 
   const effectiveSpeed = curSpeed3 * endingSpeedMult;
@@ -3119,16 +3509,60 @@ function update3() {
   if (curMile3 >= stg.endMile && stageIdx < STAGES3.length - 1) {
     applyStage3(stageIdx + 1, 'ENTERING ' + STAGES3[stageIdx + 1].name); return;
   }
-  // Stage-5 sub-narrows
-  if (stageIdx === 4 && stg.subNarrow) {
+  // Stage-5 sub-narrows: trigger the animated squeeze (no buildWorld)
+  if (stageIdx === 4 && stg.subNarrow && !narrowing) {
     for (const sn of stg.subNarrow) {
       if (curMile3 >= sn.atMile && !subsFired3.has(sn.atMile)) {
         subsFired3.add(sn.atMile);
-        curLanes    = sn.lanes;
-        curObsFreq3 = sn.obsFreq;
-        if (player3.targetLane >= sn.lanes) player3.targetLane = sn.lanes - 1;
-        clearActive(); buildWorld(); flash3(sn.msg, 150);
+        narrowing        = true;
+        narrowStartMile  = curMile3;
+        narrowFromRw     = rwCur;
+        narrowToRw       = sn.lanes * LANE_W;
+        narrowToLanes    = sn.lanes;
+        narrowToObsFreq  = sn.obsFreq;
+        narrowFromLanes  = curLanes;
+        flash3(sn.msg, 150);
       }
+    }
+  }
+
+  // Animated narrow: lerp rwCur, apply river geometry, merge dividers
+  if (narrowing) {
+    var _nt = Math.min(1, (curMile3 - narrowStartMile) / NARROW_MILES);
+    var _ne = (1 - Math.cos(_nt * Math.PI)) / 2;
+    rwCur = narrowFromRw + (narrowToRw - narrowFromRw) * _ne;
+    applyRiverWidth();  // water + bank segs; divider block skipped while narrowing
+    // Divider position and opacity -- handled explicitly here
+    var _nFrLw = narrowFromRw / narrowFromLanes;
+    for (var _ndi = 0; _ndi < laneDivs3.length; _ndi++) {
+      var _nd   = laneDivs3[_ndi];
+      var _xS   = -narrowFromRw / 2 + _nd.idx * _nFrLw;
+      var _xT, _hasCP;
+      if (narrowToLanes <= 1) {
+        // 2->1: single divider stays at 0, just fades
+        _xT = _xS;
+        _hasCP = false;
+      } else {
+        _hasCP = (_nd.idx < narrowToLanes);
+        var _nToLw = narrowToRw / narrowToLanes;
+        // counterpart lerps to its exact new position; orphan converges on the nearest boundary
+        _xT = -narrowToRw / 2 + Math.min(_nd.idx, narrowToLanes - 1) * _nToLw;
+      }
+      _nd.line.position.x        = _xS + (_xT - _xS) * _ne;
+      _nd.line.material.opacity  = _hasCP ? 0.22 : 0.22 * (1 - _ne);
+    }
+    if (_nt >= 1) {
+      // Width arrived -- commit lane count, remap player, swap dividers
+      var _prevLanes = narrowFromLanes;
+      curLanes    = narrowToLanes;
+      curObsFreq3 = narrowToObsFreq;
+      // Preserve normalised position across the channel
+      var _pNorm = (_prevLanes > 1) ? (player3.targetLane / (_prevLanes - 1)) : 0;
+      player3.targetLane = Math.round(_pNorm * Math.max(curLanes - 1, 0));
+      player3.targetLane = Math.max(0, Math.min(curLanes - 1, player3.targetLane));
+      if (player3.lane > curLanes - 1) player3.lane = curLanes - 1;
+      rebuildDividers3();  // invisible: dividers are already at their final positions
+      narrowing = false;
     }
   }
 
@@ -3142,21 +3576,34 @@ function update3() {
   // Jump arc
   if (player3.isJumping) {
     player3.jumpFrame++;
-    if (player3.jumpFrame >= JUMP_DUR) { player3.isJumping = false; player3.jumpFrame = 0; }
+    if (player3.jumpFrame >= JUMP_DURATION) { player3.isJumping = false; player3.jumpFrame = 0; }
   }
 
-  // Spawn
+  // Spawn (obstacle spawns suppressed during animated narrow; collectibles continue)
   gapFrames3++;
   const minF = Math.ceil(MIN_GAP / curSpeed3);
-  if (gapFrames3 >= minF && Math.random() < curObsFreq3 * endingSpeedMult) { spawnObs3(); gapFrames3 = 0; }
+  if (!narrowing && curMile3 < OBS_CUTOFF_MILE && gapFrames3 >= minF && Math.random() < curObsFreq3 * endingSpeedMult) { spawnObs3(); gapFrames3 = 0; }
   if (Math.random() < COLL_FREQ) spawnColl3();
 
   // Move items
   const spd = effectiveSpeed * SPD_SCALE;
   curSpd3 = spd;
+  applyRiverWidth();
 
   for (const o of obstacles3) {
     o.z += spd; o.mesh.position.z = o.z;
+    // Per-frame x from lane so future rwCur changes reflow obstacles automatically
+    if (o.fullWidth) {
+      o.mesh.position.x = 0;
+    } else if (o.lane2 !== undefined) {
+      o.mesh.position.x = (laneXPos(o.lane) + laneXPos(o.lane2)) / 2;
+    } else if (o.type === 'fallen_log') {
+      o.mesh.position.x = o.gapLane === 0
+        ? (laneXPos(1) + laneXPos(curLanes - 1)) / 2
+        : (laneXPos(0) + laneXPos(curLanes - 2)) / 2;
+    } else {
+      o.mesh.position.x = laneXPos(o.lane);
+    }
     if (o.type === 'river_wash') { o.mesh.rotation.y += RW_SPIN_SPEED; }
   }
   obstacles3 = obstacles3.filter(o => {
@@ -3166,6 +3613,7 @@ function update3() {
 
   for (const c of collectibles3) {
     c.z += spd * COLL_DRIFT; c.mesh.position.z = c.z;
+    c.mesh.position.x = laneXPos(c.lane);
     c.mesh.position.y = c.baseY + Math.sin(frameN * 0.11 + c.lane * 1.3) * 0.14;
     c.mesh.rotation.y += 0.028;  // gentle rotation
   }
@@ -3224,12 +3672,12 @@ function update3() {
     var bt3 = bankTrees3[bti];
     bt3.z += spd;
     bt3.sprite.position.z = bt3.z;
+    bt3.sprite.position.x = bt3.side * (rwCur / 2 + SHORE_W + bt3.xOff);
     if (bt3.z > DESPAWN_Z + 2) {
       bt3.z = SPAWN_Z - Math.random() * 8;
       var v3    = Math.floor(Math.random() * 4);
-      var rw3   = riverWidth();
-      var xOff3 = Math.floor(Math.random() * 4) * 1.8;
-      bt3.sprite.position.x = bt3.side * (rw3 / 2 + 1.4 + xOff3);
+      bt3.xOff  = 1.4 + Math.floor(Math.random() * 4) * 1.8;
+      bt3.sprite.position.x = bt3.side * (rwCur / 2 + SHORE_W + bt3.xOff);
       bt3.sprite.position.z = bt3.z;
       var h3 = makeBankTreeHeight(v3);
       bt3.sprite.scale.set(h3 * 0.72, h3, 1);
@@ -3245,44 +3693,98 @@ function update3() {
     var bb3 = bankBoulders3[bbi];
     bb3.z += spd;
     bb3.sprite.position.z = bb3.z;
+    var _bbSW = (bb3.shoreW !== undefined) ? bb3.shoreW : SHORE_W;
+    bb3.sprite.position.x = bb3.side * (rwCur / 2 + _bbSW + bb3.xOff);
     if (bb3.z > DESPAWN_Z + 2) {
       bb3.z = SPAWN_Z - Math.random() * 8;
       var bbTexIdx = Math.floor(Math.random() * bankBoulderTex.length);
-      var bbRw     = riverWidth();
-      var bbXOff, bbH, bbW, bbXPos;
+      var bbXOff, bbH, bbW;
       if (stageIdx === 1) {
         var bbFlip = Math.random() < 0.5 ? -1 : 1;
         if (bb3.spread === 'perimeter') {
-          // Perimeter: tight cluster at channel boundary, substantially submerged
           bbXOff = Math.random() * 1.0;
           bbH    = 2.2 + Math.random() * 2.4;
           bbW    = bbH * (0.75 + Math.random() * 0.85);
-          bbXPos = bb3.side * (bbRw / 2 + bbXOff);
           bb3.sprite.scale.set(bbW * bbFlip, bbH, 1);
           bb3.sprite.position.y = -0.5 - Math.random() * 0.7;
         } else {
-          // Field: scattered across non-playable side water, varied size and submersion
           bbXOff = 1.3 + Math.random() * 11.5;
           bbH    = 0.8 + Math.random() * 3.0;
           bbW    = bbH * (0.75 + Math.random() * 0.85);
-          bbXPos = bb3.side * (bbRw / 2 + bbXOff);
           bb3.sprite.scale.set(bbW * bbFlip, bbH, 1);
           bb3.sprite.position.y = -0.15 - Math.random() * 1.1;
         }
       } else {
         // Stages 3-4: normal bank boulder spread
-        bbXOff = Math.floor(Math.random() * 4) * 1.6 + 0.3;
+        bbXOff = 1.0 + Math.floor(Math.random() * 4) * 1.6 + 0.3;
         bbH    = 1.2 + Math.random() * 1.6;
         bbW    = bbH * (0.85 + Math.random() * 0.70);
-        bbXPos = bb3.side * (bbRw / 2 + 1.0 + bbXOff);
         bb3.sprite.scale.set(bbW, bbH, 1);
       }
-      bb3.sprite.position.x = bbXPos;
+      bb3.xOff = bbXOff;
+      bb3.sprite.position.x = bb3.side * (rwCur / 2 + _bbSW + bb3.xOff);
       bb3.sprite.position.z = bb3.z;
       if (bankBoulderTex[bbTexIdx]) {
         bb3.sprite.material.map = bankBoulderTex[bbTexIdx];
         bb3.sprite.material.needsUpdate = true;
       }
+    }
+  }
+
+  // Scroll bank poppy sprites; recycle with rarity gap and random side
+  for (var ppi = 0; ppi < bankPoppies3.length; ppi++) {
+    var pp3 = bankPoppies3[ppi];
+    pp3.z += spd;
+    if (pp3.z > DESPAWN_Z + 2) {
+      // Recycle: pick new side, reset state, restore rest texture and glow
+      pp3.picked      = false;
+      pp3.claimed     = false;
+      pp3.glowFlareSt = 0;
+      pp3.side   = (Math.random() < 0.5) ? -1 : 1;
+      pp3.tuftU  = pp3.side === -1 ? 0.16 : 0.81;
+      pp3.bloomU = pp3.side === -1 ? 0.80 : 0.19;
+      pp3.z      = SPAWN_Z - (POPPY_GAP_MIN + Math.random() * POPPY_GAP_RANGE);
+      pp3.sprite.center.set(0.5, 0);
+      pp3.sprite.scale.set(POPPY_W, 0.53 * POPPY_W, 1);
+      var ppRestTex = pp3.side === -1 ? _poppyTexL : _poppyTexR;
+      if (ppRestTex) { pp3.sprite.material.map = ppRestTex; pp3.sprite.material.needsUpdate = true; }
+      if (pp3.glow) { pp3.glow.material.opacity = 0.30; pp3.glow.scale.setScalar(POPPY_GLOW_SCALE * POPPY_W); }
+    }
+    // Position sprite: place center(0.5,0) so tuft anchor lands at tuftX
+    var _ppTX = pp3.side * (rwCur / 2 + POPPY_BANK_OFF);
+    pp3.sprite.position.set(_ppTX + (0.5 - pp3.tuftU) * POPPY_W, POPPY_SEAT_Y, pp3.z);
+    // Glow: pulse when live; flare on pickup
+    if (pp3.glow) {
+      if (pp3.picked && pp3.glowFlareSt > 0) {
+        var _ft = Math.min(1, (Date.now() - pp3.glowFlareSt) / 250);
+        var _fSc = (POPPY_GLOW_SCALE + (1.8 - POPPY_GLOW_SCALE) * Math.sin(_ft * Math.PI)) * POPPY_W;
+        pp3.glow.scale.setScalar(_fSc);
+        pp3.glow.material.opacity = 0.8 * Math.sin(_ft * Math.PI);
+        pp3.glow.position.z = pp3.z;
+        if (_ft >= 1) { pp3.glow.material.opacity = 0; pp3.glowFlareSt = 0; }
+      } else if (!pp3.picked) {
+        var _ppBX = _ppTX + (pp3.bloomU - pp3.tuftU) * POPPY_W;
+        var _ppBY = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
+        pp3.glow.position.set(_ppBX, _ppBY, pp3.z);
+        pp3.glow.scale.setScalar(POPPY_GLOW_SCALE * POPPY_W);
+        pp3.glow.material.opacity = 0.30 + Math.sin(frameN * 0.05) * 0.12;
+      }
+      // if picked and glowFlareSt===0: flare has ended; opacity stays at 0 until recycle
+    }
+  }
+
+  // Advance active bloom sprites (rise + fade over 0.5s, then dispose)
+  for (var bli = _activePopBloom.length - 1; bli >= 0; bli--) {
+    var bl3 = _activePopBloom[bli];
+    var blEl = (Date.now() - bl3.startMs) / 500; // 0->1 over 0.5s
+    if (blEl >= 1) {
+      scene.remove(bl3.sprite);
+      if (bl3.sprite.material) bl3.sprite.material.dispose();
+      _activePopBloom.splice(bli, 1);
+    } else {
+      bl3.sprite.position.y = bl3.startY + blEl * 0.8;
+      bl3.sprite.position.z += spd;
+      bl3.sprite.material.opacity = 1 - blEl;
     }
   }
 
@@ -3329,11 +3831,11 @@ function update3() {
     var hse = bankHouses3[hsi];
     hse.z += spd;
     hse.sprite.position.z = hse.z;
+    hse.sprite.position.x = hse.side * (rwCur / 2 + SHORE_W + hse.xOff);
     if (hse.z > DESPAWN_Z + 2) {
       hse.z = SPAWN_Z - Math.random() * 12;
-      var hsRw  = riverWidth();
-      var hsOff = 2.0 + Math.random() * 4.0;
-      hse.sprite.position.x = hse.side * (hsRw / 2 + 4.0 + hsOff);
+      hse.xOff = 6.0 + Math.random() * 4.0;
+      hse.sprite.position.x = hse.side * (rwCur / 2 + SHORE_W + hse.xOff);
       hse.sprite.position.z = hse.z;
       var hTexIdx = Math.floor(Math.random() * lakeHouseTex.length);
       hse.texIdx = hTexIdx;
@@ -3349,13 +3851,14 @@ function update3() {
   }
 
   // Stage 5 bank decor: scroll and recycle stumps, farm houses, fishing supplies, cars
-  var d5rw = riverWidth();
   for (var st5i = 0; st5i < bankStumps5.length; st5i++) {
     var st5 = bankStumps5[st5i];
     st5.z += spd; st5.sprite.position.z = st5.z;
+    st5.sprite.position.x = st5.side * (rwCur / 2 + SHORE_W + st5.xOff);
     if (st5.z > DESPAWN_Z + 2) {
       st5.z = SPAWN_Z - Math.random() * 8;
-      st5.sprite.position.x = st5.side * (d5rw / 2 + 1.2 + Math.random() * 3.0);
+      st5.xOff = 1.2 + Math.random() * 3.0;
+      st5.sprite.position.x = st5.side * (rwCur / 2 + SHORE_W + st5.xOff);
       st5.sprite.position.z = st5.z;
       if (stumpTex5) {
         st5.sprite.material.map = stumpTex5; st5.sprite.material.needsUpdate = true;
@@ -3368,9 +3871,11 @@ function update3() {
   for (var fm5i = 0; fm5i < bankFarms5.length; fm5i++) {
     var fm5 = bankFarms5[fm5i];
     fm5.z += spd; fm5.sprite.position.z = fm5.z;
+    fm5.sprite.position.x = fm5.side * (rwCur / 2 + SHORE_W + fm5.xOff);
     if (fm5.z > DESPAWN_Z + 2) {
       fm5.z = SPAWN_Z - Math.random() * 12;
-      fm5.sprite.position.x = fm5.side * (d5rw / 2 + 4.0 + 2.0 + Math.random() * 4.0);
+      fm5.xOff = 6.0 + Math.random() * 4.0;
+      fm5.sprite.position.x = fm5.side * (rwCur / 2 + SHORE_W + fm5.xOff);
       fm5.sprite.position.z = fm5.z;
       var fmTexI = Math.floor(Math.random() * 2);
       fm5.texIdx = fmTexI;
@@ -3386,9 +3891,11 @@ function update3() {
   for (var fs5i = 0; fs5i < bankFishing5.length; fs5i++) {
     var fs5 = bankFishing5[fs5i];
     fs5.z += spd; fs5.sprite.position.z = fs5.z;
+    fs5.sprite.position.x = fs5.side * (rwCur / 2 + SHORE_W + fs5.xOff);
     if (fs5.z > DESPAWN_Z + 2) {
       fs5.z = SPAWN_Z - Math.random() * 8;
-      fs5.sprite.position.x = fs5.side * (d5rw / 2 + 1.2 + Math.random() * 3.0);
+      fs5.xOff = 1.2 + Math.random() * 3.0;
+      fs5.sprite.position.x = fs5.side * (rwCur / 2 + SHORE_W + fs5.xOff);
       fs5.sprite.position.z = fs5.z;
       if (fishingTex5) {
         fs5.sprite.material.map = fishingTex5; fs5.sprite.material.needsUpdate = true;
@@ -3398,22 +3905,6 @@ function update3() {
       }
     }
   }
-  for (var cr5i = 0; cr5i < bankCars5.length; cr5i++) {
-    var cr5 = bankCars5[cr5i];
-    cr5.z += spd; cr5.sprite.position.z = cr5.z;
-    if (cr5.z > DESPAWN_Z + 2) {
-      cr5.z = SPAWN_Z - Math.random() * 8;
-      cr5.sprite.position.x = cr5.side * (d5rw / 2 + 1.2 + Math.random() * 3.0);
-      cr5.sprite.position.z = cr5.z;
-      if (carTex5) {
-        cr5.sprite.material.map = carTex5; cr5.sprite.material.needsUpdate = true;
-        var crAsp5 = (carTex5.image && carTex5.image.naturalHeight > 0)
-          ? carTex5.image.naturalWidth / carTex5.image.naturalHeight : 1.0;
-        cr5.sprite.scale.set(S5_CAR_SCALE * crAsp5, S5_CAR_SCALE, 1);
-      }
-    }
-  }
-
   // Transition flash
   if (transMsg3) {
     transMsg3.life--;
@@ -3432,6 +3923,7 @@ function update3() {
 
   checkCollisions3();
   checkCollectibles3();
+  checkBankPoppies3();
 }
 
 // ── COLLISION ─────────────────────────────────────────────────────
@@ -3471,11 +3963,55 @@ function checkCollectibles3() {
     if (c.z < COLL_FRONT || c.z > COLL_BACK) continue;
     if (c.lane !== player3.targetLane) continue;
     c.collected = true;
-    if (c.type === 'poppy') {
+    score3 += (c.type === 'mountain_crystal' || c.type === 'treasure_chest') ? 150 : 50;
+  }
+}
+
+function checkBankPoppies3() {
+  // Apex check: fire pickup effect when reach animation is ~45% through
+  if (_poppyReachFrame > 0 && _poppyReachPp && !_poppyReachApexFired) {
+    var _rTNow = 1 - (_poppyReachFrame / POPPY_LEAN_DUR);
+    if (_rTNow >= 0.45) {
+      _poppyReachApexFired = true;
+      var _ppA = _poppyReachPp;
+      _ppA.picked = true;
       player3.hasShield = true;
-    } else {
-      score3 += (c.type === 'mountain_crystal' || c.type === 'treasure_chest') ? 150 : 50;
+      var _ptex = _ppA.side === -1 ? _poppyTexLP : _poppyTexRP;
+      if (_ptex) { _ppA.sprite.material.map = _ptex; _ppA.sprite.material.needsUpdate = true; }
+      // Bloom sprite: rises from the bloom head position using tuftU/bloomU anchoring
+      var _btex = _ppA.side === -1 ? _poppyTexLB : _poppyTexRB;
+      if (_btex) {
+        var _bTX  = _ppA.side * (rwCur / 2 + POPPY_BANK_OFF);
+        var _bxOvr = _bTX + (_ppA.bloomU - _ppA.tuftU) * POPPY_W;
+        var _byOvr = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
+        var _bMat = new THREE.SpriteMaterial({ map: _btex, transparent: true, opacity: 1, depthWrite: false });
+        var _bSpr = new THREE.Sprite(_bMat);
+        _bSpr.center.set(0.5, 0);
+        _bSpr.scale.set(POPPY_W, 0.53 * POPPY_W, 1);
+        _bSpr.position.set(_bxOvr, _byOvr, _ppA.sprite.position.z);
+        scene.add(_bSpr);
+        _activePopBloom.push({ sprite: _bSpr, startMs: Date.now(), startY: _byOvr });
+        console.log('[KRR POPPY] bloom_x=' + _bxOvr.toFixed(3) + ' bankOff=' + POPPY_BANK_OFF.toFixed(2) + ' W=' + POPPY_W.toFixed(2));
+      }
+      // Glow flare: brief scale+opacity burst at the bloom position (handled in scroll loop)
+      _ppA.glowFlareSt = Date.now();
     }
+  }
+
+  // Reach detection: scan poppies entering the approach window
+  for (var _bpi = 0; _bpi < bankPoppies3.length; _bpi++) {
+    var _pp = bankPoppies3[_bpi];
+    if (_pp.picked || _pp.claimed) continue;
+    if (_pp.z < POPPY_REACH_Z) continue;        // not in reach window yet
+    if (_pp.z > COLL_BACK) continue;            // scrolled past without pickup
+    var _edgeLane = _pp.side === -1 ? 0 : curLanes - 1;
+    if (player3.targetLane !== _edgeLane) continue;
+    // Begin reach: claim poppy, start animation; apex fires the actual pickup
+    _pp.claimed          = true;
+    _poppyReachSide      = _pp.side;
+    _poppyReachFrame     = POPPY_LEAN_DUR;
+    _poppyReachApexFired = false;
+    _poppyReachPp        = _pp;
   }
 }
 
@@ -3483,8 +4019,10 @@ function checkCollectibles3() {
 function updateVisuals3() {
   playerGroup.position.x = player3.x;
 
+  // Flattened arc: Math.pow(..., JUMP_ARC_FLATTEN < 1) broadens the plateau so the boat
+  // hangs at moderate height instead of peaking sharply and diving back down immediately.
   const jumpY = player3.isJumping
-    ? JUMP_H * Math.sin((player3.jumpFrame / JUMP_DUR) * Math.PI)
+    ? JUMP_HEIGHT * Math.pow(Math.sin((player3.jumpFrame / JUMP_DURATION) * Math.PI), JUMP_ARC_FLATTEN)
     : 0;
   playerGroup.position.y = jumpY;
 
@@ -3528,6 +4066,49 @@ function updateVisuals3() {
     playerGroup.rotation.y = kayakTurnY3;
   }
 
+  // Jump pitch (rotation.x) + tail whip (additive rotation.y and rotation.z).
+  // Both live entirely on playerGroup, additive on top of kayakTurnY3.
+  // Both unwind to exactly 0 before landing so there is no residual rotation.
+  if (player3.isJumping) {
+    var _jvt = player3.jumpFrame / JUMP_DURATION;
+
+    // -- Pitch: nose up on launch, level at apex, nose down into re-entry --
+    // positive rotation.x = nose up (bow at -Z rises in Y); verified for this rig.
+    var _jPitch;
+    if (_jvt < 0.25) {
+      _jPitch = JUMP_PITCH_UP   * Math.sin((_jvt / 0.25) * (Math.PI / 2));
+    } else if (_jvt < 0.55) {
+      _jPitch = JUMP_PITCH_UP   * Math.cos(((_jvt - 0.25) / 0.30) * (Math.PI / 2));
+    } else if (_jvt < 0.95) {
+      _jPitch = JUMP_PITCH_DOWN * Math.sin(((_jvt - 0.55) / 0.40) * (Math.PI / 2));
+    } else {
+      _jPitch = JUMP_PITCH_DOWN * Math.cos(((_jvt - 0.95) / 0.05) * (Math.PI / 2));
+    }
+    playerGroup.rotation.x = _jPitch;
+
+    // -- Tail whip: driven by turnDirSign3 (frozen at last steer during jump) --
+    // Yaw: -turnDirSign3 pushes tail in the steering direction (bow opposite).
+    // Roll: turnDirSign3 leans hull toward the whip (heels to the outside of the kick).
+    // Curve: ramps in over t 0-0.12, holds, unwinds to exactly 0 by t=0.95.
+    var _whipDir = turnDirSign3;  // -1 = last steered right, +1 = left, 0 = straight
+    var _wCurve;
+    if (_jvt < 0.12) {
+      _wCurve = _jvt / 0.12;
+    } else if (_jvt < 0.55) {
+      _wCurve = 1.0;
+    } else if (_jvt < 0.95) {
+      _wCurve = (0.95 - _jvt) / 0.40;
+    } else {
+      _wCurve = 0;  // hard zero before landing: boat is straight at impact
+    }
+    playerGroup.rotation.y += -_whipDir * JUMP_WHIP_YAW  * _wCurve;
+    playerGroup.rotation.z  =  _whipDir * JUMP_WHIP_ROLL * _wCurve;
+  } else {
+    // Not jumping: keep pitch and roll at zero (turn yaw handled above)
+    playerGroup.rotation.x = 0;
+    playerGroup.rotation.z = 0;
+  }
+
   // Paddle stroke: only runs when GLB is loaded (glbPaddleGroup != null).
   // Phase accumulates proportional to curSpd3 so rowing rate tracks boat speed.
   if (glbPaddleGroup) {
@@ -3542,8 +4123,60 @@ function updateVisuals3() {
         ' children=' + glbPaddleGroup.children.length);
     }
     if (glbTorsoNode) {
-      glbTorsoNode.rotation.x = -Math.sin(strokePhase) * TORSO_ROCK;
+      // Base rowing rock (counter-phase lean; speed-coupled via strokePhase)
+      var _tRock = -Math.sin(strokePhase) * TORSO_ROCK;
+      // Jump phase-driven body animation layered on top
+      if (player3.isJumping) {
+        var _jt = player3.jumpFrame / JUMP_DURATION;
+        var _jOff = 0;
+        if (_jt < 0.08) {
+          // Anticipation: quick forward dip as legs compress for liftoff
+          _jOff = -JUMP_CROUCH_AMOUNT * Math.sin((_jt / 0.08) * Math.PI);
+        } else if (_jt < 0.35) {
+          // Lift: torso arches back as boat leaves water
+          _jOff = JUMP_LIFT_AMOUNT * Math.sin(((_jt - 0.08) / 0.27) * (Math.PI * 0.5));
+        } else if (_jt < 0.80) {
+          // Hang: hold slight back lean at arc apex
+          _jOff = JUMP_LIFT_AMOUNT * 0.5;
+        } else {
+          // Pre-landing: return torso to neutral before impact
+          _jOff = JUMP_LIFT_AMOUNT * 0.5 * (1 - ((_jt - 0.80) / 0.20));
+        }
+        _tRock += _jOff;
+      }
+      // Landing squash: decays over 8 frames after re-entry, set by splash block below
+      if (glbTorsoSquashFrames > 0) {
+        glbTorsoSquashFrames--;
+        _tRock += -JUMP_LAND_SQUASH * (glbTorsoSquashFrames / 7.0);
+      }
+      glbTorsoNode.rotation.x = _tRock;
     }
+  }
+
+  // Bank poppy reach animation: torso leans toward bank + paddle dips on that side
+  if (_poppyReachFrame > 0) {
+    // Jump or spinout cancels the reach cleanly
+    if (player3.isJumping || player3.spinoutFrames > 0) {
+      _poppyReachFrame = 0;
+      _poppyReachPp    = null;
+      if (glbTorsoNode) glbTorsoNode.rotation.z = 0;
+    } else {
+      _poppyReachFrame--;
+      var _rT   = 1 - (_poppyReachFrame / POPPY_LEAN_DUR); // 0->1 over animation
+      var _rAng = POPPY_LEAN_ANG * Math.sin(_rT * Math.PI); // peaks at midpoint, back to 0
+      if (glbTorsoNode) {
+        glbTorsoNode.rotation.z = _poppyReachSide * _rAng;
+      }
+      // Small lateral nudge of whole playerGroup (cosmetic; player3.x unchanged)
+      playerGroup.position.x += _poppyReachSide * 0.12 * Math.sin(_rT * Math.PI);
+      // Bias paddle rotation toward bank side (additive on top of stroke)
+      // Uses geometry-based glbPaddleGroup (name lookup does not work on this GLB)
+      if (glbPaddleGroup) {
+        glbPaddleGroup.rotation.z += _poppyReachSide * -0.22 * Math.sin(_rT * Math.PI);
+      }
+    }
+  } else if (glbTorsoNode) {
+    glbTorsoNode.rotation.z = 0;
   }
 
   // Refinement 2: Alternating paddle splashes at blade water entry.
@@ -3623,16 +4256,41 @@ function updateVisuals3() {
     grassBankMats3[gbi].offset.y -= 0.0005 * GRASS3_SCROLL_MULT;
   }
 
-  // Stage 5: scroll bank segment clones (same mechanism as Stages 1/3/4; master-only was imperceptibly slow)
+  // Stage 5: scroll bank segment tops and ground plane at world speed so they match decoration movement.
+  // UV delta = curSpd3 / world_units_per_UV_unit (same formula as Stage 4 floor at line 3640).
+  // Bank segs: BoxGeometry depth = BK_SEG_Z+0.25 = 5.75, V_repeat = 1 -> 1 UV unit = 5.75 wu.
+  // Ground plane: PlaneGeometry(200,600), S5_TERR_REPEAT_Y=12 -> 1 UV unit = 600/12 = 50 wu.
+  // Both give apparent scroll of curSpd3 * 60 wu/sec = 7.2 wu/sec at Stage 5 max speed. S5_TERR_SCROLL
+  // remains the multiplier: 1.0 = world speed, <1.0 = atmospheric slower look.
   for (var s5i = 0; s5i < swampBankMats5.length; s5i++) {
-    swampBankMats5[s5i].offset.y -= 0.0005 * S5_TERR_SCROLL;
+    swampBankMats5[s5i].offset.y -= curSpd3 * S5_TERR_SCROLL / 5.75;
     if (s5i === 0 && stageIdx === 4 && frameN % 60 === 0) {
       console.log('[KRR TERRDBG] bankOffY=' + swampBankMats5[0].offset.y.toFixed(4) + ' gndOffY=' + (s5GndScrollTex ? s5GndScrollTex.offset.y.toFixed(4) : 'null') + ' scroll=' + S5_TERR_SCROLL + ' world=' + curSpd3.toFixed(4));
     }
   }
-  // Stage 5: scroll the ground plane's dedicated clone at the same rate as bank segment clones
   if (stageIdx === 4 && s5GndScrollTex) {
-    s5GndScrollTex.offset.y -= 0.0005 * S5_TERR_SCROLL;
+    s5GndScrollTex.offset.y -= curSpd3 * S5_TERR_SCROLL / 50;
+  }
+
+  // Stage 5 water recede: shrink waterMesh.scale.x to 0 over miles ENDING_WATER_START -> ENDING_WATER_GONE.
+  // Starts at mile 161 (safely after the last sub-narrow at 160 which resets waterMesh).
+  // Does not alter curLanes, collision geometry, or any gameplay state.
+  if (stageIdx === 4 && waterMesh && curMile3 >= ENDING_WATER_START) {
+    var _wt = Math.min(1, (curMile3 - ENDING_WATER_START) / (ENDING_WATER_GONE - ENDING_WATER_START));
+    waterMesh.scale.x = Math.max(0, 1 - _wt);
+    if (waterMesh.material) {
+      waterMesh.material.opacity = WATER_OPACITY * Math.max(0, 1 - _wt * 0.6);
+    }
+  }
+
+  // Stage 5 beaching cinematic: 3s dead pause then Victory title card.
+  // Runs in updateVisuals3 every frame so it advances even though update3 has stopped.
+  if (gameState3 === 'beaching') {
+    var _elapsed = Date.now() - endingBeachStartMs;
+    if (!endingCinematicFired && _elapsed >= ENDING_PAUSE_MS) {
+      endingCinematicFired = true;
+      buildVictoryCard3(function() { startEnding3(); });
+    }
   }
 
   // Scroll Stage 4 pebble floor textures toward player, tied to curSpd3 so they match world movement.
@@ -3709,12 +4367,17 @@ function updateVisuals3() {
   // Polish 2: Jump splash -- detect takeoff/landing, activate pool rings
   var jumpingNow3 = player3.isJumping;
   if (jumpingNow3 && !splashWasJumping3) {
-    activateSplash3(player3.x, 0, 2.2, 22);
+    // Takeoff: ring burst at hull (slightly bigger than old 2.2/22)
+    activateSplash3(player3.x, 0, 3.2, 26);
   }
   if (!jumpingNow3 && splashWasJumping3) {
-    activateSplash3(player3.x, 0, 2.5, 28);
-    activateSplash3(player3.x, 0, 4.0, 36);
-    activateDroplets3(player3.x, 0, 18, 1.4);
+    // Re-entry: center ring + port/starboard hull rings scaled to the bigger GLB boat
+    activateSplash3(player3.x,                       0, SPLASH_SIZE,            SPLASH_LIFETIME);
+    activateSplash3(player3.x - SPLASH_SPREAD * 0.5, 0, SPLASH_SIZE * 0.68,     SPLASH_LIFETIME - 8);
+    activateSplash3(player3.x + SPLASH_SPREAD * 0.5, 0, SPLASH_SIZE * 0.68,     SPLASH_LIFETIME - 8);
+    activateDroplets3(player3.x, 0, SPLASH_COUNT, 2.0);
+    // Trigger landing squash on the rower's torso
+    glbTorsoSquashFrames = 8;
   }
   splashWasJumping3 = jumpingNow3;
   // Animate active splash rings (expand + fade)
@@ -3797,18 +4460,132 @@ function updateVisuals3() {
   }
 }
 
+// ── VICTORY TITLE CARD ───────────────────────────────────────────────
+// Full-screen DOM overlay. Drives itself via rAF; fires onComplete() at 13.0s.
+// All timing is card-relative (ms from when the function is called).
+//
+// Timeline:
+//   0.0s  veil fades in -> 74% at 1.6s
+//   1.2s  "V" in (1.1s: opacity/blur/scale); +0.55s each subsequent letter: i c t o r y
+//   5.6s  "y" fully landed  -- 2s of dead air --
+//   7.6s  "?" in (same 1.1s animation)
+//  10.6s  2.4s fade-out (letters blur to 6px on exit)
+//  13.0s  onComplete()
+function buildVictoryCard3(onComplete) {
+  var prevCard = document.getElementById('krr-victory-card');
+  if (prevCard) prevCard.parentNode.removeChild(prevCard);
+
+  var card = document.createElement('div');
+  card.id = 'krr-victory-card';
+  card.style.cssText = 'position:fixed;inset:0;z-index:50;pointer-events:none;' +
+    'display:flex;align-items:center;justify-content:center;';
+
+  var veil = document.createElement('div');
+  veil.style.cssText = 'position:absolute;inset:0;background:#0B1F3A;opacity:0;';
+  card.appendChild(veil);
+
+  var row = document.createElement('div');
+  row.style.cssText = 'position:relative;display:flex;align-items:baseline;';
+  card.appendChild(row);
+
+  var letterChars = ['V','i','c','t','o','r','y','?'];
+  var spans = [];
+  for (var li = 0; li < letterChars.length; li++) {
+    var sp = document.createElement('span');
+    sp.textContent = letterChars[li];
+    sp.style.cssText = 'font-family:"Press Start 2P",monospace;' +
+      'font-size:' + VICTORY_FONT_PX + 'px;color:#C9883A;' +
+      'display:inline-block;opacity:0;' +
+      'filter:blur(10px);transform:scale(1.18);' +
+      'text-shadow:0 0 24px rgba(201,136,58,0.50);';
+    row.appendChild(sp);
+    spans.push(sp);
+  }
+
+  document.body.appendChild(card);
+  victoryEl3 = card;
+
+  // Card-relative start times (ms) -- V i c t o r y then 2s gap then ?
+  var STARTS       = [1200, 1750, 2300, 2850, 3400, 3950, 4500, 7600];
+  var LETTER_DUR   = 1100;   // each letter animates in over this duration
+  var VEIL_PEAK_MS = 1600;   // veil reaches VEIL_MAX at this time
+  var VEIL_MAX     = 0.74;
+  var FADEOUT_START = 10600; // ms when collective fade-out begins
+  var FADEOUT_DUR   = 2400;  // ms duration of fade-out
+  var CARD_DONE_MS  = 13000; // ms when onComplete fires
+
+  var startMs   = Date.now();
+  var cancelled = false;
+  _victoryCancelFn = function() { cancelled = true; };
+
+  function tick() {
+    if (cancelled) return;
+    var el = Date.now() - startMs;
+
+    var veilBase  = Math.min(VEIL_MAX, (el / VEIL_PEAK_MS) * VEIL_MAX);
+    var fadeFrac  = el >= FADEOUT_START
+      ? Math.min(1, (el - FADEOUT_START) / FADEOUT_DUR)
+      : 0;
+
+    veil.style.opacity = String(+(veilBase * (1 - fadeFrac)).toFixed(4));
+
+    for (var i = 0; i < 8; i++) {
+      var s   = STARTS[i];
+      var spn = spans[i];
+      if (el < s) {
+        spn.style.opacity   = '0';
+        spn.style.filter    = 'blur(10px)';
+        spn.style.transform = 'scale(1.18)';
+      } else {
+        var t = (el - s) / LETTER_DUR;
+        if (t < 1) {
+          var ease = t * t * (3 - 2 * t);  // smoothstep
+          spn.style.opacity   = String(+(ease * (1 - fadeFrac)).toFixed(4));
+          spn.style.filter    = 'blur(' + (10 * (1 - ease)).toFixed(1) + 'px)';
+          spn.style.transform = 'scale(' + (1.18 - 0.18 * ease).toFixed(4) + ')';
+        } else {
+          spn.style.opacity   = String(+(1 - fadeFrac).toFixed(4));
+          spn.style.filter    = 'blur(' + (fadeFrac * 6).toFixed(1) + 'px)';
+          spn.style.transform = 'scale(1)';
+        }
+      }
+    }
+
+    if (el >= CARD_DONE_MS) {
+      cancelled = true;
+      onComplete();
+      return;
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
 // ── ENDING SEQUENCE ────────────────────────────────────────────────
 function startEnding3() {
   if (gameState3 === 'ending1' || gameState3 === 'ending2') return;
   if (score3 > highScore3) { highScore3 = Math.floor(score3); localStorage.setItem('krr3d_hs', highScore3); }
   gameState3 = 'ending1';
   document.getElementById('hud3').classList.remove('visible');
-  showScreen3('ending1');
+  // Fade in from fully transparent over ENDING_MSG_FADE_MS (ease-in-out); a beat of black is correct.
+  var _ov  = document.getElementById('overlay3');
+  var _scr = document.getElementById('screen3-ending1');
+  _ov.classList.remove('hidden');
+  document.querySelectorAll('.screen3').forEach(function(s) { s.classList.remove('visible'); });
+  _scr.classList.add('visible');
+  _scr.style.opacity = '0';
+  var _fMs = Date.now();
+  (function _fadeEnding1() {
+    var _t = Math.min(1, (Date.now() - _fMs) / ENDING_MSG_FADE_MS);
+    var _e = _t < 0.5 ? 2 * _t * _t : 1 - Math.pow(-2 * _t + 2, 2) / 2;
+    _scr.style.opacity = String(+_e.toFixed(4));
+    if (_t < 1) requestAnimationFrame(_fadeEnding1);
+  })();
 }
 
 // ── END RUN ─────────────────────────────────────────────────────────
 function endRun3(complete) {
-  if (gameState3 === 'gameover' || gameState3 === 'ending1' || gameState3 === 'ending2') return;
+  if (gameState3 === 'gameover' || gameState3 === 'ending1' || gameState3 === 'ending2' || gameState3 === 'beaching') return;
   player3.dead = true;
   if (score3 > highScore3) { highScore3 = Math.floor(score3); localStorage.setItem('krr3d_hs', highScore3); }
   gameState3 = 'gameover';
@@ -3819,8 +4596,17 @@ function endRun3(complete) {
 function startGame3() {
   score3 = 0; distance3 = 0; curMile3 = 0;
   gapFrames3 = 0; frameN = 0; subsFired3 = new Set(); transMsg3 = null;
-  stageIdx = 0; curLanes = STAGES3[0].lanes; curSpeed3 = STAGES3[0].speed;
+  stageIdx = 0; curLanes = STAGES3[0].lanes; rwCur = curLanes * LANE_W; curSpeed3 = STAGES3[0].speed;
   curObsFreq3 = STAGES3[0].obsFreq; endingSpeedMult = 1.0;
+  endingBeachStartMs     = 0;
+  endingCinematicFired   = false;
+  glbTorsoSquashFrames   = 0;
+  if (_victoryCancelFn) { _victoryCancelFn(); _victoryCancelFn = null; }
+  if (victoryEl3 && victoryEl3.parentNode) { victoryEl3.parentNode.removeChild(victoryEl3); victoryEl3 = null; }
+  _poppyReachFrame     = 0;
+  _poppyReachPp        = null;
+  _poppyReachApexFired = false;
+  narrowing = false;
   camXSmooth = 0;
 
   const mid = Math.floor(STAGES3[0].lanes / 2);
@@ -3923,6 +4709,15 @@ window.addEventListener('keydown', e => {
       devJumpToStage(parseInt(e.key, 10) - 1);
     }
     // ===== END TEMP DEV STAGE JUMP =====
+    // ===== TEMP DEV ENDING-JUMP (REMOVE BEFORE LAUNCH) =====
+    // Backtick: jump to ENDING_TEST_MILE in Stage 5 to test the cinematic decel + beaching.
+    // Key audit: all a-z/0-9 are taken. Backtick (e.key='`') is genuinely free.
+    if (e.key === '`') {
+      distance3  = ENDING_TEST_MILE * MI_PER_PX;
+      subsFired3 = new Set();
+      applyStage3(4, 'DEV: ENDING TEST (mile ' + ENDING_TEST_MILE + ')');
+    }
+    // ===== END TEMP DEV ENDING-JUMP =====
     // ===== TEMP STAGE5 WATER TUNER (REMOVE BEFORE LAUNCH) =====
     // z/x = R -/+, c/v = G -/+, b/n = B -/+ (live water color; Stage 5 only)
     if (stageIdx === 4 && waterMesh && waterMesh.material && waterMesh.material.color) {
@@ -4136,12 +4931,145 @@ window.addEventListener('keydown', e => {
     }
     // ===== END TEMP RIVER_WASH VISUAL TUNER =====
 
+    // ===== TEMP BOULDER GLB TUNER (REMOVE BEFORE LAUNCH) =====
+    // F6 = cycle selected model (0=dome boulder-2, 1=slab boulder-3, 2=tall boulder-5)
+    // F7 = BOULDER_GLB_SEAT_Y -0.02 (global) ; F8 = +0.02
+    // F9 = BOULDER_GLB_SCALE[sel] -0.05 ; F10 = +0.05
+    // Updates all live GLB boulders immediately; new spawns also use the updated values.
+    {
+      var bldChanged = false;
+      if (e.key === 'F6') {
+        e.preventDefault();
+        _boulderTunerSel = (_boulderTunerSel + 1) % 3;
+        console.log('[KRR BOULDER] sel=' + _boulderTunerSel + ' (0=dome,1=slab,2=tall) seatY=' + BOULDER_GLB_SEAT_Y.toFixed(3) + ' scale=[' + BOULDER_GLB_SCALE.map(function(v) { return v.toFixed(3); }).join(',') + ']');
+      }
+      if (e.key === 'F7' && !e.ctrlKey)  { e.preventDefault(); BOULDER_GLB_SEAT_Y = +(BOULDER_GLB_SEAT_Y - 0.02).toFixed(3); bldChanged = true; }
+      if (e.key === 'F8' && !e.ctrlKey)  { e.preventDefault(); BOULDER_GLB_SEAT_Y = +(BOULDER_GLB_SEAT_Y + 0.02).toFixed(3); bldChanged = true; }
+      if (e.key === 'F9'  && !e.shiftKey) { e.preventDefault(); BOULDER_GLB_SCALE[_boulderTunerSel] = Math.max(0.10, +(BOULDER_GLB_SCALE[_boulderTunerSel] - 0.05).toFixed(3)); bldChanged = true; }
+      if (e.key === 'F10' && !e.shiftKey) { e.preventDefault(); BOULDER_GLB_SCALE[_boulderTunerSel] = +(BOULDER_GLB_SCALE[_boulderTunerSel] + 0.05).toFixed(3); bldChanged = true; }
+      if (bldChanged) {
+        for (var bli = 0; bli < obstacles3.length; bli++) {
+          var blo = obstacles3[bli];
+          if ((blo.type === 'boulder' || blo.type === 'boulder_wide') && blo.mesh.userData.isBoulderGlb) {
+            var bGlbIdx2 = blo.mesh.userData.boulderGlbIdx;
+            var bGlbRaw2 = blo.mesh.userData.boulderGlbRaw;
+            var bLns2    = blo.mesh.userData.boulderLanes;
+            var bNewS2   = (bGlbRaw2 > 0.01 ? ((LANE_W * bLns2) / bGlbRaw2) : 1) * BOULDER_GLB_SCALE[bGlbIdx2];
+            blo.mesh.children[0].scale.setScalar(bNewS2);
+            blo.mesh.children[0].position.y = BOULDER_GLB_SEAT_Y;
+          }
+        }
+        console.log('[KRR BOULDER] sel=' + _boulderTunerSel + ' seatY=' + BOULDER_GLB_SEAT_Y.toFixed(3) + ' scale=[' + BOULDER_GLB_SCALE.map(function(v) { return v.toFixed(3); }).join(',') + ']');
+      }
+    }
+    // ===== END TEMP BOULDER GLB TUNER =====
+
+    // ===== TEMP DEV POPPY TUNER =====
+    // F11/F12 = POPPY_BANK_OFF -/+   Shift+F11/F12 = POPPY_W -/+   Ctrl+Shift+F11/F12 = POPPY_GLOW_SCALE -/+
+    {
+      var _ppChanged = false;
+      if (e.key === 'F11' && !e.shiftKey && !e.ctrlKey) { e.preventDefault(); POPPY_BANK_OFF = Math.max(0.10, +(POPPY_BANK_OFF - 0.05).toFixed(2)); _ppChanged = true; }
+      if (e.key === 'F12' && !e.shiftKey && !e.ctrlKey) { e.preventDefault(); POPPY_BANK_OFF = +(POPPY_BANK_OFF + 0.05).toFixed(2); _ppChanged = true; }
+      if (e.key === 'F11' &&  e.shiftKey && !e.ctrlKey) { e.preventDefault(); POPPY_W = Math.max(0.30, +(POPPY_W - 0.10).toFixed(2)); _ppChanged = true; }
+      if (e.key === 'F12' &&  e.shiftKey && !e.ctrlKey) { e.preventDefault(); POPPY_W = +(POPPY_W + 0.10).toFixed(2); _ppChanged = true; }
+      if (e.key === 'F11' &&  e.shiftKey &&  e.ctrlKey) { e.preventDefault(); POPPY_GLOW_SCALE = Math.max(0.10, +(POPPY_GLOW_SCALE - 0.10).toFixed(2)); _ppChanged = true; }
+      if (e.key === 'F12' &&  e.shiftKey &&  e.ctrlKey) { e.preventDefault(); POPPY_GLOW_SCALE = +(POPPY_GLOW_SCALE + 0.10).toFixed(2); _ppChanged = true; }
+      if (_ppChanged) {
+        var _ppRw = riverWidth();
+        for (var _ppti = 0; _ppti < bankPoppies3.length; _ppti++) {
+          var _ppt = bankPoppies3[_ppti];
+          var _pptTX = _ppt.side * (_ppRw / 2 + POPPY_BANK_OFF);
+          _ppt.sprite.position.x = _pptTX + (0.5 - _ppt.tuftU) * POPPY_W;
+          _ppt.sprite.position.y = POPPY_SEAT_Y;
+          _ppt.sprite.scale.set(POPPY_W, 0.53 * POPPY_W, 1);
+          if (_ppt.glow && !_ppt.picked) {
+            var _pptBX = _pptTX + (_ppt.bloomU - _ppt.tuftU) * POPPY_W;
+            var _pptBY = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
+            _ppt.glow.position.set(_pptBX, _pptBY, _ppt.z);
+            _ppt.glow.scale.setScalar(POPPY_GLOW_SCALE * POPPY_W);
+          }
+        }
+        // Log bloom reach from water center for left bank (tuftU=0.16, bloomU=0.80)
+        var _ppBXSamp = _ppRw / 2 + POPPY_BANK_OFF + (0.80 - 0.16) * POPPY_W;
+        var _ppBloomReach = _ppBXSamp - _ppRw / 2;
+        console.log('[KRR POPPY] bankOff=' + POPPY_BANK_OFF.toFixed(2) + ' W=' + POPPY_W.toFixed(2) + ' seatY=' + POPPY_SEAT_Y.toFixed(2) + ' glow=' + POPPY_GLOW_SCALE.toFixed(2) + ' bloomReach=' + _ppBloomReach.toFixed(3));
+      }
+    }
+    // Shift+F9 = POPPY_SEAT_Y -0.05   Shift+F10 = POPPY_SEAT_Y +0.05
+    if (e.key === 'F9' && e.shiftKey) {
+      e.preventDefault();
+      POPPY_SEAT_Y = Math.max(0, +(POPPY_SEAT_Y - 0.05).toFixed(2));
+      for (var _syti = 0; _syti < bankPoppies3.length; _syti++) {
+        bankPoppies3[_syti].sprite.position.y = POPPY_SEAT_Y;
+        if (bankPoppies3[_syti].glow && !bankPoppies3[_syti].picked) bankPoppies3[_syti].glow.position.y = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
+      }
+      console.log('[KRR POPPY] seatY=' + POPPY_SEAT_Y.toFixed(2));
+    }
+    if (e.key === 'F10' && e.shiftKey) {
+      e.preventDefault();
+      POPPY_SEAT_Y = +(POPPY_SEAT_Y + 0.05).toFixed(2);
+      for (var _syti2 = 0; _syti2 < bankPoppies3.length; _syti2++) {
+        bankPoppies3[_syti2].sprite.position.y = POPPY_SEAT_Y;
+        if (bankPoppies3[_syti2].glow && !bankPoppies3[_syti2].picked) bankPoppies3[_syti2].glow.position.y = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
+      }
+      console.log('[KRR POPPY] seatY=' + POPPY_SEAT_Y.toFixed(2));
+    }
+    // ===== END TEMP DEV POPPY TUNER =====
+
+    // ===== TEMP NARROW_MILES TUNER =====
+    // Shift+F7 = NARROW_MILES -0.5   Shift+F8 = NARROW_MILES +0.5
+    if (e.key === 'F7' && e.shiftKey) { e.preventDefault(); NARROW_MILES = Math.max(0.5, +(NARROW_MILES - 0.5).toFixed(1)); console.log('[KRR NARROW] NARROW_MILES=' + NARROW_MILES.toFixed(1)); }
+    if (e.key === 'F8' && e.shiftKey) { e.preventDefault(); NARROW_MILES = +(NARROW_MILES + 0.5).toFixed(1); console.log('[KRR NARROW] NARROW_MILES=' + NARROW_MILES.toFixed(1)); }
+    // ===== END TEMP NARROW_MILES TUNER =====
+
+    // ===== TEMP S5 DENSITY TUNER =====
+    // Ctrl+F7/F8 = S5_BOULDER_COUNT -1/+1   Ctrl+F9/F10 = S5_TREE_COUNT -1/+1   Ctrl+F11/F12 = S5_POOL_BASE -1/+1
+    if (e.key === 'F7' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_BOULDER_COUNT = Math.max(0, S5_BOULDER_COUNT - 1); console.log('[KRR S5] S5_BOULDER_COUNT=' + S5_BOULDER_COUNT); }
+    if (e.key === 'F8' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_BOULDER_COUNT++; console.log('[KRR S5] S5_BOULDER_COUNT=' + S5_BOULDER_COUNT); }
+    if (e.key === 'F9' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_TREE_COUNT = Math.max(0, S5_TREE_COUNT - 1); console.log('[KRR S5] S5_TREE_COUNT=' + S5_TREE_COUNT); }
+    if (e.key === 'F10' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_TREE_COUNT++; console.log('[KRR S5] S5_TREE_COUNT=' + S5_TREE_COUNT); }
+    if (e.key === 'F11' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_POOL_BASE = Math.max(1, S5_POOL_BASE - 1); console.log('[KRR S5] S5_POOL_BASE=' + S5_POOL_BASE); }
+    if (e.key === 'F12' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_POOL_BASE++; console.log('[KRR S5] S5_POOL_BASE=' + S5_POOL_BASE); }
+    // ===== END TEMP S5 DENSITY TUNER =====
+
+    // ===== TEMP SHORE APRON TUNER =====
+    // Ctrl+Shift+F1/F2 = SHORE_W -/+0.1   Ctrl+Shift+F3/F4 = SHORE_TOE_Y -/+0.05
+    if (e.key === 'F1' && e.ctrlKey && e.shiftKey) { e.preventDefault(); SHORE_W = Math.max(0.1, +(SHORE_W - 0.1).toFixed(2)); console.log('[KRR SHORE] SHORE_W=' + SHORE_W.toFixed(2) + ' SHORE_TOE_Y=' + SHORE_TOE_Y.toFixed(2)); }
+    if (e.key === 'F2' && e.ctrlKey && e.shiftKey) { e.preventDefault(); SHORE_W = +(SHORE_W + 0.1).toFixed(2); console.log('[KRR SHORE] SHORE_W=' + SHORE_W.toFixed(2) + ' SHORE_TOE_Y=' + SHORE_TOE_Y.toFixed(2)); }
+    if (e.key === 'F3' && e.ctrlKey && e.shiftKey) { e.preventDefault(); SHORE_TOE_Y = Math.max(0, +(SHORE_TOE_Y - 0.05).toFixed(2)); console.log('[KRR SHORE] SHORE_W=' + SHORE_W.toFixed(2) + ' SHORE_TOE_Y=' + SHORE_TOE_Y.toFixed(2)); }
+    if (e.key === 'F4' && e.ctrlKey && e.shiftKey) { e.preventDefault(); SHORE_TOE_Y = +(SHORE_TOE_Y + 0.05).toFixed(2); console.log('[KRR SHORE] SHORE_W=' + SHORE_W.toFixed(2) + ' SHORE_TOE_Y=' + SHORE_TOE_Y.toFixed(2)); }
+    // Note: tuning SHORE_W or SHORE_TOE_Y takes effect on the next buildWorld() call (stage enter or DEV jump)
+    // ===== END TEMP SHORE APRON TUNER =====
+
   } else if (gameState3 === 'paused') {
     if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
       gameState3 = 'playing';
       document.getElementById('overlay3').classList.add('hidden');
     }
   }
+
+  // ===== TEMP VICTORY CARD DEV KEYS (REMOVE BEFORE LAUNCH) =====
+  // F4 (no shift) = replay card from zero; F2/F3 (no shift) = font size; Shift+F2/F3 = fade duration
+  if (e.key === 'F4' && !e.shiftKey) {
+    e.preventDefault();
+    if (_victoryCancelFn) { _victoryCancelFn(); _victoryCancelFn = null; }
+    buildVictoryCard3(function() { console.log('[KRR VICTORY] dev replay complete'); });
+  }
+  if ((e.key === 'F2' || e.key === 'F3') && !e.shiftKey) {
+    e.preventDefault();
+    VICTORY_FONT_PX = (e.key === 'F2') ? Math.max(12, VICTORY_FONT_PX - 2) : VICTORY_FONT_PX + 2;
+    var _vc = document.getElementById('krr-victory-card');
+    if (_vc) {
+      var _vcSpans = _vc.querySelectorAll('span');
+      for (var _vsi = 0; _vsi < _vcSpans.length; _vsi++) {
+        _vcSpans[_vsi].style.fontSize = VICTORY_FONT_PX + 'px';
+      }
+    }
+    console.log('[KRR VICTORY] fontPx=' + VICTORY_FONT_PX);
+  }
+  if (e.key === 'F2' && e.shiftKey) { e.preventDefault(); ENDING_MSG_FADE_MS = Math.max(100, ENDING_MSG_FADE_MS - 500); console.log('[KRR ENDING] ENDING_MSG_FADE_MS=' + ENDING_MSG_FADE_MS); }
+  if (e.key === 'F3' && e.shiftKey) { e.preventDefault(); ENDING_MSG_FADE_MS += 500; console.log('[KRR ENDING] ENDING_MSG_FADE_MS=' + ENDING_MSG_FADE_MS); }
+  // ===== END TEMP VICTORY CARD DEV KEYS =====
 });
 
 let tX3 = 0, tY3 = 0, tT3 = 0;
