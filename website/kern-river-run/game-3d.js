@@ -7,6 +7,12 @@
 const LANE_W    = 2.2;
 const SPAWN_Z   = -65;
 const DESPAWN_Z = 9;
+// Bank segment chain geometry -- must match buildWorld() values; used in per-frame scroll loop.
+const BK_SEG_Z  = 5.5;  // world-Z depth of one segment (box depth = BK_SEG_Z + 0.25)
+const BK_SEG_N  = 18;   // segments per side; chain length = BK_SEG_N * BK_SEG_Z = 99
+const BANK_W0   = 5.0;  // base segment width for meander sine
+const BANK_AMP  = 2.8;  // meander amplitude
+const BANK_FREQ = 0.048; // meander spatial frequency (radians per world unit)
 var JUMP_DURATION    = 100;  // frames airborne at 60fps (~1.67 sec); was 56 (~0.93 sec)
 var JUMP_HEIGHT      = 2.8;  // world units at apex (was 4.5; lower = floaty glide, not moon-leap)
 var JUMP_ARC_FLATTEN = 0.60; // exponent < 1 broadens the sin peak into a hang plateau; 1.0 = pure sine
@@ -25,7 +31,19 @@ var SPLASH_COUNT    = 28;   // droplets on landing
 var SPLASH_SPREAD   = 1.8;  // X offset (world units) for port/starboard hull rings
 var SPLASH_SIZE     = 5.5;  // max ring scale on landing
 var SPLASH_LIFETIME = 42;   // ring expand duration (frames)
-const SPF           = 2;
+const SPF             = 2; // kept for reference; no longer drives score3
+var ORANGE_VALUE      = [100, 150, 200, 300, 500]; // pts per orange, stage index 0-4; edit array to tune
+var ORANGE_FLIGHT_MS  = 350;  // ms for collected orange to arc into basket; < / > to tune
+var SWELL_ORANGE_LOSS = 2; // oranges stolen per river_wash hit; Shift+Z/X to tune
+var POPUP_FONT_PX = 32;   // score-popup canvas font size (px); Shift+F6/F7 to tune
+var POPUP_RISE    = 0.80; // world units popup rises over lifetime; Shift+F8/F9 to tune
+// ── Basket position / appearance (all in playerGroup local space)
+var BASKET_X       = 0.00;  // X offset in playerGroup; Shift+&/* to tune
+var BASKET_Y       = 0.41;  // Y center; basket bottom = Y-0.11, stern deck = BOAT_WALL_H+GUNWALE_H = 0.30; Shift+!/@ to tune
+var BASKET_Z       = 0.82;  // Z offset stern-ward (hull inner half-width ~0.35 here); Shift+#/$ to tune
+var BASKET_SCALE   = 1.00;  // uniform scale of basket group; Shift+%/^ to tune
+var BASKET_MAX_VIS = 15;    // max oranges shown (pool has 15 stacking slots); Shift+(/): to tune
+var BASKET_HEAP_Y  = 0.00;  // Y offset of orange pile sub-group; { / } (Shift+[/]) keys to tune
 const MIN_GAP   = 135;
 const MI_PER_PX = 900;
 const COLL_FREQ  = 0.006;
@@ -277,22 +295,38 @@ let stageBackdropMesh = null;   // Stage 5 persistent backdrop handle (framing t
 var obsGlbCache = {};           // path -> null (loading) | THREE.Group (ready); populated by _preloadObsGlb
 let wfGroup     = null;
 let wfStrips    = [];
-let bankTrees3   = [];   // scrolling tree sprite pool (not riverGroup children)
-let bankBoulders3 = [];  // scrolling bank boulder sprite pool (stages 2-4, decoration only)
+let bankTrees3      = [];  // scrolling tree sprite pool (not riverGroup children)
+let bankBoulders3   = [];  // scrolling bank boulder sprite pool (stages 2-4, decoration only)
+let bankBillboards3 = [];  // scrolling billboard sprite pool (stages 1,3,5)
+var _lastBillboardIdx = -1; // last texture index used; avoid back-to-back repeats on recycle
 let bankSegs3    = [];   // { mesh, side, segW } -- all bank-segment meshes from latest buildWorld
+let groundChain3 = [];   // { mesh, z } -- far-ground tile chain; shares bank-seg scroll clock
 let bankAprons3  = [];   // { mesh, side } -- sloped apron meshes that join bank to water edge
 let laneDivs3    = [];   // { line, idx } -- lane divider Lines; each has its own cloned material
 var bankPoppies3   = [];  // scrolling bank poppy sprite pool (all stages; scrolls at full spd)
-var _activePopBloom = []; // transient bloom sprites spawned on poppy pickup
+// hat poppy / bloom travel vars (replace _activePopBloom + shieldRing)
+var _poppyPickSt        = 0;    // Date.now() when reach started; 0 = idle
+var _poppyPickPp        = null; // pool entry being picked
+var _poppyPickSide      = 0;    // -1 or +1
+var _poppyContactFired  = false;// true once contact effect (swap tex, bloom) has fired
+var _poppyBloomSpr      = null; // single travelling bloom sprite (detach -> retract -> seat)
+var _poppyBloomCPos     = { x: 0, y: 0, z: 0 }; // world pos at moment of contact
+var _hatPoppySpr        = null; // persistent bloom sprite parented to hat position
+var _hatKnockSt         = 0;   // Date.now() when shield-knock-off started; 0 = idle
+var _hatKnockVel        = { x: 0, y: 0 };        // screen drift of knocked-off flower
+var _poppyShieldWas     = false; // previous-frame hasShield (for edge detection)
 let bankHouses3   = [];  // scrolling lake-house sprite pool (Stage 3 only)
 let canyonWalls4  = [];  // scrolling canyon-wall boulder sprite pool (Stage 4 only)
-let canyonFill4   = [];  // opaque rock wall mesh refs (Stage 4 only); lives inside riverGroup
-let rockWallMats4 = [];  // rock wall texture refs for per-frame UV scroll (Stage 4 only)
+let canyonFill4     = [];  // mesh refs for disposal (Stage 4 canyon fill pool)
+let canyonFillSegs4 = [];  // { mesh, z } z-scroll pool (Stage 4 canyon fill segments)
+let rockWallMats4   = [];  // retained for compat; no longer populated (UV scroll removed)
 let bankSegMats3  = [];   // bank segment texture refs for per-frame scroll (Stage 1)
+let bankGrassMats1 = []; // { mat, segW } refs for Stage 1 grass live-repeat tuner
 let grassBankMats3 = [];  // Stage 3 grass texture refs for per-frame scroll (ground + bank segs)
 let floorMats4    = [];  // Stage 4 pebble floor texture refs for per-frame scroll
-let swampBankMats5 = []; // Stage 5 bank seg texture clones for per-frame UV scroll
 var s5GndScrollTex = null; // Stage 5 ground plane scroll clone; re-acquired each buildWorld
+var gndPlaneTex    = null; // current ground plane texture (any stage); updated by Ctrl+[/] density tuner
+var gndPlaneMat    = null; // current ground plane material (any stage); updated by BANK_BRIGHT_MULT tuner
 let bankStumps5    = [];  // Stage 5 tree-stump sprite pool
 let bankFarms5     = [];  // Stage 5 farm-house sprite pool (farm-house-1 and farm-house-2)
 let bankFishing5   = [];  // Stage 5 fishing-supplies sprite pool
@@ -335,6 +369,9 @@ new THREE.TextureLoader().load(
 var waterStageTex    = null;
 var waterStageTex2   = null;
 var bankStageTex     = null;
+var bankGrassTex     = null;  // bank-stage1-grass.png: seamless 1024x1024 photo grass
+var GROUND_TEX_WORLD = 4.0;   // world units per texture tile (all bank/apron stages); tuner: Ctrl+[ / Ctrl+]
+var BANK_BRIGHT_MULT = 1.0;   // ground material color multiplier (0=black, 1=unmodified); tuner: Ctrl+Shift+[/]
 var riverbedStageTex = null;
 var riverbedMesh     = null;   // module-level ref for late-patching texture after async load
 var riverbedTexRef   = null;   // live texture instance on the riverbed mesh; scrolled each frame
@@ -377,6 +414,14 @@ var treeTexNames = ['tree-pine-tall.png', 'tree-broadleaf-tall.png', 'tree-round
     bankStageTex = tex;
   }, undefined, function(e) { console.error('[KRR] bank-stage1.png FAILED', e); });
 
+  loader.load('bank-stage1-grass.png', function(tex) {
+    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true; tex.needsUpdate = true;
+    bankGrassTex = tex;
+    console.log('[KRR] bank-stage1-grass.png OK');
+  }, undefined, function(e) { console.error('[KRR] bank-stage1-grass.png FAILED', e); });
+
   loader.load('riverbed-stage1.png', function(tex) {
     console.log('[KRR] Preload OK: riverbed-stage1.png');
     tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
@@ -403,6 +448,24 @@ var treeTexNames = ['tree-pine-tall.png', 'tree-broadleaf-tall.png', 'tree-round
       }, undefined, function(e) { console.error('[KRR] ' + treeTexNames[idx] + ' FAILED', e); });
     })(ti);
   }
+})();
+
+// ── ORANGE COLLECTIBLE TEXTURE PRELOAD ───────────────────────────────────
+var orangeCollTex = null; // orange.png sprite; used by makeCollMesh3('orange') for unlit true-color render
+(function() {
+  new THREE.TextureLoader().load('orange.png', function(tex) {
+    tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true; tex.needsUpdate = true;
+    orangeCollTex = tex;
+    // Late-patch any already-spawned orange collectibles (texture race)
+    collectibles3.forEach(function(c) {
+      if (c.type === 'orange' && c.mesh && c.mesh.material) {
+        c.mesh.material.map = tex;
+        c.mesh.material.color.setHex(0xFFFFFF);
+        c.mesh.material.needsUpdate = true;
+      }
+    });
+  }, undefined, function(e) { console.error('[KRR] orange.png FAILED', e); });
 })();
 
 // ── BOULDER TEXTURE PRELOAD ──────────────────────────────────────────
@@ -435,9 +498,26 @@ var boulderObsTexNames = ['boulder-2.png', 'boulder-3.png', 'boulder-5.png'];
   }
 })();
 
+// ── BILLBOARD TEXTURE PRELOAD ─────────────────────────────────────────────
+// Three roadside sign PNGs, bottom-anchored (posts + grass base).
+// Natural aspect ratios (W/H): billboard-1=1.689, billboard-2=1.458, billboard-3=1.484
+var billboardTex   = [null, null, null];
+var billboardNatAR = [512/303, 512/351, 512/345];
+(function preloadBillboardTex() {
+  var _bbl = new THREE.TextureLoader();
+  ['billboard-1.png', 'billboard-2.png', 'billboard-3.png'].forEach(function(name, idx) {
+    _bbl.load(name, function(tex) {
+      // Anisotropy applied at sprite-creation time via renderer (module-level).
+      tex.magFilter = THREE.LinearFilter;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.generateMipmaps = true;
+      tex.needsUpdate = true;
+      billboardTex[idx] = tex;
+    }, undefined, function(e) { console.error('[KRR] ' + name + ' FAILED', e); });
+  });
+})();
+
 // Stage 3 grass texture for bank ground and bank-box surfaces
-var GRASS3_REPEAT       = 12;    // tiles across the 200-unit ground plane; tune for pixel scale
-var GRASS3_SCROLL_MULT  = 1.0;   // scale the grass scroll rate; 1.0 = same as Stage 1 bank segs
 var grassStage3Tex = null;
 (function preloadGrass3Tex() {
   new THREE.TextureLoader().load('grass-stage3.png', function(tex) {
@@ -449,7 +529,9 @@ var grassStage3Tex = null;
   }, undefined, function(e) { console.error('[KRR] grass-stage3.png FAILED', e); });
 })();
 
-// Stage 5 terrain bank ground texture (dry-swamp-terrain.png left on disk but no longer referenced for Stage 5)
+// Stage 5 terrain textures:
+//   swampTerrainTex = new-stage-5-terrain-blur.png  (blurred scroll tex; retained for far ground plane UV scroll)
+//   marshTerrainTex = bank-stage5-marsh.png          (bright marsh art; used for close bank segs / aprons / ground plane)
 var swampTerrainTex = null;
 (function preloadSwampTerrain5() {
   new THREE.TextureLoader().load('new-stage-5-terrain-blur.png', function(tex) {
@@ -459,6 +541,16 @@ var swampTerrainTex = null;
     swampTerrainTex = tex;
     console.log('[KRR] stage5 terrain loaded: new-stage-5-terrain-blur.png');
   }, undefined, function(e) { console.error('[KRR] new-stage-5-terrain-blur.png FAILED', e); });
+})();
+var marshTerrainTex = null;
+(function() {
+  new THREE.TextureLoader().load('bank-stage5-marsh.png', function(tex) {
+    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true; tex.needsUpdate = true;
+    marshTerrainTex = tex;
+    console.log('[KRR] bank-stage5-marsh.png OK');
+  }, undefined, function(e) { console.error('[KRR] bank-stage5-marsh.png FAILED', e); });
 })();
 
 // Stage 3 lake-house landmark sprites
@@ -867,7 +959,11 @@ function buildWorld() {
   bankTrees3 = [];
   bankBoulders3.forEach(function(bb) { scene.remove(bb.sprite); if (bb.sprite.material) bb.sprite.material.dispose(); });
   bankBoulders3 = [];
-  bankSegs3   = [];
+  bankBillboards3.forEach(function(bb) { scene.remove(bb.sprite); if (bb.sprite.material) bb.sprite.material.dispose(); });
+  bankBillboards3 = [];
+  _lastBillboardIdx = -1;
+  bankSegs3    = [];
+  groundChain3 = [];
   bankAprons3 = [];   // geometries disposed by riverGroup traverse above
   laneDivs3   = [];
   bankPoppies3.forEach(function(pp) {
@@ -876,8 +972,10 @@ function buildWorld() {
     if (pp.glow) { scene.remove(pp.glow); if (pp.glow.material) pp.glow.material.dispose(); }
   });
   bankPoppies3 = [];
-  _activePopBloom.forEach(function(bl) { scene.remove(bl.sprite); if (bl.sprite.material) bl.sprite.material.dispose(); });
-  _activePopBloom = [];
+  if (_poppyBloomSpr) { scene.remove(_poppyBloomSpr); _poppyBloomSpr.material.dispose(); _poppyBloomSpr = null; }
+  // Preserve the worn hat flower across stage changes; only destroy it if the shield is not active
+  if (_hatPoppySpr && !player3.hasShield) { if (_hatPoppySpr.parent) _hatPoppySpr.parent.remove(_hatPoppySpr); _hatPoppySpr.material.dispose(); _hatPoppySpr = null; }
+  _poppyPickSt = 0; _poppyPickPp = null; _hatKnockSt = 0; _poppyShieldWas = false;
   bankHouses3.forEach(function(bh) { scene.remove(bh.sprite); if (bh.sprite.material) bh.sprite.material.dispose(); });
   bankHouses3 = [];
   bankStumps5.forEach(function(b5) { scene.remove(b5.sprite); if (b5.sprite.material) b5.sprite.material.dispose(); });
@@ -888,14 +986,23 @@ function buildWorld() {
   bankFishing5 = [];
   canyonWalls4.forEach(function(cw) { scene.remove(cw.sprite); if (cw.sprite.material) cw.sprite.material.dispose(); });
   canyonWalls4 = [];
-  canyonFill4.forEach(function(m) { if (m.parent) m.parent.remove(m); if (m.geometry) m.geometry.dispose(); if (m.material) m.material.dispose(); });
+  // Dispose shared canyon fill material once, then free per-segment geometries
+  if (canyonFillSegs4.length > 0 && canyonFillSegs4[0].mesh.material) {
+    var _cfmD = canyonFillSegs4[0].mesh.material;
+    if (_cfmD.map) _cfmD.map.dispose();
+    _cfmD.dispose();
+  }
+  canyonFillSegs4.forEach(function(s) { if (s.mesh.parent) s.mesh.parent.remove(s.mesh); s.mesh.geometry.dispose(); });
+  canyonFillSegs4 = [];
   canyonFill4 = [];
   rockWallMats4 = [];
   bankSegMats3  = [];
+  bankGrassMats1 = [];
   grassBankMats3 = [];
   floorMats4    = [];
-  swampBankMats5 = [];
   s5GndScrollTex = null;
+  gndPlaneTex    = null;
+  gndPlaneMat    = null;
   riverbedMesh   = null;
   riverbedTexRef = null;
   if (horizonGrp)   { scene.remove(horizonGrp); horizonGrp = null; }
@@ -912,28 +1019,42 @@ function buildWorld() {
   const rw  = riverWidth();
   riverGroup = new THREE.Group();
 
+  var gndW = 200;
+  var gndZ = (stg.num === 5) ? 600 : 170;
+  var _maxAniso = renderer.capabilities.getMaxAnisotropy();
   // Ground -- widened to 200 units so grass fills past screen edges on all sides
   var gndMat;
-  if (stg.num === 1 && bankStageTex) {
-    // Stage 1: pixel-art grass texture, no tint
-    var gt = bankStageTex.clone(); gt.needsUpdate = true;
+  gndPlaneTex = null;
+  gndPlaneMat = null;
+  if (stg.num === 1 && bankGrassTex) {
+    // Stage 1: same seamless photo grass as bank segments so ground reads as one continuous surface
+    var gt = bankGrassTex.clone(); gt.needsUpdate = true;
     gt.wrapS = THREE.RepeatWrapping; gt.wrapT = THREE.RepeatWrapping;
-    gt.magFilter = THREE.NearestFilter; gt.minFilter = THREE.NearestFilter;
-    gt.generateMipmaps = false;
-    gt.repeat.set(40, 40);
-    gndMat = new THREE.MeshLambertMaterial({ map: gt });
+    gt.magFilter = THREE.LinearFilter; gt.minFilter = THREE.LinearMipmapLinearFilter;
+    gt.generateMipmaps = true; gt.anisotropy = _maxAniso;
+    gt.repeat.set(gndW / GROUND_TEX_WORLD, gndZ / GROUND_TEX_WORLD);
+    gndMat = new THREE.MeshLambertMaterial({ color: new THREE.Color().setScalar(BANK_BRIGHT_MULT), map: gt });
+    gndPlaneTex = gt; gndPlaneMat = gndMat;
   } else if (stg.num === 2 && riverbedStageTex) {
     // Stage 2 wide water: BasicMaterial (no lighting) so pebble shows true color through water
     var gt2 = riverbedStageTex.clone(); gt2.needsUpdate = true;
-    gt2.repeat.set(40, 40);
+    gt2.wrapS = THREE.RepeatWrapping; gt2.wrapT = THREE.RepeatWrapping;
+    gt2.magFilter = THREE.LinearFilter; gt2.minFilter = THREE.LinearMipmapLinearFilter;
+    gt2.generateMipmaps = true; gt2.anisotropy = _maxAniso;
+    gt2.repeat.set(gndW / GROUND_TEX_WORLD, gndZ / GROUND_TEX_WORLD);
     gndMat = new THREE.MeshBasicMaterial({ color: 0xA0988A, map: gt2 });
+    gndPlaneTex = gt2;
   } else if (stg.num === 3) {
     // Stage 3 lake: BasicMaterial (no Lambert blow-out); grass texture if loaded, solid fallback
     if (grassStage3Tex) {
       var gt3 = grassStage3Tex.clone(); gt3.needsUpdate = true;
-      gt3.repeat.set(GRASS3_REPEAT, GRASS3_REPEAT);
-      gndMat = new THREE.MeshBasicMaterial({ map: gt3 });
+      gt3.wrapS = THREE.RepeatWrapping; gt3.wrapT = THREE.RepeatWrapping;
+      gt3.magFilter = THREE.LinearFilter; gt3.minFilter = THREE.LinearMipmapLinearFilter;
+      gt3.generateMipmaps = true; gt3.anisotropy = _maxAniso;
+      gt3.repeat.set(gndW / GROUND_TEX_WORLD, gndZ / GROUND_TEX_WORLD);
+      gndMat = new THREE.MeshBasicMaterial({ color: new THREE.Color().setScalar(BANK_BRIGHT_MULT), map: gt3 });
       grassBankMats3.push(gt3);
+      gndPlaneTex = gt3; gndPlaneMat = gndMat;
     } else {
       gndMat = new THREE.MeshBasicMaterial({ color: stg.bankColor });
     }
@@ -944,24 +1065,26 @@ function buildWorld() {
     if (riverbedStageTex) {
       var gt4 = riverbedStageTex.clone(); gt4.needsUpdate = true;
       gt4.wrapS = THREE.RepeatWrapping; gt4.wrapT = THREE.RepeatWrapping;
-      gt4.magFilter = THREE.NearestFilter; gt4.minFilter = THREE.NearestFilter;
-      gt4.generateMipmaps = false;
-      gt4.repeat.set(WALL4_FLOOR_REPEAT, WALL4_FLOOR_REPEAT);
-      gndMat = new THREE.MeshBasicMaterial({ color: WALL4_FLOOR_TINT, map: gt4 });
+      gt4.magFilter = THREE.LinearFilter; gt4.minFilter = THREE.LinearMipmapLinearFilter;
+      gt4.generateMipmaps = true; gt4.anisotropy = _maxAniso;
+      gt4.repeat.set(gndW / GROUND_TEX_WORLD, gndZ / GROUND_TEX_WORLD);
+      gndMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(WALL4_FLOOR_TINT).multiplyScalar(BANK_BRIGHT_MULT), map: gt4 });
       floorMats4.push(gt4);
+      gndPlaneTex = gt4; gndPlaneMat = gndMat;
     } else {
       gndMat = new THREE.MeshBasicMaterial({ color: stg.bankColor });
     }
   } else if (stg.num === 5) {
-    // Stage 5: dedicated scrolling clone so auto-scroll and [/] seat tuner don't fight over the same offset.y
-    if (swampTerrainTex) {
-      var gndTex5 = swampTerrainTex.clone(); gndTex5.needsUpdate = true;
+    // Stage 5: dedicated scrolling clone so auto-scroll does not fight with offset.y
+    if (marshTerrainTex) {
+      var gndTex5 = marshTerrainTex.clone(); gndTex5.needsUpdate = true;
       gndTex5.wrapS = THREE.RepeatWrapping; gndTex5.wrapT = THREE.RepeatWrapping;
-      gndTex5.magFilter = THREE.NearestFilter; gndTex5.minFilter = THREE.NearestFilter;
-      gndTex5.generateMipmaps = false;
-      gndTex5.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y);
-      gndMat = new THREE.MeshBasicMaterial({ map: gndTex5 });
+      gndTex5.magFilter = THREE.LinearFilter; gndTex5.minFilter = THREE.LinearMipmapLinearFilter;
+      gndTex5.generateMipmaps = true; gndTex5.anisotropy = _maxAniso;
+      gndTex5.repeat.set(gndW / GROUND_TEX_WORLD, gndZ / GROUND_TEX_WORLD);
+      gndMat = new THREE.MeshBasicMaterial({ color: new THREE.Color().setScalar(BANK_BRIGHT_MULT), map: gndTex5 });
       s5GndScrollTex = gndTex5;
+      gndPlaneTex = gndTex5; gndPlaneMat = gndMat;
     } else {
       gndMat = new THREE.MeshBasicMaterial({ color: stg.backdrop ? stg.backdrop.bankGrass : stg.bankColor });
       s5GndScrollTex = null;
@@ -969,11 +1092,54 @@ function buildWorld() {
   } else {
     gndMat = new THREE.MeshLambertMaterial({ color: stg.bankColor });
   }
-  var gndZ = (stg.num === 5) ? 600 : 170;
-  const gnd = new THREE.Mesh(new THREE.PlaneGeometry(200, gndZ), gndMat);
+  const gnd = new THREE.Mesh(new THREE.PlaneGeometry(gndW, gndZ), gndMat);
   gnd.rotation.x = -Math.PI / 2; gnd.position.set(0, -0.02, -55); gnd.receiveShadow = true;
   gnd.renderOrder = 0;
   riverGroup.add(gnd);
+
+  // ── Ground chain: BK_SEG_N geometric tiles sharing the bank-seg scroll clock ──────────────
+  // STEP 1 of terrain-seam fix. Far plane stays for now; remove it in STEP 2 after this passes.
+  groundChain3 = [];
+  (function _buildGndChain() {
+    var _tileD    = BK_SEG_Z + 0.25;   // 5.75 wu — same depth+overlap as bank segs
+    var _gcSrcTex = null;
+    if      (stg.num === 1 && bankGrassTex)     _gcSrcTex = bankGrassTex;
+    else if (stg.num === 2 && riverbedStageTex) _gcSrcTex = riverbedStageTex;
+    else if (stg.num === 3 && grassStage3Tex)   _gcSrcTex = grassStage3Tex;
+    else if (stg.num === 4 && riverbedStageTex) _gcSrcTex = riverbedStageTex;
+    else if (stg.num === 5 && marshTerrainTex)  _gcSrcTex = marshTerrainTex;
+    var _gcMat;
+    if (_gcSrcTex) {
+      var _gcT = _gcSrcTex.clone(); _gcT.needsUpdate = true;
+      _gcT.wrapS = THREE.RepeatWrapping; _gcT.wrapT = THREE.RepeatWrapping;
+      _gcT.magFilter = THREE.LinearFilter; _gcT.minFilter = THREE.LinearMipmapLinearFilter;
+      _gcT.generateMipmaps = true; _gcT.anisotropy = _maxAniso;
+      _gcT.repeat.set(gndW / GROUND_TEX_WORLD, _tileD / GROUND_TEX_WORLD);
+      if (stg.num === 1) {
+        _gcMat = new THREE.MeshLambertMaterial({ color: new THREE.Color().setScalar(BANK_BRIGHT_MULT), map: _gcT });
+      } else if (stg.num === 2) {
+        _gcMat = new THREE.MeshBasicMaterial({ color: 0xA0988A, map: _gcT });
+      } else if (stg.num === 4) {
+        _gcMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(WALL4_FLOOR_TINT).multiplyScalar(BANK_BRIGHT_MULT), map: _gcT });
+      } else {
+        _gcMat = new THREE.MeshBasicMaterial({ color: new THREE.Color().setScalar(BANK_BRIGHT_MULT), map: _gcT });
+      }
+    } else {
+      _gcMat = gndMat.clone();
+    }
+    var _gcGeo = new THREE.PlaneGeometry(gndW, _tileD);
+    for (var _gi = 0; _gi < BK_SEG_N; _gi++) {
+      var _gz = -70.0 + _gi * BK_SEG_Z + BK_SEG_Z * 0.5;
+      var _gm = new THREE.Mesh(_gcGeo, _gcMat);
+      _gm.rotation.x = -Math.PI / 2;
+      _gm.position.set(0, -0.02, _gz);
+      _gm.renderOrder = 0;
+      _gm.receiveShadow = true;
+      riverGroup.add(_gm);
+      groundChain3.push({ mesh: _gm, z: _gz });
+    }
+    console.log('[KRR] groundChain3 built: ' + groundChain3.length + ' tiles, tileD=' + _tileD + ', stage=' + stg.num);
+  })();
 
   // Riverbed -- always created for Stage 1 (backdrop stages) so the mesh exists before
   // the async texture load completes. Fallback color 0xC4A46B (sandy tan) shows if the
@@ -1065,6 +1231,10 @@ function buildWorld() {
   // Play lanes, water surface, lane dividers, spawns, and collision are all untouched.
   if (stg.num !== 2) {
     const bkColor   = stg.backdrop ? stg.backdrop.bankGrass : stg.bankColor;
+    if (stg.num === 1) {
+      console.log('[KRR S1 BANK] bkColor=#' + bkColor.toString(16).padStart(6, '0') + ' bankGrassTex=' + (bankGrassTex ? 'loaded' : 'MISSING'));
+      console.log('[KRR] maxAnisotropy=' + renderer.capabilities.getMaxAnisotropy());
+    }
     // Stage 3 + 4: BasicMaterial so rocky/grass bank color renders at exact hex without Lambert blow-out
     const bkBaseMat = (stg.num === 3 || stg.num === 4)
       ? new THREE.MeshBasicMaterial({ color: bkColor })
@@ -1076,6 +1246,44 @@ function buildWorld() {
     const BK_SEG_Z  = 5.5;
     const BK_SEG_N  = 18;
     const BK_Z0     = -70.0;
+
+    // Apron slope hypotenuse -- constant for this build (depends only on SHORE_W and heights).
+    // One shared material so all aprons in this stage get the same texel density.
+    var _apronDepth = BK_SEG_Z + 0.25;
+    var _slopeLen   = Math.hypot(SHORE_W, 0.60 - SHORE_TOE_Y);
+    var _apronMat;
+    if (stg.num === 1 && bankGrassTex) {
+      var _aTex = bankGrassTex.clone(); _aTex.needsUpdate = true;
+      _aTex.wrapS = THREE.RepeatWrapping; _aTex.wrapT = THREE.RepeatWrapping;
+      _aTex.magFilter = THREE.LinearFilter; _aTex.minFilter = THREE.LinearMipmapLinearFilter;
+      _aTex.generateMipmaps = true; _aTex.anisotropy = _maxAniso;
+      _aTex.repeat.set(_slopeLen / GROUND_TEX_WORLD, _apronDepth / GROUND_TEX_WORLD);
+      _apronMat = new THREE.MeshLambertMaterial({ color: new THREE.Color().setScalar(BANK_BRIGHT_MULT), map: _aTex });
+    } else if (stg.num === 3 && grassStage3Tex) {
+      var _aTex3 = grassStage3Tex.clone(); _aTex3.needsUpdate = true;
+      _aTex3.wrapS = THREE.RepeatWrapping; _aTex3.wrapT = THREE.RepeatWrapping;
+      _aTex3.magFilter = THREE.LinearFilter; _aTex3.minFilter = THREE.LinearMipmapLinearFilter;
+      _aTex3.generateMipmaps = true; _aTex3.anisotropy = _maxAniso;
+      _aTex3.repeat.set(_slopeLen / GROUND_TEX_WORLD, _apronDepth / GROUND_TEX_WORLD);
+      _apronMat = new THREE.MeshBasicMaterial({ color: new THREE.Color().setScalar(BANK_BRIGHT_MULT), map: _aTex3 });
+    } else if (stg.num === 4 && riverbedStageTex) {
+      var _aTex4 = riverbedStageTex.clone(); _aTex4.needsUpdate = true;
+      _aTex4.wrapS = THREE.RepeatWrapping; _aTex4.wrapT = THREE.RepeatWrapping;
+      _aTex4.magFilter = THREE.LinearFilter; _aTex4.minFilter = THREE.LinearMipmapLinearFilter;
+      _aTex4.generateMipmaps = true; _aTex4.anisotropy = _maxAniso;
+      _aTex4.repeat.set(_slopeLen / GROUND_TEX_WORLD, _apronDepth / GROUND_TEX_WORLD);
+      _apronMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(WALL4_FLOOR_TINT).multiplyScalar(BANK_BRIGHT_MULT), map: _aTex4 });
+    } else if (stg.num === 5 && marshTerrainTex) {
+      var _aTex5 = marshTerrainTex.clone(); _aTex5.needsUpdate = true;
+      _aTex5.wrapS = THREE.RepeatWrapping; _aTex5.wrapT = THREE.RepeatWrapping;
+      _aTex5.magFilter = THREE.LinearFilter; _aTex5.minFilter = THREE.LinearMipmapLinearFilter;
+      _aTex5.generateMipmaps = true; _aTex5.anisotropy = _maxAniso;
+      _aTex5.repeat.set(_slopeLen / GROUND_TEX_WORLD, _apronDepth / GROUND_TEX_WORLD);
+      _apronMat = new THREE.MeshBasicMaterial({ color: new THREE.Color().setScalar(BANK_BRIGHT_MULT), map: _aTex5 });
+    } else {
+      _apronMat = bkBaseMat.clone();
+    }
+
     for (const bkSide of [-1, 1]) {
       const bkPhase = bkSide === 1 ? 0 : Math.PI * 0.55;
       for (let bkSi = 0; bkSi < BK_SEG_N; bkSi++) {
@@ -1085,42 +1293,36 @@ function buildWorld() {
         // Bank pushed out by SHORE_W; apron fills the gap from rw/2 to rw/2+SHORE_W
         const bkXCtr = bkSide * (rw / 2 + SHORE_W + segW / 2);
         var bkSegMat;
-        if (stg.num === 1 && bankStageTex) {
-          // Stage 1: pixel-art grass texture
-          var bkTex = bankStageTex.clone(); bkTex.needsUpdate = true;
+        // Per-segment texture clone; repeat derived from real world size for constant texel density.
+        var bkSegMat;
+        if (stg.num === 1 && bankGrassTex) {
+          var bkTex = bankGrassTex.clone(); bkTex.needsUpdate = true;
           bkTex.wrapS = THREE.RepeatWrapping; bkTex.wrapT = THREE.RepeatWrapping;
-          bkTex.magFilter = THREE.NearestFilter; bkTex.minFilter = THREE.NearestFilter;
-          bkTex.generateMipmaps = false;
-          bkTex.repeat.set(Math.ceil(segW / 2), 1);
-          bkSegMat = new THREE.MeshLambertMaterial({ map: bkTex });
-          bankSegMats3.push(bkTex);
+          bkTex.magFilter = THREE.LinearFilter; bkTex.minFilter = THREE.LinearMipmapLinearFilter;
+          bkTex.generateMipmaps = true; bkTex.anisotropy = _maxAniso;
+          bkTex.repeat.set(segW / GROUND_TEX_WORLD, _apronDepth / GROUND_TEX_WORLD);
+          bkSegMat = new THREE.MeshLambertMaterial({ color: new THREE.Color().setScalar(BANK_BRIGHT_MULT), map: bkTex });
         } else if (stg.num === 3 && grassStage3Tex) {
-          // Stage 3: same grass texture, BasicMaterial so lighting does not blow it out
           var bkTex3 = grassStage3Tex.clone(); bkTex3.needsUpdate = true;
           bkTex3.wrapS = THREE.RepeatWrapping; bkTex3.wrapT = THREE.RepeatWrapping;
-          bkTex3.magFilter = THREE.NearestFilter; bkTex3.minFilter = THREE.NearestFilter;
-          bkTex3.generateMipmaps = false;
-          bkTex3.repeat.set(Math.ceil(segW / 2), 1);
-          bkSegMat = new THREE.MeshBasicMaterial({ map: bkTex3 });
-          grassBankMats3.push(bkTex3);
+          bkTex3.magFilter = THREE.LinearFilter; bkTex3.minFilter = THREE.LinearMipmapLinearFilter;
+          bkTex3.generateMipmaps = true; bkTex3.anisotropy = _maxAniso;
+          bkTex3.repeat.set(segW / GROUND_TEX_WORLD, _apronDepth / GROUND_TEX_WORLD);
+          bkSegMat = new THREE.MeshBasicMaterial({ color: new THREE.Color().setScalar(BANK_BRIGHT_MULT), map: bkTex3 });
         } else if (stg.num === 4 && riverbedStageTex) {
-          // Stage 4: pebble texture on bank box-segments; BasicMaterial for exact-color render
           var bkTex4 = riverbedStageTex.clone(); bkTex4.needsUpdate = true;
           bkTex4.wrapS = THREE.RepeatWrapping; bkTex4.wrapT = THREE.RepeatWrapping;
-          bkTex4.magFilter = THREE.NearestFilter; bkTex4.minFilter = THREE.NearestFilter;
-          bkTex4.generateMipmaps = false;
-          bkTex4.repeat.set(Math.ceil(segW / 2), 1);
-          bkSegMat = new THREE.MeshBasicMaterial({ color: WALL4_FLOOR_TINT, map: bkTex4 });
-          floorMats4.push(bkTex4);
-        } else if (stg.num === 5 && swampTerrainTex) {
-          // Stage 5: per-segment clone so UV scroll is visible (same approach as Stages 1/3/4)
-          var bkTex5 = swampTerrainTex.clone(); bkTex5.needsUpdate = true;
+          bkTex4.magFilter = THREE.LinearFilter; bkTex4.minFilter = THREE.LinearMipmapLinearFilter;
+          bkTex4.generateMipmaps = true; bkTex4.anisotropy = _maxAniso;
+          bkTex4.repeat.set(segW / GROUND_TEX_WORLD, _apronDepth / GROUND_TEX_WORLD);
+          bkSegMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(WALL4_FLOOR_TINT).multiplyScalar(BANK_BRIGHT_MULT), map: bkTex4 });
+        } else if (stg.num === 5 && marshTerrainTex) {
+          var bkTex5 = marshTerrainTex.clone(); bkTex5.needsUpdate = true;
           bkTex5.wrapS = THREE.RepeatWrapping; bkTex5.wrapT = THREE.RepeatWrapping;
-          bkTex5.magFilter = THREE.NearestFilter; bkTex5.minFilter = THREE.NearestFilter;
-          bkTex5.generateMipmaps = false;
-          bkTex5.repeat.set(Math.ceil(segW / 2), 1);
-          bkSegMat = new THREE.MeshBasicMaterial({ map: bkTex5 });
-          swampBankMats5.push(bkTex5);
+          bkTex5.magFilter = THREE.LinearFilter; bkTex5.minFilter = THREE.LinearMipmapLinearFilter;
+          bkTex5.generateMipmaps = true; bkTex5.anisotropy = _maxAniso;
+          bkTex5.repeat.set(segW / GROUND_TEX_WORLD, _apronDepth / GROUND_TEX_WORLD);
+          bkSegMat = new THREE.MeshBasicMaterial({ color: new THREE.Color().setScalar(BANK_BRIGHT_MULT), map: bkTex5 });
         } else {
           bkSegMat = bkBaseMat.clone();
         }
@@ -1131,14 +1333,17 @@ function buildWorld() {
         bkSeg.position.set(bkXCtr, 0.30, bkZCtr);
         bkSeg.castShadow = true; bkSeg.receiveShadow = true;
         riverGroup.add(bkSeg);
-        bankSegs3.push({ mesh: bkSeg, side: bkSide, segW: segW });
+        // Store z and bkPhase so the per-frame scroll loop can recycle and re-meander.
+        // Apron reference filled in below after _shM is created.
+        var _bsEntry = { mesh: bkSeg, apron: null, side: bkSide, segW: segW, z: bkZCtr, bkPhase: bkPhase };
+        bankSegs3.push(_bsEntry);
 
         // Sloped apron: build per-side so each has correct winding without scale.x=-1 inversion.
         // outerX = bkSide * SHORE_W: right bank goes +x, left bank goes -x.
         // Winding chosen so computeVertexNormals() produces normal pointing UP and toward water center.
         //   right (bkSide=+1): [0,1,2,1,3,2] → normal (-0.53, +0.85, 0) toward -x and up
         //   left  (bkSide=-1): [0,2,1,1,2,3] → normal (+0.53, +0.85, 0) toward +x and up
-        var _shHZ    = (BK_SEG_Z + 0.25) / 2;
+        var _shHZ    = _apronDepth / 2;
         var _shOuter = bkSide * SHORE_W;
         var _shV = new Float32Array([
           0,         SHORE_TOE_Y, _shHZ,
@@ -1152,11 +1357,12 @@ function buildWorld() {
         _shG.setAttribute('uv',       new THREE.BufferAttribute(_shUV, 2));
         _shG.setIndex(bkSide > 0 ? [0, 1, 2, 1, 3, 2] : [0, 2, 1, 1, 2, 3]);
         _shG.computeVertexNormals();
-        var _shM = new THREE.Mesh(_shG, bkSegMat);
+        var _shM = new THREE.Mesh(_shG, _apronMat);
         _shM.position.set(bkSide * (rw / 2), 0, bkZCtr);
         _shM.receiveShadow = true;
         riverGroup.add(_shM);
         bankAprons3.push({ mesh: _shM, side: bkSide });
+        _bsEntry.apron = _shM; // link apron into seg entry for z-scroll
       }
     }
   }
@@ -1183,10 +1389,12 @@ function buildWorld() {
   if (stg.num === 5) { initBankDecor5(rw); }
   else if (stg.num === 4) {
     initCanyonWalls4(rw);
-    addCanyonBackfill4(riverGroup, rw);
+    initCanyonFillPool4(riverGroup, rw);
     console.log('[KRR S4 AUDIT] wallBoulders=' + canyonWalls4.length + ' otherBankBoulders=' + bankBoulders3.length);
   }
-  initBankPoppies3(rw);
+  // No poppies in Stage 2 (stageIdx 1) or Stage 4 (stageIdx 3) -- water-heavy stages
+  if (stageIdx !== 1 && stageIdx !== 3) { initBankPoppies3(rw); }
+  if (BILLBOARD_STAGES.indexOf(STAGES3[stageIdx].num) !== -1) { initBankBillboards3(rw); }
   applyRiverWidth();
 
   // Part 1: Current flow streaks -- z-aligned lines above the water surface (y=0.16).
@@ -1295,10 +1503,7 @@ var SHORE5_FOAM_COLOR   = 0x8A8578;  // Stage 5: dusty stone-brown wet edge (no 
 var SHORE5_FOAM_OPACITY = 0.12;      // Stage 5: near-invisible so edge reads as dry rocky bed
 var S5_BD_SCALE = 0.86; // Stage 5 backdrop initial scale (TEMP framing tuner; bake before launch)
 var S5_BD_Y    = -3.0;  // Stage 5 backdrop Y offset from default y=26 (TEMP framing tuner)
-var S5_TERR_REPEAT_X = 12;   // Stage 5 swamp terrain X repeat (TEMP tuner; bake before launch)
-var S5_TERR_REPEAT_Y = 12;   // Stage 5 swamp terrain Y repeat
 var S5_TERR_SCROLL   = 1.0;  // Stage 5 swamp terrain scroll multiplier
-var S5_TERR_Y        = 0.0;  // Stage 5 swamp terrain UV seat (phase offset)
 // Stage 5 bank decoration pool sizes (module-level; tunable live via Ctrl+F7-F12)
 var S5_POOL_BASE     = 8;   // decor pool multiplier (Ctrl+F11/-F12 tune)
 var S5_TREE_COUNT    = 16;  // bank tree count for stage 5 only (Ctrl+F9/F10)
@@ -1311,7 +1516,10 @@ var S5_FREQ_FISHING      = 0.15;   // rare
 // Stage 5 bank decoration sprite heights (world units); aspect width computed from image
 var S5_STUMP_SCALE     = 2.5;
 var S5_FARMHOUSE_SCALE = 11.9;
-var S5_FARMHOUSE_SEAT_Y = -3.00; // bottom anchor Y; large negative corrects ~27% bottom padding in farm-house art; tune with , / . keys
+var GROUND_PLANE_Y     = -0.02; // far ground plane surface Y; matches gnd.position.y in buildWorld
+var DECOR_SEAT_GND     = -0.02; // seat Y for all far-ground decor (houses, stumps, fishing, trees, boulders); [ / ] to tune
+var S5_FARMHOUSE_SEAT_Y = -3.23; // bottom anchor Y; seats building base at GROUND_PLANE_Y (-0.02) accounting for ~27% art padding (0.27*11.9=3.21); set by DECOR_SEAT_GND - 3.21 in per-frame loop
+var BANK_BLDG_SEAT_Y   = 0.60;  // bank top Y reference (bank box height=0.60, center 0.30); reserved for decor that sits ON the bank, not the far ground
 var S5_FISHING_SCALE   = 3.50;  // 2.0 base x 2.5 x 0.7
 var S5_CART_SEAT_Y     = -0.20;  // bottom anchor Y; sinks lower ~third of cart below water surface (y=0.15)
 var S5_LOG_SEAT_Y      = -2.70;  // bottom anchor Y; corrects ~47-50% transparent bottom padding in fallen-log art; tune with ; / ' keys
@@ -1324,9 +1532,36 @@ var ENDING_WATER_START    = 161;   // mile where water starts receding (safely a
 var ENDING_WATER_GONE     = 164;   // mile where water is fully receded
 var ENDING_PAUSE_MS       = 3000;  // dead pause after boat beaches (ms)
 var ENDING_FADE_DUR_MS    = 1500;  // "Victory?" fade-in duration (ms)
-var ENDING_VICTORY_HOLD_MS = 2500; // hold time after "Victory?" is fully visible (ms) -- legacy, unused by new card
-var VICTORY_FONT_PX = 44;          // "Victory?" letter size in px; live-tune with F2 (down) / F3 (up)
-var ENDING_MSG_FADE_MS = 2500;     // final message fade-in duration (ms); tune with Shift+F2/F3
+var VICTORY_FONT_PX       = 44;    // "Victory?" letter size in px; live-tune with F2/F3
+var ENDING_MSG_FADE_MS    = 2500;  // final message fade-in duration (ms); tune with Shift+F2/F3
+// ── TITLE CARD TIMING (all stages + dramatic Victory? ending) ──────
+var TITLE_ENTER_MS  = 500;   // standard enter animation duration ms; Shift+T/G to tune
+var TITLE_HOLD_MS   = 1500;  // stage card hold duration ms; Shift+Y/H to tune
+var TITLE_SHRINK_MS = 700;   // shrink-to-top animation duration ms
+var TITLE_FONT_PX   = 28;    // large font size during enter/hold; Shift+U/J to tune
+var TITLE_HALO_BLUR = 12;    // px, dark halo blur behind title text; { / } to tune live
+var TITLE_HALO_OP   = 0.65;  // 0-1, dark halo opacity; _ / + to tune live
+// Sync halo values to CSS custom properties so live DOM title elements repaint on tuner change:
+document.documentElement.style.setProperty('--krr-halo-blur', TITLE_HALO_BLUR + 'px');
+document.documentElement.style.setProperty('--krr-halo-op', String(TITLE_HALO_OP));
+var STAGE_LABEL_PX      = 9;  // HUD stage name font size px; Shift+F4/F5 to tune
+var HUD_ORANGE_ICON_PX  = 14; // HUD orange icon size (px); Shift+B/M to tune
+var HUD_ORANGE_COUNT_PX = 10; // HUD orange count font size (px); Shift+S/N to tune
+var HUD_FONT_SCALE      = 1.0; // group scale multiplier applied to all HUD text; Ctrl+, / Ctrl+. to tune
+// Apply group scale to all HUD text elements; called once on init and on tuner keypress.
+function _applyHudFontScale() {
+  var _hs = HUD_FONT_SCALE;
+  var _h3 = document.getElementById('hud3');         if (_h3) _h3.style.height = Math.round(62 * _hs) + 'px';
+  var _mi = document.getElementById('hud3-mile');    if (_mi) _mi.style.fontSize = Math.round(7 * _hs) + 'px';
+  var _sn = document.getElementById('hud3-stageNum');if (_sn) _sn.style.fontSize = Math.round(7 * _hs) + 'px';
+  var _sc = document.getElementById('hud3-score');   if (_sc) _sc.style.fontSize = Math.round(12 * _hs) + 'px';
+  var _be = document.getElementById('hud3-best');    if (_be) _be.style.fontSize = Math.round(8 * _hs) + 'px';
+  var _oc = document.getElementById('hud3-orange-count'); if (_oc) _oc.style.fontSize = Math.round(10 * _hs) + 'px';
+  var _oi = document.getElementById('hud3-orange-icon');  if (_oi) { _oi.style.width = Math.round(14 * _hs) + 'px'; _oi.style.height = Math.round(14 * _hs) + 'px'; }
+  var _mc = document.querySelectorAll('.hud3-micro'); for (var _mi2 = 0; _mi2 < _mc.length; _mi2++) _mc[_mi2].style.fontSize = Math.round(5 * _hs) + 'px';
+  console.log('[KRR HUD] HUD_FONT_SCALE=' + HUD_FONT_SCALE.toFixed(2));
+}
+_applyHudFontScale(); // set initial sizes from JS (overrides CSS base)
 // ── OBSTACLE GLB CONSTANTS ──────────────────────────────────────────
 // OBS_GLB_BRIGHT: color multiplier for MeshBasicMaterial (1.0 = full brightness).
 // <NAME>_SCALE: applied on top of auto-fit scale (rw / rawW for full-width, LANE_W / rawW for cart).
@@ -1354,9 +1589,37 @@ var POPPY_GAP_RANGE  = 150;   // extra random gap range
 var POPPY_W          = 2.2;   // sprite width; height = 0.53*W; tune Shift+F11/F12
 var POPPY_SEAT_Y     = 0.52;  // y at sprite base (center(0.5,0)); tune Shift+F9/F10
 var POPPY_GLOW_SCALE = 1.4;   // glow blob scale multiplier (relative to POPPY_W)
-var POPPY_LEAN_ANG  = 0.38;  // max glbTorsoNode rotation.z toward bank on pickup
-var POPPY_LEAN_DUR  = 27;    // frames for reach animation (~0.45s at 60fps)
-var POPPY_REACH_Z   = -4.0;  // z where reach detection starts (poppy approaching; pops earlier than old COLL_FRONT)
+var POPPY_LEAN_ANG   = 0.38;  // max torso lean (rad) toward bank at contact
+// ── pick-up timing (ms) ──────────────────────────────────────────────
+var POPPY_PULL_MS    = 1200;  // total motion duration                   Ctrl+F1/F2
+var POPPY_REACH_MS   = 450;   // contact fires this many ms after reach start  Ctrl+F3/F4
+var POPPY_RETRACT_MS = 550;   // retract duration after contact          Ctrl+F5/F6
+var POPPY_SEAT_MS    = 200;   // bloom-to-hat seat duration after retract
+// ── zazz ─────────────────────────────────────────────────────────────
+var POPPY_SWAY_AMP   = 0.06;  // sprite sway amplitude (rad); Ctrl+Shift+S/D to tune
+var POPPY_SWAY_SPD   = 0.025; // sway phase per frame
+// ── hat poppy (shield indicator) ─────────────────────────────────────
+// poppy-hat.png: 256x317 bloom-on-stub, stem tip at bottom edge (v=1).
+// Anchored by stem tip (center.set(0.41, 0.0)); bloom nods above placement point.
+// Parented to glbTorsoGroup so it leans with the entire upper body.
+// Position is in waist-group-local (GLB-native) space:
+//   local.x = POPPY_HAT_MX, local.y = POPPY_HAT_MY - TORSO_HINGE_Y, local.z = POPPY_HAT_MZ - TORSO_HINGE_Z
+// Hat spans y 0.73..0.93 in model space; band at y~0.73, front-left: x~+0.08, z~+0.20.
+var POPPY_HAT_MY     = 0.75;  // band height in GLB-native Y; Ctrl+Shift+Y/U
+var POPPY_HAT_MZ     = 0.20;  // forward offset (GLB +Z = toward camera); Ctrl+Shift+I/O
+var POPPY_HAT_MX     = 0.08;  // left offset (GLB +X = character left); Ctrl+Shift+G/J
+var POPPY_HAT_SCALE  = 0.32;   // model-local size; world size = SCALE * KAYAKER_SCALE(1.31) ~0.42; Ctrl+Shift+K/L
+var POPPY_PICK_SIZE  = 0.6;    // world-space start size of traveling bloom (scene-parented sprite)
+console.log('[KRR HAT] POPPY_HAT_SCALE=' + POPPY_HAT_SCALE + ' POPPY_PICK_SIZE=' + POPPY_PICK_SIZE);
+var POPPY_HAT_TILT   = 0.22;  // rest lean angle (radians, CCW = outward); Ctrl+Shift+C/V
+var POPPY_HAT_SWAY_K = 0.40;  // multiplier: kayakTurnY3 -> extra tilt; Ctrl+Shift+N/M
+// Torso hinge pivot in GLB-native space (before KAYAKER_SCALE=1.31 and rotY=PI).
+// world_y = TORSO_HINGE_Y * 1.31 ~ 0.30;  world_z = -TORSO_HINGE_Z * 1.31 ~ 0.16
+// Torso bbox (world): y 0.11..0.59  z 0.00..0.33; waist ~ world (0, 0.30, 0.16).
+var TORSO_HINGE_Y    = 0.229;  // Ctrl+Shift+F7/F8 +/-0.01
+var TORSO_HINGE_Z    = -0.122; // Ctrl+Shift+F9/F10 +/-0.01 (negative = GLB forward)
+// ── reach detection window ───────────────────────────────────────────
+var POPPY_REACH_Z    = -7.0;  // z where reach starts (early -- well before player-level)
 // ===== TEMP DEV ENDING-JUMP (REMOVE BEFORE LAUNCH) =====
 var ENDING_TEST_MILE = 155;
 // ===== END TEMP DEV ENDING-JUMP =====
@@ -1453,6 +1716,12 @@ function makeBankTreeSprite(variety, h) {
 var STAGE3_TREE_COUNT    = 21;   // tune to thin or thicken Stage 3 bank trees
 var STAGE3_BOULDER_COUNT = 11;   // sparser than trees by design; tune separately
 
+// ── BILLBOARD CONSTANTS ───────────────────────────────────────────────────
+var BILLBOARD_SCALE     = 3.5;   // world-unit height of sign; Shift+C/F to tune (-/+0.25)
+var BILLBOARD_GAP_MIN   = 1000;  // min z-gap before next billboard appears after despawn; Shift+Q/E to tune
+var BILLBOARD_GAP_RANGE = 500;   // random extra gap on top of min
+var BILLBOARD_STAGES    = [1, 3, 5]; // stg.num values where billboards spawn; edit directly to change
+
 function initBankTrees3(rw, bd, count) {
   var TREE_COUNT = (count !== undefined) ? count : 32;
   for (var ti = 0; ti < TREE_COUNT; ti++) {
@@ -1464,7 +1733,7 @@ function initBankTrees3(rw, bd, count) {
     var zInit   = SPAWN_Z + (ti / TREE_COUNT) * (Math.abs(SPAWN_Z) + 12);
     var h       = makeBankTreeHeight(variety);
     var spr     = makeBankTreeSprite(variety, h);
-    spr.position.set(xBase, 0.30, zInit);
+    spr.position.set(xBase, DECOR_SEAT_GND, zInit);
     scene.add(spr);
     bankTrees3.push({ sprite: spr, side: side, z: zInit, xOff: xOff });
   }
@@ -1494,9 +1763,39 @@ function initBankBoulders3(rw, count) {
     var spr = new THREE.Sprite(mat);
     spr.center.set(0.5, 0);
     spr.scale.set(bW, bH, 1);
-    spr.position.set(xBase, 0, zInit);
+    spr.position.set(xBase, DECOR_SEAT_GND, zInit);
     scene.add(spr);
     bankBoulders3.push({ sprite: spr, side: side, z: zInit, xOff: xOff, shoreW: SHORE_W });
+  }
+}
+
+// ── SCROLLING BILLBOARD POOL ──────────────────────────────────────────────
+// Rare roadside signs on stages 1, 3, 5. Pool of 3 sprites (staggered so at most
+// one is visible at a time). Gap-based rarity like poppies; texture cycles to
+// avoid back-to-back repeats. Bottom-anchored, anisotropy-filtered.
+function initBankBillboards3(rw) {
+  var POOL = 3;
+  var _maxA = renderer.capabilities.getMaxAnisotropy();
+  for (var bbi = 0; bbi < POOL; bbi++) {
+    var bbSide  = (bbi % 2 === 0) ? -1 : 1;
+    var bbTIdx  = bbi % 3;
+    var bbAR    = billboardNatAR[bbTIdx];
+    var bbH     = BILLBOARD_SCALE;
+    var bbTex   = billboardTex[bbTIdx];
+    var bbMat   = new THREE.SpriteMaterial({
+      map: bbTex || null, transparent: true, alphaTest: 0.05, depthWrite: false
+    });
+    if (bbTex) { bbTex.anisotropy = _maxA; bbTex.needsUpdate = true; }
+    var bbSpr   = new THREE.Sprite(bbMat);
+    bbSpr.center.set(0.5, 0);   // bottom-anchored: base sits on ground
+    bbSpr.scale.set(bbH * bbAR, bbH, 1);
+    var bbXOff  = 2.5 + Math.random() * 2.0;  // world units past bank-top edge
+    var bbXBase = bbSide * (rw / 2 + SHORE_W + bbXOff);
+    // Stagger widely so sprites don't all arrive at once
+    var bbZ     = SPAWN_Z - (BILLBOARD_GAP_MIN + Math.random() * BILLBOARD_GAP_RANGE) * (bbi + 1);
+    bbSpr.position.set(bbXBase, 0.30, bbZ);
+    scene.add(bbSpr);
+    bankBillboards3.push({ sprite: bbSpr, side: bbSide, z: bbZ, xOff: bbXOff, texIdx: bbTIdx });
   }
 }
 
@@ -1509,6 +1808,7 @@ function initBankPoppies3(rw) {
     var tex   = side === -1 ? _poppyTexL : _poppyTexR;
     var mat   = new THREE.SpriteMaterial({ map: tex || null, transparent: true, depthWrite: false });
     var spr   = new THREE.Sprite(mat);
+    spr.renderOrder = 5;
     spr.center.set(0.5, 0);
     spr.scale.set(POPPY_W, 0.53 * POPPY_W, 1);
     // tuftX: the real-world x of the tuft anchor (no SHORE_W -- POPPY_BANK_OFF is absolute from water edge)
@@ -1521,15 +1821,21 @@ function initBankPoppies3(rw) {
     var bloomY = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
     var glowMat = new THREE.SpriteMaterial({
       map: _poppyGlowTex || null, transparent: true,
-      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.30
+      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.40
     });
     var glowSpr = new THREE.Sprite(glowMat);
     glowSpr.center.set(0.5, 0.5);
     glowSpr.scale.setScalar(POPPY_GLOW_SCALE * POPPY_W);
-    glowSpr.renderOrder = -1;
+    glowSpr.renderOrder = 4;
     glowSpr.position.set(bloomX, bloomY, zInit);
     scene.add(glowSpr);
-    bankPoppies3.push({ sprite: spr, glow: glowSpr, side: side, z: zInit, picked: false, claimed: false, tuftU: tuftU, bloomU: bloomU, glowFlareSt: 0 });
+    bankPoppies3.push({
+      sprite: spr, glow: glowSpr, side: side, z: zInit,
+      picked: false, claimed: false, tuftU: tuftU, bloomU: bloomU,
+      glowFlareSt: 0,
+      swayPhase: Math.random() * Math.PI * 2, // per-poppy sway phase offset
+      recoilSt: 0, recoilDir: 1               // recoil wobble after bloom detach
+    });
   }
 }
 
@@ -1623,74 +1929,69 @@ function rebuildCanyonFull4() {
     canyonWalls4[ri].sprite.geometry.dispose();
   }
   canyonWalls4 = [];
-  for (var qi = 0; qi < canyonFill4.length; qi++) {
-    riverGroup.remove(canyonFill4[qi]);
-    canyonFill4[qi].material.dispose();
-    canyonFill4[qi].geometry.dispose();
+  if (canyonFillSegs4.length > 0 && canyonFillSegs4[0].mesh.material) {
+    var _rfMat = canyonFillSegs4[0].mesh.material;
+    if (_rfMat.map) _rfMat.map.dispose();
+    _rfMat.dispose();
   }
+  canyonFillSegs4.forEach(function(s) { if (s.mesh.parent) s.mesh.parent.remove(s.mesh); s.mesh.geometry.dispose(); });
+  canyonFillSegs4 = [];
   canyonFill4 = [];
   rockWallMats4 = [];
   var rw4 = riverWidth();
-  addCanyonBackfill4(riverGroup, rw4);
+  initCanyonFillPool4(riverGroup, rw4);
   initCanyonWalls4(rw4);
   console.log('[KRR WALL4 COVER] count=' + WALL4_COUNT + ' coverX=' + WALL4_COVER_X.toFixed(1) + ' rockTop=' + WALL4_ROCK_TOP.toFixed(1));
 }
 // ===== END TEMP WALL4 COVER helper =====
 
-// Stage 4: continuous textured rock-wall quad per side.
-// Geometry: a quad raking from (E, yBot) at the channel edge up-and-outward to (E+WIDTH, TOP).
-// Spans the full stage length in Z so no backdrop shows through boulder sprite gaps.
-// Mirror-identical left/right. renderOrder=0 draws before boulders (1-5); Z-depth keeps it behind backdrop.
-function addCanyonBackfill4(rg, rw) {
-  var E      = rw / 2;                      // channel half-width (4.4 for Stage 4)
-  var W      = WALL4_ROCK_WIDTH;            // outward X extent
-  var H      = WALL4_ROCK_TOP;             // top-edge height -- clears frame at all depths
-  var yBot   = -0.5;                        // bottom tucked below ground plane
-  var z_near = DESPAWN_Z - 1;              // front end just ahead of camera (CAM_Z_BK=8.5)
-  var z_far  = SPAWN_Z   - 5;             // back end past spawn
-  console.log('[KRR WALL4 ROCK] E=' + E.toFixed(1) + ' W=' + W + ' H=' + H + ' z=' + z_far + '->' + z_near + ' tint=0x' + WALL4_ROCK_TINT.toString(16));
-  for (var side = -1; side <= 1; side += 2) {
-    var xInner = side * E;                   // channel edge
-    var xOuter = side * (E + W);             // outer top edge
-    // 4-vertex quad; U axis along Z (stage length), V axis along slope (bottom to top).
-    // winding: viewed from channel interior, front face is visible (DoubleSide also used as safety).
-    var pos = new Float32Array([
-      xInner, yBot, z_far,    // 0 bottom-far
-      xInner, yBot, z_near,   // 1 bottom-near
-      xOuter, H,    z_near,   // 2 top-near
-      xOuter, H,    z_far,    // 3 top-far
-    ]);
-    var uv = new Float32Array([
-      0, 0,   // 0
-      1, 0,   // 1
-      1, 1,   // 2
-      0, 1,   // 3
-    ]);
-    var geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('uv',       new THREE.BufferAttribute(uv,  2));
-    geo.setIndex([0, 1, 2,  0, 2, 3]);
-    var tex = null;
-    if (riverbedStageTex) {
-      tex = riverbedStageTex.clone();
-      tex.needsUpdate    = true;
-      tex.wrapS          = THREE.RepeatWrapping;
-      tex.wrapT          = THREE.RepeatWrapping;
-      tex.magFilter      = THREE.NearestFilter;
-      tex.minFilter      = THREE.NearestFilter;
-      tex.generateMipmaps = false;
-      tex.repeat.set(WALL4_ROCK_RPT_U, WALL4_ROCK_RPT_V);
+// Stage 4: z-scrolling rock-wall segment pool. BK_SEG_N sloped quads per side recycle like
+// bank segments so the texture moves with the world instead of via UV offset animation.
+// Each segment is a trapezoid: inner-bottom at (E, yBot) raking to outer-top at (E+W, H).
+function initCanyonFillPool4(rg, rw) {
+  var E    = rw / 2;
+  var W    = WALL4_ROCK_WIDTH;
+  var H    = WALL4_ROCK_TOP;
+  var yBot = -0.5;
+  var halfZ = (BK_SEG_Z + 0.25) / 2;
+  var z0   = SPAWN_Z - 5;  // same starting Z as bank segs (BK_Z0)
+  console.log('[KRR CANYON FILL POOL] N=' + BK_SEG_N + 'x2 segs E=' + E.toFixed(1) + ' W=' + W + ' H=' + H + ' tint=0x' + WALL4_ROCK_TINT.toString(16));
+  // One shared texture + material for all segments; texture repeat per segment
+  var cfTex = null;
+  if (riverbedStageTex) {
+    cfTex = riverbedStageTex.clone();
+    cfTex.needsUpdate = true;
+    cfTex.wrapS = THREE.RepeatWrapping; cfTex.wrapT = THREE.RepeatWrapping;
+    cfTex.magFilter = THREE.NearestFilter; cfTex.minFilter = THREE.NearestFilter;
+    cfTex.generateMipmaps = false;
+    // U repeat per segment = total_tiles / N so density matches the old single quad
+    cfTex.repeat.set(WALL4_ROCK_RPT_U / BK_SEG_N, WALL4_ROCK_RPT_V);
+  }
+  var cfMat = new THREE.MeshBasicMaterial({ color: WALL4_ROCK_TINT, map: cfTex || null, side: THREE.DoubleSide });
+  for (var cfSide = -1; cfSide <= 1; cfSide += 2) {
+    var xInner = cfSide * E;
+    var xOuter = cfSide * (E + W);
+    for (var cfSi = 0; cfSi < BK_SEG_N; cfSi++) {
+      var zCtr = z0 + cfSi * BK_SEG_Z + BK_SEG_Z * 0.5;
+      // Segment-local Z: -halfZ = back edge (far from camera), +halfZ = front edge (near)
+      var pos = new Float32Array([
+        xInner, yBot, -halfZ,  // 0 bottom-back
+        xInner, yBot, +halfZ,  // 1 bottom-front
+        xOuter, H,   +halfZ,   // 2 top-front
+        xOuter, H,   -halfZ,   // 3 top-back
+      ]);
+      var uv = new Float32Array([0, 0,  1, 0,  1, 1,  0, 1]);
+      var geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('uv',       new THREE.BufferAttribute(uv,  2));
+      geo.setIndex([0, 1, 2,  0, 2, 3]);
+      var mesh = new THREE.Mesh(geo, cfMat);
+      mesh.renderOrder = 0;
+      mesh.position.z = zCtr;
+      rg.add(mesh);
+      canyonFill4.push(mesh);
+      canyonFillSegs4.push({ mesh: mesh, z: zCtr });
     }
-    var mat = new THREE.MeshBasicMaterial({
-      color:      WALL4_ROCK_TINT,
-      map:        tex || null,
-      side:       THREE.DoubleSide,
-    });
-    var mesh = new THREE.Mesh(geo, mat);
-    mesh.renderOrder = 0;  // draws before boulders (renderOrder 1-5); Z-depth puts it in front of backdrop
-    canyonFill4.push(mesh);
-    if (tex) rockWallMats4.push(tex);
-    rg.add(mesh);
   }
 }
 
@@ -1713,7 +2014,6 @@ var WALL4_TINT_JITTER  = 0.35; // max brightness reduction; reads as individual 
 var WALL4_NEAR_SCALE   = 1.15; // height mult at near (camera) end (TEMP SIZE tuner: n/m)
 var WALL4_FAR_SCALE    = 0.45; // height multiplier at far (backdrop) end
 // Floor (pebble riverbed)
-var WALL4_FLOOR_REPEAT      = 40;
 var WALL4_FLOOR_TINT        = 0xFFFFFF;
 var WALL4_FLOOR_SCROLL_MULT = 1.0;
 // Opaque rock wall seal behind boulders -- quad per side raking from channel edge up and out
@@ -1749,7 +2049,7 @@ function initBankHouses3(rw) {
       ? tex.image.naturalWidth / tex.image.naturalHeight
       : 1.0;   // square fallback; late-patch corrects it once texture loads
     spr.scale.set(STAGE3_HOUSE_SCALE * hAspInit, STAGE3_HOUSE_SCALE, 1);
-    spr.position.set(xBase, 0, zInit);
+    spr.position.set(xBase, DECOR_SEAT_GND, zInit);
     scene.add(spr);
     bankHouses3.push({ sprite: spr, side: side, z: zInit, texIdx: texIdx, xOff: xOff });
   }
@@ -1789,7 +2089,7 @@ function initBankDecor5(rw) {
     var sXOff = groundClutterXOff();
     var sX = groundClutterX(rw, sSide, sXOff);
     var sZ = SPAWN_Z + (si / stumpCount) * zSpan;
-    sspr.position.set(sX, 0, sZ);
+    sspr.position.set(sX, DECOR_SEAT_GND, sZ);
     scene.add(sspr);
     bankStumps5.push({ sprite: sspr, side: sSide, z: sZ, xOff: sXOff });
   }
@@ -1806,7 +2106,7 @@ function initBankDecor5(rw) {
     var fXOff = setbackXOff();
     var fX = setbackX(rw, fSide, fXOff);
     var fZ = SPAWN_Z + (fi / farmCount) * zSpan;
-    fspr.position.set(fX, S5_FARMHOUSE_SEAT_Y, fZ);
+    fspr.position.set(fX, DECOR_SEAT_GND - 3.21, fZ);
     scene.add(fspr);
     bankFarms5.push({ sprite: fspr, side: fSide, z: fZ, texIdx: fTexI, xOff: fXOff });
   }
@@ -1822,7 +2122,7 @@ function initBankDecor5(rw) {
     var fsXOff = groundClutterXOff();
     var fsX = groundClutterX(rw, fsSide, fsXOff);
     var fsZ = SPAWN_Z + (fsi / fishCount) * zSpan;
-    fsspr.position.set(fsX, 0, fsZ);
+    fsspr.position.set(fsX, DECOR_SEAT_GND, fsZ);
     scene.add(fsspr);
     bankFishing5.push({ sprite: fsspr, side: fsSide, z: fsZ, xOff: fsXOff });
   }
@@ -2040,6 +2340,9 @@ function buildStageBackdrop(stg) {
 
     scene.add(wfGroup);
   }
+
+  // Re-seat the worn hat flower if the player carries a shield into this stage
+  if (player3.hasShield) { _ensureHatPoppy3(_poppyPickSide); }
 }
 
 // ── KAYAK HULL GEOMETRY (custom hex-prism with pointed bow/stern) ─
@@ -2397,12 +2700,31 @@ var STROKE_DIP  = 0.35;   // radians - alternating blade dip amplitude (main L/R
 var STROKE_PULL = 0.12;   // radians - fore/aft rock amplitude (secondary)
 var TORSO_ROCK  = 0.08;   // radians - counter-phase torso lean amplitude
 
+// Arm shoulder-pivot constants (GLB-native space, same frame as TORSO_HINGE_*)
+// Shoulder pivot at top of arm bbox; converted to world via * KAYAKER_SCALE / rotY=PI
+var ARM_HINGE_Y   = 0.55;   // shoulder height in GLB-native Y; tuner: Ctrl+Shift+Q/W
+var ARM_HINGE_Z   = 0.22;   // shoulder depth in GLB-native Z; tuner: Ctrl+Shift+E/R
+var ARM_R_HINGE_X = 0.15;   // right arm GLB-native X (ARM L mirrors to -X)
+var ARM_REACH_ANG = 0.55;   // radians; outward+down reach angle; tuner: Ctrl+Shift+A/Z
+
 // GLB paddle animation state -- null until GLB loads (null = fallback box model is active)
 var glbPaddleGroup       = null;
-var glbTorsoNode         = null;
+var glbTorsoNode         = null; // the actual torso Mesh from the GLB
+var glbTorsoGroup        = null; // empty Group at waist pivot; child of torsoNode.parent
+var glbArmRNode          = null; // GLB-native +X arm mesh
+var glbArmRGroup         = null; // shoulder hinge Group for right arm (child of waist group)
+var glbArmLNode          = null; // GLB-native -X arm mesh
+var glbArmLGroup         = null; // shoulder hinge Group for left arm (child of waist group)
+var _ubNodes             = [];   // direct mesh children of waist group; repositioned on hinge tuner change
+var _paddlePivot         = new THREE.Vector3(); // shaft bbox center in model space; saved for re-hinging
 var strokePhase          = 0;
 var glbTorsoSquashFrames = 0;  // counts down from 8 on landing; drives JUMP_LAND_SQUASH decay
 var _strokeDbgTick = 0;  // throttle for per-frame stroke log
+// ===== TEMP DIAG: black-patch isolation =====
+var _kayakerMeshes  = [];   // all mesh nodes from GLB; populated on load
+var _kayakerHideIdx = -1;   // index of currently hidden mesh (-1 = all visible); Ctrl+Shift+H steps
+var _breathFrozen   = false; // Ctrl+Shift+B: hold torso at max-forward rotation to freeze the artifact
+// ===== END TEMP DIAG =====
 
 if (typeof THREE.GLTFLoader === 'undefined') {
   console.warn('[kayaker] THREE.GLTFLoader not found - keeping hand-built fallback.');
@@ -2427,6 +2749,10 @@ if (typeof THREE.GLTFLoader === 'undefined') {
         if (!node.isMesh) return;
         _allMeshes.push(node);
         var m = node.material;
+        // Capture source-material facts BEFORE overwriting
+        var _srcMapType = m.emissiveMap ? 'emissiveMap' : (m.map ? 'map' : 'null');
+        var _srcTransp  = m.transparent || false;
+        var _srcAlpha   = m.alphaTest   || 0;
         node.material = new THREE.MeshBasicMaterial({
           map:         m.emissiveMap || m.map || null,
           transparent: m.transparent || false,
@@ -2434,22 +2760,41 @@ if (typeof THREE.GLTFLoader === 'undefined') {
           side:        THREE.DoubleSide  // always DoubleSide; FrontSide (=0) is not undefined so the old guard always chose FrontSide, causing back-face culling when the torso rocked
         });
         node.material.color.setScalar(KAYAKER_BRIGHT);
-        var _bb = new THREE.Box3().setFromObject(node);
-        var _sz = new THREE.Vector3(); _bb.getSize(_sz);
-        console.log('[KRR MESH] name=' + node.name +
-          ' sz=' + _sz.x.toFixed(3) + 'x' + _sz.y.toFixed(3) + 'x' + _sz.z.toFixed(3));
+        // ===== TEMP DIAG: full mesh report for black-patch diagnosis =====
+        var _vtx  = (node.geometry && node.geometry.attributes.position) ? node.geometry.attributes.position.count : -1;
+        var _dbb  = new THREE.Box3().setFromObject(node);
+        var _dmn  = _dbb.min, _dmx = _dbb.max;
+        var _dnm  = node.material;
+        console.log('[KRR MESH DIAG]' +
+          ' name="' + node.name + '"' +
+          ' verts=' + _vtx +
+          ' mat=' + _dnm.constructor.name +
+          ' srcMap=' + _srcMapType +
+          ' map=' + (_dnm.map ? 'SET' : 'null') +
+          ' color=#' + _dnm.color.getHexString() +
+          ' side=' + _dnm.side +        // 0=Front 1=Back 2=Double
+          ' depthWrite=' + _dnm.depthWrite +
+          ' transparent=' + _dnm.transparent +
+          ' alphaTest=' + _srcAlpha +
+          ' renderOrder=' + node.renderOrder +
+          ' bbox=[' + _dmn.x.toFixed(3) + ',' + _dmn.y.toFixed(3) + ',' + _dmn.z.toFixed(3) +
+          ']→[' + _dmx.x.toFixed(3) + ',' + _dmx.y.toFixed(3) + ',' + _dmx.z.toFixed(3) + ']');
+        // ===== END TEMP DIAG =====
       });
+      // Store for Ctrl+Shift+H mesh-isolation key
+      _kayakerMeshes = _allMeshes.slice();
 
-      // A3: Robust paddle identification by geometry rather than by name.
-      // Importing may rename root.6 -> root_6 or similar, so getObjectByName is unreliable.
-      // Shaft: largest X span with Y and Z both < 15% of X span (very thin rod).
-      // Blades: of remaining meshes, the two with most extreme bounding-box X centers.
-      // Torso: of remaining meshes after shaft+blades removed, the one with largest Y span.
+      // A3: Robust mesh identification by geometry (names are unreliable after import).
+      // Shaft: largest X span where Y and Z are both < 15% of X (very thin rod).
+      // Blades: of non-shaft nodes, the two with most extreme bbox center-X.
+      // Hull: of remaining body nodes, the one with lowest min-Y (sits on water, must not lean).
+      // Upper body: everything except hull; all go into the waist hinge group.
+      // Arms: upper-body nodes whose bbox center-X is > 0.08 (right) or < -0.08 (left).
       var _bbCache = _allMeshes.map(function(n) {
         var bb = new THREE.Box3().setFromObject(n);
         var sz = new THREE.Vector3(); bb.getSize(sz);
         var ct = new THREE.Vector3(); bb.getCenter(ct);
-        return { mesh: n, sz: sz, cx: ct.x };
+        return { mesh: n, sz: sz, cx: ct.x, miny: bb.min.y };
       });
 
       var _shaftE = null;
@@ -2464,27 +2809,48 @@ if (typeof THREE.GLTFLoader === 'undefined') {
       var _bladeLe = _noShaft.length > 0 ? _noShaft[0] : null;
       var _bladeRe = _noShaft.length > 1 ? _noShaft[_noShaft.length - 1] : null;
 
+      // Non-paddle body nodes sorted by Y-span descending
       var _rest = _noShaft.filter(function(e) { return e !== _bladeLe && e !== _bladeRe; });
       _rest.sort(function(a, b) { return b.sz.y - a.sz.y; });
-      glbTorsoNode = _rest.length > 0 ? _rest[0].mesh : null;
+
+      // Hull = lowest min-Y (the only node that starts near y=0; must not rotate)
+      var _hullE = _rest.reduce(function(best, e) {
+        return (!best || e.miny < best.miny) ? e : best;
+      }, null);
+
+      // Upper body = all body nodes except hull
+      var _upperBodyEntries = _rest.filter(function(e) { return e !== _hullE; });
+
+      // Torso sentinel: kept as non-null indicator that GLB loaded (animation code checks it)
+      glbTorsoNode = _upperBodyEntries.length > 0 ? _upperBodyEntries[0].mesh : null;
+
+      // Arms identified by bbox center-X; only arms have |cx| > ~0.08 among body nodes
+      glbArmRNode = null; glbArmLNode = null;
+      _upperBodyEntries.forEach(function(e) {
+        if      (e.cx >  0.08) glbArmRNode = e.mesh;
+        else if (e.cx < -0.08) glbArmLNode = e.mesh;
+      });
 
       var _nL = _bladeLe ? _bladeLe.mesh : null;
       var _nR = _bladeRe ? _bladeRe.mesh : null;
       var _nS = _shaftE  ? _shaftE.mesh  : null;
 
+      console.log('[KRR BODY] hull='  + (_hullE ? _hullE.mesh.name : 'NOT_FOUND') +
+        ' torso=' + (glbTorsoNode ? glbTorsoNode.name : 'NOT_FOUND') +
+        ' armR='  + (glbArmRNode ? glbArmRNode.name : 'NOT_FOUND') +
+        ' armL='  + (glbArmLNode ? glbArmLNode.name : 'NOT_FOUND') +
+        ' ubCount=' + _upperBodyEntries.length);
       console.log('[KRR PADDLE] shaft=' + (_nS ? _nS.name : 'NOT_FOUND') +
         ' bladeL=' + (_nL ? _nL.name : 'NOT_FOUND') +
-        ' bladeR=' + (_nR ? _nR.name : 'NOT_FOUND') +
-        ' torso='  + (glbTorsoNode ? glbTorsoNode.name : 'NOT_FOUND'));
+        ' bladeR=' + (_nR ? _nR.name : 'NOT_FOUND'));
 
       if (_nL && _nR && _nS) {
         var _shaftBB = new THREE.Box3().setFromObject(_nS);
-        var _pivot   = new THREE.Vector3();
-        _shaftBB.getCenter(_pivot);
+        _shaftBB.getCenter(_paddlePivot); // save module-level for _applyTorsoHinge
         glbPaddleGroup = new THREE.Group();
-        glbPaddleGroup.position.copy(_pivot);
+        glbPaddleGroup.position.copy(_paddlePivot);
         var _pParent = _nS.parent;
-        var _antiPiv = _pivot.clone().negate();
+        var _antiPiv = _paddlePivot.clone().negate();
         [_nL, _nR, _nS].forEach(function(n) {
           _pParent.remove(n);
           n.position.copy(_antiPiv);
@@ -2492,7 +2858,7 @@ if (typeof THREE.GLTFLoader === 'undefined') {
         });
         _pParent.add(glbPaddleGroup);
         console.log('[KRR PADDLE] groupChildren=' + glbPaddleGroup.children.length +
-          ' pivot=' + _pivot.x.toFixed(3) + ',' + _pivot.y.toFixed(3) + ',' + _pivot.z.toFixed(3));
+          ' pivot=' + _paddlePivot.x.toFixed(3) + ',' + _paddlePivot.y.toFixed(3) + ',' + _paddlePivot.z.toFixed(3));
       } else {
         console.warn('[KRR PADDLE] geometry identification failed - glbPaddleGroup stays null');
       }
@@ -2504,6 +2870,68 @@ if (typeof THREE.GLTFLoader === 'undefined') {
       playerGroup.add(model);
       console.log('[kayaker] kayaker-bright.glb loaded. scale=' + KAYAKER_SCALE +
         ' rotY=' + KAYAKER_ROT_Y + ' paddle=' + (glbPaddleGroup ? 'OK' : 'null'));
+
+      // Waist hinge group: all upper-body nodes (torso/head/hat/arms + paddle) become children.
+      // Every GLB node has an identity transform, so its model-space position is (0,0,0).
+      // The group sits at the waist pivot; each child is offset by -pivot so it appears
+      // at its original place. Rotating the group pivots the whole upper body as one unit.
+      if (glbTorsoNode) {
+        var _tParent = glbTorsoNode.parent; // model scene root (same for all sibling nodes)
+        glbTorsoGroup = new THREE.Group();
+        glbTorsoGroup.position.set(0, TORSO_HINGE_Y, TORSO_HINGE_Z);
+        _tParent.add(glbTorsoGroup);
+
+        // Non-arm upper-body nodes go directly into the waist group
+        _upperBodyEntries.forEach(function(e) {
+          var n = e.mesh;
+          if (n === glbArmRNode || n === glbArmLNode) return; // arms handled below
+          _tParent.remove(n);
+          n.position.set(0, -TORSO_HINGE_Y, -TORSO_HINGE_Z);
+          glbTorsoGroup.add(n);
+          _ubNodes.push(n); // tracked so _applyTorsoHinge can re-offset on tuner change
+        });
+
+        // Paddle group moves into the waist group; adjust from model-root-local to waist-local
+        if (glbPaddleGroup) {
+          _tParent.remove(glbPaddleGroup);
+          glbPaddleGroup.position.set(
+            _paddlePivot.x,
+            _paddlePivot.y - TORSO_HINGE_Y,
+            _paddlePivot.z - TORSO_HINGE_Z
+          );
+          glbTorsoGroup.add(glbPaddleGroup);
+        }
+
+        // Arm sub-groups NESTED INSIDE the waist group.
+        // armGroup.position is in waist-local space = shoulder_model - waist_pivot.
+        // armNode.position cancels both levels: n.pos = -shoulder_model.
+        if (glbArmRNode) {
+          glbArmRGroup = new THREE.Group();
+          glbArmRGroup.position.set( ARM_R_HINGE_X, ARM_HINGE_Y - TORSO_HINGE_Y, ARM_HINGE_Z - TORSO_HINGE_Z);
+          glbArmRNode.parent.remove(glbArmRNode);
+          glbArmRNode.position.set(-ARM_R_HINGE_X, -ARM_HINGE_Y, -ARM_HINGE_Z);
+          glbArmRGroup.add(glbArmRNode);
+          glbTorsoGroup.add(glbArmRGroup);
+        }
+        if (glbArmLNode) {
+          glbArmLGroup = new THREE.Group();
+          glbArmLGroup.position.set(-ARM_R_HINGE_X, ARM_HINGE_Y - TORSO_HINGE_Y, ARM_HINGE_Z - TORSO_HINGE_Z);
+          glbArmLNode.parent.remove(glbArmLNode);
+          glbArmLNode.position.set( ARM_R_HINGE_X, -ARM_HINGE_Y, -ARM_HINGE_Z);
+          glbArmLGroup.add(glbArmLNode);
+          glbTorsoGroup.add(glbArmLGroup);
+        }
+
+        model.updateMatrixWorld(true);
+        var _tWP = new THREE.Vector3();
+        glbTorsoGroup.getWorldPosition(_tWP);
+        console.log('[KRR HINGE] waist world=(' + _tWP.x.toFixed(3) + ',' + _tWP.y.toFixed(3) + ',' + _tWP.z.toFixed(3) + ')' +
+          ' armR=' + (glbArmRGroup ? 'OK' : 'null') + ' armL=' + (glbArmLGroup ? 'OK' : 'null') +
+          ' ubNodes=' + _ubNodes.length);
+      }
+      // playerGroup.clear() removed the shield and initial basket; re-attach both now.
+      if (_shieldGroup) playerGroup.add(_shieldGroup);
+      _buildBasket3();
     },
     undefined,
     function(err) {
@@ -2565,6 +2993,7 @@ _preloadObsGlb('boulder-5-lit.glb');
 var _poppyTexL  = null, _poppyTexLP = null, _poppyTexLB = null;
 var _poppyTexR  = null, _poppyTexRP = null, _poppyTexRB = null;
 var _poppyGlowTex = null;
+var _hatFlowerTex = null;  // poppy-hat.png: stem-stub bloom worn in hat band
 (function() {
   var _pldr = new THREE.TextureLoader();
   function _pLoad(name, cb) {
@@ -2581,6 +3010,13 @@ var _poppyGlowTex = null;
   _pLoad('poppy-rightbank-picked.png?v=2',  function(t) { _poppyTexRP = t; });
   _pLoad('poppy-rightbank-bloom.png?v=2',   function(t) { _poppyTexRB = t; });
   _pLoad('poppy-glow.png',                   function(t) { _poppyGlowTex = t; });
+  // Hat flower uses LinearFilter for smooth scaling (not pixel art)
+  new THREE.TextureLoader().load('poppy-hat.png', function(t) {
+    t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.generateMipmaps = true; t.needsUpdate = true;
+    _hatFlowerTex = t;
+    console.log('[KRR] poppy-hat.png OK');
+  }, undefined, function(e) { console.error('[KRR] poppy-hat.png FAILED', e); });
 })();
 
 // ── WATER LIFE: KAYAK WAKE + OBSTACLE RIPPLES (Part 3) ────────────
@@ -2713,12 +3149,241 @@ for (var dpI3 = 0; dpI3 < 60; dpI3++) {
   dropletPool3.push({ mesh: dpMesh3, active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, maxLife: 0 });
 }
 
-// Shield ring (animated torus)
-const shieldMat3 = new THREE.MeshBasicMaterial({ color: 0xF97316, transparent: true, opacity: 0, depthWrite: false });
-const shieldRing = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.065, 8, 28), shieldMat3);
-shieldRing.rotation.x = Math.PI / 2;
-shieldRing.position.set(0, 0.36, 0.08);
-playerGroup.add(shieldRing);
+// ── SHIELD BUBBLE ──────────────────────────────────────────────────────────
+// Boat bounds in playerGroup space: x ±0.425, z ±1.25, y 0..0.60.
+// Paddler top: world y ~0.90. Ellipsoid centered at y=0.45 encloses both.
+// Two nested shells: overlap concentrates opacity at grazing angle -> rim-bright look.
+// renderOrder=4 (above water=2); depthTest=true so opaque boat body clips the interior.
+var SHIELD_COLOR       = 0xF9A03C; // poppy-orange tint of the bubble; edit to change hue
+var SHIELD_INNER_OP    = 0.04;   // inner ellipsoid base opacity; Shift+I/K to tune
+var SHIELD_OUTER_OP    = 0.08;   // outer ellipsoid base opacity; Shift+O/L to tune
+var SHIELD_RADIUS_MULT = 1.0;    // overall scale multiplier; Shift+R/V to tune
+var SHIELD_SHIMMER_A   = 0.015;  // shimmer amplitude (adds to/from base opacity)
+var SHIELD_SHIMMER_F   = 0.018;  // shimmer frequency (rad/frame)
+var SHIELD_HUE_SPEED   = 0.0025; // hue units/frame for iridescent cycle (~6.7s full cycle at 60fps); ~ / | to tune
+
+// ── SHIELD SHARD CONSTANTS ──────────────────────────────────────────────────
+var SHARD_COUNT    = 10;    // shards per burst (pool holds 12); Ctrl+Shift+J/L to tune
+var SHARD_SPEED    = 0.038; // initial outward speed wu/frame; Ctrl+Shift+Y/U to tune
+var SHARD_DURATION = 600;   // ms for full arc + fade; Ctrl+Shift+T/P to tune
+var SHARD_GRAVITY  = 0.003; // gravity per frame (wu/frame²)
+
+var _shieldGroup  = null;  // Group parent for both shells; child of playerGroup
+var _shieldInner  = null;  // smaller ellipsoid (~0.55 x, 0.50 y, 1.35 z)
+var _shieldOuter  = null;  // larger ellipsoid (~0.62 x, 0.57 y, 1.43 z)
+var _shieldBurstSt = 0;    // Date.now() when burst started; 0 = idle
+
+(function() {
+  var _sg = new THREE.SphereGeometry(1, 28, 18);
+  var _iMat = new THREE.MeshBasicMaterial({
+    color: SHIELD_COLOR, transparent: true, opacity: SHIELD_INNER_OP,
+    depthWrite: false, side: THREE.DoubleSide
+  });
+  var _oMat = new THREE.MeshBasicMaterial({
+    color: SHIELD_COLOR, transparent: true, opacity: SHIELD_OUTER_OP,
+    depthWrite: false, side: THREE.DoubleSide
+  });
+  _shieldGroup = new THREE.Group();
+  _shieldGroup.position.set(0, 0.45, 0);
+
+  _shieldInner = new THREE.Mesh(_sg, _iMat);
+  _shieldInner.scale.set(0.55, 0.50, 1.35);
+  _shieldInner.renderOrder = 4;
+
+  _shieldOuter = new THREE.Mesh(_sg, _oMat);
+  _shieldOuter.scale.set(0.62, 0.57, 1.43);
+  _shieldOuter.renderOrder = 4;
+
+  _shieldGroup.add(_shieldInner, _shieldOuter);
+  _shieldGroup.visible = false;
+  playerGroup.add(_shieldGroup);
+})();
+
+// ── SHIELD SHARD POOL ────────────────────────────────────────────────────────
+// 12 pre-built triangle meshes in scene space; reused each burst, never allocated per-hit.
+var _shardPool = []; // [{mesh, active, vx,vy,vz, sx,sy,sz, startT}]
+(function() {
+  var _geo = new THREE.BufferGeometry();
+  // Small irregular triangle: reads as a glass chip/shard
+  var _v = new Float32Array([0, 0.08, 0,  -0.065, -0.05, 0,  0.075, -0.04, 0]);
+  _geo.setAttribute('position', new THREE.BufferAttribute(_v, 3));
+  _geo.computeVertexNormals();
+  for (var _si = 0; _si < 12; _si++) {
+    var _mat = new THREE.MeshBasicMaterial({
+      color: SHIELD_COLOR, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide
+    });
+    var _m = new THREE.Mesh(_geo, _mat);
+    _m.visible = false; _m.renderOrder = 5;
+    scene.add(_m);
+    _shardPool.push({ mesh: _m, active: false, vx: 0, vy: 0, vz: 0, sx: 0, sy: 0, sz: 0, startT: 0 });
+  }
+})();
+
+function _launchShieldShards() {
+  if (_shardPool.length === 0) return;
+  // Sample bubble hue at the moment of break so shards match the shimmer colour
+  var _bHue = (frameN * SHIELD_HUE_SPEED) % 1.0;
+  var _swp  = new THREE.Vector3();
+  playerGroup.getWorldPosition(_swp);
+  _swp.y += 0.45; // _shieldGroup.position.y
+  var _n = Math.min(SHARD_COUNT, _shardPool.length);
+  for (var _i = 0; _i < _shardPool.length; _i++) { _shardPool[_i].active = false; _shardPool[_i].mesh.visible = false; }
+  for (var _j = 0; _j < _n; _j++) {
+    var _sd  = _shardPool[_j];
+    var _ang = (_j / _n) * Math.PI * 2 + (Math.random() - 0.5) * 0.6;
+    var _spd = SHARD_SPEED * (0.7 + Math.random() * 0.6);
+    _sd.vx = Math.cos(_ang) * _spd;
+    _sd.vy = 0.012 + Math.random() * 0.018; // initial upward burst
+    _sd.vz = Math.sin(_ang) * _spd * 0.5;   // shallow depth scatter
+    _sd.sx = (Math.random() - 0.5) * 0.28;
+    _sd.sy = (Math.random() - 0.5) * 0.28;
+    _sd.sz = (Math.random() - 0.5) * 0.35;
+    _sd.startT = Date.now();
+    _sd.mesh.position.set(
+      _swp.x + Math.cos(_ang) * 0.55,
+      _swp.y + (Math.random() - 0.5) * 0.40,
+      _swp.z + Math.sin(_ang) * 0.55
+    );
+    _sd.mesh.rotation.set(
+      Math.random() * Math.PI * 2, Math.random() * Math.PI * 2, Math.random() * Math.PI * 2
+    );
+    _sd.mesh.material.color.setHSL((_bHue + _j * 0.09) % 1.0, 0.90, 0.70);
+    _sd.mesh.material.opacity = 0.80;
+    _sd.mesh.visible = true; _sd.active = true;
+  }
+}
+
+// ── STERN BASKET ─────────────────────────────────────────────────
+// Declared here (before _buildBasket3 is called) so assignments survive execution order.
+var _basketGroup        = null; // Group parent for basket + orange pool; child of playerGroup
+var _orangePileGroup    = null; // sub-group holding orange + rim meshes; Y-shifted by BASKET_HEAP_Y
+var _basketOranges      = [];   // [{mesh, rim, popStartT}] fixed pool of orange sphere meshes
+var _basketPrevOranges  = -1;   // last seen player3.oranges (for re-sync on reset)
+
+// Build (or rebuild after GLB clear) the wicker basket + orange sphere pool
+// as direct children of playerGroup. Called once for the fallback hand-built
+// model and again inside the GLB success callback after playerGroup.clear().
+function _buildBasket3() {
+  // Dispose previous build (happens when GLB load clears playerGroup)
+  if (_basketGroup) {
+    if (_basketGroup.parent) _basketGroup.parent.remove(_basketGroup);
+    _basketGroup.traverse(function(c) {
+      if (c.geometry) c.geometry.dispose();
+      if (c.material && !Array.isArray(c.material)) c.material.dispose();
+    });
+    _basketGroup = null;
+    _orangePileGroup = null;
+  }
+  _basketOranges = []; // always reset before building pool (handles first call too)
+
+  var _bg = new THREE.Group();
+  _bg.position.set(BASKET_X, BASKET_Y, BASKET_Z);
+  _bg.scale.setScalar(BASKET_SCALE);
+
+  // Body: open-ended tapered cylinder (radiusTop wider = basket splay)
+  var _cyl = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.26, 0.20, 0.22, 14, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xC79A5B, side: THREE.DoubleSide })
+  );
+  _bg.add(_cyl);
+
+  // Wicker rings: thin horizontal torus at 3 heights along the body
+  // Ring radius interpolates from 0.20 (bottom Y=-0.11) to 0.26 (top Y=+0.11)
+  var _ringYs = [-0.06, 0.01, 0.07];
+  for (var _ri = 0; _ri < _ringYs.length; _ri++) {
+    var _ry  = _ringYs[_ri];
+    var _rr  = 0.20 + (_ry + 0.11) / 0.22 * 0.06;
+    var _rm  = new THREE.Mesh(
+      new THREE.TorusGeometry(_rr, 0.009, 6, 16),
+      new THREE.MeshBasicMaterial({ color: 0x9A7235 })
+    );
+    _rm.rotation.x = Math.PI / 2; // TorusGeometry lies in XY; rotate to XZ (horizontal)
+    _rm.position.y = _ry;
+    _bg.add(_rm);
+  }
+
+  // Rim: thicker darker torus at top edge
+  var _rim = new THREE.Mesh(
+    new THREE.TorusGeometry(0.26, 0.018, 8, 18),
+    new THREE.MeshBasicMaterial({ color: 0x5E3A14 })
+  );
+  _rim.rotation.x = Math.PI / 2;
+  _rim.position.y = 0.11;
+  _bg.add(_rim);
+
+  // Orange sphere pool: 15 pre-positioned meshes in a stacking pattern.
+  // Layer 0 (6): bottom hex ring.  Layer 1 (4): middle offset ring.
+  // Layer 2 (3): upper triangle at rim.  Layer 3 (2): top pair just over rim.
+  // Y values jittered ±0.005 so the heap reads as loose fruit, not a molded lump.
+  var _sp = [
+    [ 0.120, -0.058,  0.000], [ 0.060, -0.052,  0.104], [-0.060, -0.056,  0.104],
+    [-0.120, -0.053,  0.000], [-0.060, -0.059, -0.104], [ 0.060, -0.055, -0.104],
+    [ 0.057,  0.042,  0.057], [-0.057,  0.038,  0.057],
+    [-0.057,  0.044, -0.057], [ 0.057,  0.039, -0.057],
+    [ 0.055,  0.108,  0.032], [-0.055,  0.112,  0.032], [ 0.000,  0.110, -0.060],
+    [ 0.028,  0.168,  0.010], [-0.028,  0.163, -0.010],
+  ];
+  // Orange pile sub-group so BASKET_HEAP_Y tuner moves all oranges together
+  var _pileGrp = new THREE.Group();
+  _pileGrp.position.y = BASKET_HEAP_Y;
+  _bg.add(_pileGrp);
+  _orangePileGroup = _pileGrp;
+  var _oGeo   = new THREE.SphereGeometry(0.055, 8, 6);
+  var _oMat   = new THREE.MeshLambertMaterial({ color: 0xE8801C, emissive: 0x3A1E00, emissiveIntensity: 0.5 }); // emissive lift keeps shadow side orange, not mud
+  var _rimGeo = new THREE.SphereGeometry(0.059, 8, 6);              // 7% larger (was 18%); thin outline only
+  var _rimMat = new THREE.MeshBasicMaterial({ color: 0x7A3B10 });   // mid-brown outline (was near-black 0x3D1A00)
+  for (var _oi = 0; _oi < _sp.length; _oi++) {
+    var _rm = new THREE.Mesh(_rimGeo, _rimMat); // rim behind orange
+    _rm.position.set(_sp[_oi][0], _sp[_oi][1], _sp[_oi][2]);
+    _rm.visible = false;
+    _pileGrp.add(_rm);
+    var _om = new THREE.Mesh(_oGeo, _oMat);
+    _om.position.set(_sp[_oi][0], _sp[_oi][1], _sp[_oi][2]);
+    _om.rotation.y = _oi * 0.654; // spread Y-rotations so adjacent highlight positions differ
+    _om.visible = false;
+    _pileGrp.add(_om);
+    _basketOranges.push({ mesh: _om, rim: _rm, popStartT: 0 });
+  }
+
+  playerGroup.add(_bg);
+  _basketGroup = _bg;
+  _basketPrevOranges = -1; // force re-sync on next update
+  var _sternDeckY = BOAT_WALL_H + GUNWALE_H; // = 0.30 in playerGroup space
+  console.log('[KRR BASKET] sternDeckY=' + _sternDeckY.toFixed(2) + ' basketBottom=' + (BASKET_Y - 0.11).toFixed(2) + ' x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' scale=' + BASKET_SCALE);
+}
+
+// Per-frame: show/hide orange spheres to match player3.oranges; pop-in newest one.
+function _updateBasketOranges3() {
+  if (!_basketGroup) return;
+  var _vis = Math.min(player3.oranges, BASKET_MAX_VIS, _basketOranges.length);
+  var _now = Date.now();
+  for (var _bi = 0; _bi < _basketOranges.length; _bi++) {
+    var _bo = _basketOranges[_bi];
+    if (_bi < _vis) {
+      if (!_bo.mesh.visible) {
+        _bo.mesh.visible = true;
+        if (_bo.rim) _bo.rim.visible = true;
+        _bo.popStartT = _now;
+      }
+      var _bpEl = _bo.popStartT > 0 ? (_now - _bo.popStartT) : 200;
+      if (_bpEl < 200) {
+        var _bpt = _bpEl / 200;
+        var _bscale = 1 - (1 - _bpt) * (1 - _bpt); // ease-out quad 0->1
+        _bo.mesh.scale.setScalar(_bscale);
+        if (_bo.rim) _bo.rim.scale.setScalar(_bscale);
+      } else {
+        _bo.mesh.scale.setScalar(1);
+        if (_bo.rim) _bo.rim.scale.setScalar(1);
+      }
+    } else {
+      if (_bo.mesh.visible) _bo.mesh.visible = false;
+      if (_bo.rim && _bo.rim.visible) _bo.rim.visible = false;
+    }
+  }
+}
+
+// Initial basket build for fallback hand-built model (re-built in GLB callback after clear).
+_buildBasket3();
 
 // ── MESH DISPOSAL HELPER ─────────────────────────────────────────
 function disposeMesh(m) {
@@ -2820,6 +3485,19 @@ function makeCollMesh3(type) {
       const inner = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.065, 12), new THREE.MeshPhongMaterial({ color: 0x1D4ED8, emissive: 0x1E3A5F, emissiveIntensity: 0.30, shininess: 80 }));
       inner.rotation.x = Math.PI / 2; grp.add(inner);
       return grp;
+    }
+    case 'orange': {
+      // SpriteMaterial: unlit, shows orange.png exactly as-painted with no light tinting.
+      // MeshPhongMaterial was here before -- the 2.2x warm directional saturated R+G and made it look yellow.
+      var _oSpMat = new THREE.SpriteMaterial({
+        map:         orangeCollTex || null,
+        color:       orangeCollTex ? 0xFFFFFF : 0xF97316,  // white = no tint; fallback solid if tex not loaded
+        transparent: true,
+        alphaTest:   0.05
+      });
+      var _oSpr = new THREE.Sprite(_oSpMat);
+      _oSpr.scale.set(0.45, 0.45, 1);
+      return _oSpr;
     }
     default: {
       return new THREE.Mesh(new THREE.SphereGeometry(0.20, 8, 6), new THREE.MeshPhongMaterial({ color: 0xFBBF24, emissive: 0xD97706, emissiveIntensity: 0.50, shininess: 70 }));
@@ -3271,7 +3949,14 @@ function makeObsMesh(type, fullWidth) {
 // ── GAME STATE ───────────────────────────────────────────────────
 let gameState3  = 'start';
 let score3      = 0;
-let highScore3  = parseInt(localStorage.getItem('krr3d_hs') || '0', 10);
+// One-time migration: clear stored best when scoring scale changes (KRR_SCORE_VER bump).
+// Old scale (~200k) is now unreachable on the new scale (~22k), so we wipe once and re-save.
+const KRR_SCORE_VER = 2;
+if (parseInt(localStorage.getItem('krr3d_hs_ver') || '0', 10) < KRR_SCORE_VER) {
+  localStorage.removeItem('krr3d_hs');
+  localStorage.setItem('krr3d_hs_ver', String(KRR_SCORE_VER));
+}
+let highScore3 = parseInt(localStorage.getItem('krr3d_hs') || '0', 10);
 let distance3   = 0;
 let curMile3    = 0;
 let curSpeed3   = STAGES3[0].speed;
@@ -3284,12 +3969,12 @@ let camXSmooth  = 0;
 let endingSpeedMult = 1.0;
 var endingBeachStartMs   = 0;     // Date.now() when beaching phase started
 var endingCinematicFired = false; // prevents double-trigger of ending dialog
-var victoryEl3           = null;  // reference to the active victory card div (for cleanup)
-var _victoryCancelFn     = null;  // set by buildVictoryCard3; called by startGame3 to abort the rAF loop
-var _poppyReachSide      = 0;    // -1 or +1; which bank side was reached for
-var _poppyReachFrame     = 0;    // counts down from POPPY_LEAN_DUR; 0 = animation done
-var _poppyReachPp        = null; // pool entry currently being reached for
-var _poppyReachApexFired = false; // true once the apex effect (texture/bloom/shield) has fired
+var victoryEl3           = null;  // alias for _titleCardEl; kept so legacy cleanup sites still compile
+var _victoryCancelFn     = null;  // alias for _titleCancelFn; kept for legacy cleanup sites
+var _titleCardEl         = null;  // active title card div (stage card or ending)
+var _titleCancelFn       = null;  // abort the active card's rAF loop
+var _titleCardSuppressSpawn = false; // true during enter+hold to give the player a breather
+// (reach / contact vars now live near module declarations, see _poppyPickSt block above)
 
 var narrowing        = false;    // true while a sub-narrow squeeze is animating
 var narrowFromRw     = 0;        // rwCur at the moment narrowing began
@@ -3303,10 +3988,14 @@ const player3 = {
   lane: 3, targetLane: 3, x: 0,
   isJumping: false, jumpFrame: 0,
   dead: false, hasShield: false, spinoutFrames: 0,
+  oranges: 0,
 };
 
 let obstacles3    = [];
 let collectibles3 = [];
+var _scorePopups        = []; // [{spr,tex,startY,startT}] active floating "+N" sprites
+var _swellOrangeSprites = []; // [{mesh,vx,vy,vz,rotSpd,startT}] tumbling theft oranges
+var _orangeFlights      = []; // [{mesh,sx,sy,sz,px,py,pz,value,startT}] oranges arcing to basket
 
 // ── STAGE MANAGEMENT ─────────────────────────────────────────────
 function applyStage3(idx, msg) {
@@ -3338,6 +4027,14 @@ function applyStage3(idx, msg) {
   if (player3.lane       >= curLanes) player3.lane       = curLanes - 1;
   player3.x = laneXPos(player3.targetLane);
   clearActive(); buildWorld();
+  // Stage title card: shows name + mile, suppresses obstacle spawning during enter+hold.
+  // Sub-narrows do NOT go through applyStage3 -- they call flash3 directly -- so no guard needed.
+  showTitleCard({
+    title:    STAGES3[idx].name,
+    subtitle: 'MILE ' + Math.floor(curMile3),
+    holdMs:   TITLE_HOLD_MS,
+    onComplete: function() {}
+  });
   if (msg) flash3(msg, 160);
 }
 
@@ -3392,10 +4089,7 @@ function flash3(text, life) {
 
 // ── COLLECTIBLE TYPE PICKER (stage-specific) ──────────────────────
 function pickCollType3() {
-  const stg = STAGES3[stageIdx];
-  const r   = Math.random();
-  if (r < 0.22) return stg.collB;
-  return stg.collA;
+  return 'orange'; // all collectibles are now oranges; old stage collA/collB kept in STAGES3 for reference
 }
 
 // ── SPAWN ─────────────────────────────────────────────────────────
@@ -3499,7 +4193,7 @@ function update3() {
 
   const effectiveSpeed = curSpeed3 * endingSpeedMult;
   distance3 += effectiveSpeed;
-  score3    += SPF;
+  score3    += (effectiveSpeed / MI_PER_PX) * 100; // 100 pts per mile, continuous
   curMile3   = Math.floor(distance3 / MI_PER_PX);
 
   if (curMile3 >= 165) { startEnding3(); return; }
@@ -3582,7 +4276,7 @@ function update3() {
   // Spawn (obstacle spawns suppressed during animated narrow; collectibles continue)
   gapFrames3++;
   const minF = Math.ceil(MIN_GAP / curSpeed3);
-  if (!narrowing && curMile3 < OBS_CUTOFF_MILE && gapFrames3 >= minF && Math.random() < curObsFreq3 * endingSpeedMult) { spawnObs3(); gapFrames3 = 0; }
+  if (!narrowing && !_titleCardSuppressSpawn && curMile3 < OBS_CUTOFF_MILE && gapFrames3 >= minF && Math.random() < curObsFreq3 * endingSpeedMult) { spawnObs3(); gapFrames3 = 0; }
   if (Math.random() < COLL_FREQ) spawnColl3();
 
   // Move items
@@ -3612,12 +4306,14 @@ function update3() {
   });
 
   for (const c of collectibles3) {
+    if (c.collected) continue; // in-flight or just collected; skip position update
     c.z += spd * COLL_DRIFT; c.mesh.position.z = c.z;
     c.mesh.position.x = laneXPos(c.lane);
     c.mesh.position.y = c.baseY + Math.sin(frameN * 0.11 + c.lane * 1.3) * 0.14;
     c.mesh.rotation.y += 0.028;  // gentle rotation
   }
   collectibles3 = collectibles3.filter(c => {
+    if (c._inFlight) { return false; } // mesh handed off to _orangeFlights; no disposal
     if (c.collected || c.z > DESPAWN_Z) { disposeMesh(c.mesh); scene.remove(c.mesh); return false; }
     return true;
   });
@@ -3667,12 +4363,57 @@ function update3() {
     }
   }
 
+  // Scroll bank segment meshes at world speed, same clock as trees (no UV offset)
+  for (var bsi3 = 0; bsi3 < bankSegs3.length; bsi3++) {
+    var _bs3 = bankSegs3[bsi3];
+    _bs3.z += spd;
+    if (_bs3.z > DESPAWN_Z + BK_SEG_Z / 2) {
+      _bs3.z -= BK_SEG_N * BK_SEG_Z;
+      var _newSegW = BANK_W0 + BANK_AMP * Math.sin(_bs3.z * BANK_FREQ + _bs3.bkPhase);
+      if (_newSegW < 2.2) _newSegW = 2.2;
+      if (Math.abs(_newSegW - _bs3.segW) > 0.05) {
+        _bs3.mesh.geometry.dispose();
+        _bs3.mesh.geometry = new THREE.BoxGeometry(_newSegW, 0.60, BK_SEG_Z + 0.25);
+        _bs3.segW = _newSegW;
+      }
+      // Always update repeat so texel density stays constant at the new segW
+      if (_bs3.mesh.material && _bs3.mesh.material.map) {
+        _bs3.mesh.material.map.repeat.set(_bs3.segW / GROUND_TEX_WORLD, (BK_SEG_Z + 0.25) / GROUND_TEX_WORLD);
+        _bs3.mesh.material.map.needsUpdate = true;
+      }
+      _bs3.mesh.position.x = _bs3.side * (rwCur / 2 + SHORE_W + _bs3.segW / 2);
+    }
+    _bs3.mesh.position.z = _bs3.z;
+    if (_bs3.apron) _bs3.apron.position.z = _bs3.z;
+  }
+
+  // Ground chain: same clock as bank segs — no UV scroll
+  for (var gci3 = 0; gci3 < groundChain3.length; gci3++) {
+    var _gc3 = groundChain3[gci3];
+    _gc3.z += spd;
+    if (_gc3.z > DESPAWN_Z + BK_SEG_Z / 2) {
+      _gc3.z -= BK_SEG_N * BK_SEG_Z;
+    }
+    _gc3.mesh.position.z = _gc3.z;
+  }
+
+  // Stage 4 canyon fill: z-scroll segments like bank segs, no UV animation
+  for (var cfs_i = 0; cfs_i < canyonFillSegs4.length; cfs_i++) {
+    var _cfs = canyonFillSegs4[cfs_i];
+    _cfs.z += spd;
+    if (_cfs.z > DESPAWN_Z + BK_SEG_Z / 2) {
+      _cfs.z -= BK_SEG_N * BK_SEG_Z;
+    }
+    _cfs.mesh.position.z = _cfs.z;
+  }
+
   // Scroll bank tree sprites; recycle past-camera trees with new random params
   for (var bti = 0; bti < bankTrees3.length; bti++) {
     var bt3 = bankTrees3[bti];
     bt3.z += spd;
     bt3.sprite.position.z = bt3.z;
     bt3.sprite.position.x = bt3.side * (rwCur / 2 + SHORE_W + bt3.xOff);
+    bt3.sprite.position.y = DECOR_SEAT_GND;
     if (bt3.z > DESPAWN_Z + 2) {
       bt3.z = SPAWN_Z - Math.random() * 8;
       var v3    = Math.floor(Math.random() * 4);
@@ -3688,6 +4429,32 @@ function update3() {
     }
   }
 
+  // Scroll billboard sprites: rare gap-based recycle, cycle texture to avoid back-to-back repeats
+  for (var bbbd = 0; bbbd < bankBillboards3.length; bbbd++) {
+    var bbd = bankBillboards3[bbbd];
+    bbd.z += spd;
+    bbd.sprite.position.z = bbd.z;
+    bbd.sprite.position.x = bbd.side * (rwCur / 2 + SHORE_W + bbd.xOff);
+    if (bbd.z > DESPAWN_Z + 2) {
+      // Choose next texture index, skipping the last used to avoid repeats
+      var _nIdx = (bbd.texIdx + 1) % 3;
+      if (_nIdx === _lastBillboardIdx) _nIdx = (_nIdx + 1) % 3;
+      _lastBillboardIdx = _nIdx;
+      bbd.texIdx = _nIdx;
+      var _bbH  = BILLBOARD_SCALE;
+      var _bbAR = billboardNatAR[_nIdx];
+      bbd.sprite.scale.set(_bbH * _bbAR, _bbH, 1);
+      if (billboardTex[_nIdx]) {
+        bbd.sprite.material.map = billboardTex[_nIdx];
+        bbd.sprite.material.needsUpdate = true;
+      }
+      bbd.xOff  = 2.5 + Math.random() * 2.0;
+      bbd.side  = (Math.random() < 0.5) ? -1 : 1;
+      bbd.z     = SPAWN_Z - (BILLBOARD_GAP_MIN + Math.random() * BILLBOARD_GAP_RANGE);
+      bbd.sprite.position.set(bbd.side * (rwCur / 2 + SHORE_W + bbd.xOff), 0.30, bbd.z);
+    }
+  }
+
   // Scroll bank boulder sprites (stages 2-4); recycle with new random size + texture
   for (var bbi = 0; bbi < bankBoulders3.length; bbi++) {
     var bb3 = bankBoulders3[bbi];
@@ -3695,6 +4462,7 @@ function update3() {
     bb3.sprite.position.z = bb3.z;
     var _bbSW = (bb3.shoreW !== undefined) ? bb3.shoreW : SHORE_W;
     bb3.sprite.position.x = bb3.side * (rwCur / 2 + _bbSW + bb3.xOff);
+    if (stageIdx !== 1) bb3.sprite.position.y = DECOR_SEAT_GND; // stage 2 boulders have intentional negative Y (submerged); leave those alone
     if (bb3.z > DESPAWN_Z + 2) {
       bb3.z = SPAWN_Z - Math.random() * 8;
       var bbTexIdx = Math.floor(Math.random() * bankBoulderTex.length);
@@ -3736,55 +4504,54 @@ function update3() {
     var pp3 = bankPoppies3[ppi];
     pp3.z += spd;
     if (pp3.z > DESPAWN_Z + 2) {
-      // Recycle: pick new side, reset state, restore rest texture and glow
+      // Recycle: pick new side, reset all state, restore rest texture and glow
       pp3.picked      = false;
       pp3.claimed     = false;
       pp3.glowFlareSt = 0;
+      pp3.recoilSt    = 0;
       pp3.side   = (Math.random() < 0.5) ? -1 : 1;
       pp3.tuftU  = pp3.side === -1 ? 0.16 : 0.81;
       pp3.bloomU = pp3.side === -1 ? 0.80 : 0.19;
       pp3.z      = SPAWN_Z - (POPPY_GAP_MIN + Math.random() * POPPY_GAP_RANGE);
+      pp3.sprite.renderOrder = 5;
       pp3.sprite.center.set(0.5, 0);
       pp3.sprite.scale.set(POPPY_W, 0.53 * POPPY_W, 1);
+      pp3.sprite.material.rotation = 0;
       var ppRestTex = pp3.side === -1 ? _poppyTexL : _poppyTexR;
       if (ppRestTex) { pp3.sprite.material.map = ppRestTex; pp3.sprite.material.needsUpdate = true; }
-      if (pp3.glow) { pp3.glow.material.opacity = 0.30; pp3.glow.scale.setScalar(POPPY_GLOW_SCALE * POPPY_W); }
+      if (pp3.glow) { pp3.glow.renderOrder = 4; pp3.glow.material.opacity = 0.40; pp3.glow.scale.setScalar(POPPY_GLOW_SCALE * POPPY_W); }
     }
     // Position sprite: place center(0.5,0) so tuft anchor lands at tuftX
     var _ppTX = pp3.side * (rwCur / 2 + POPPY_BANK_OFF);
+    // Sway: unpicked poppies sway on slow sine with per-poppy phase offset
+    if (!pp3.picked) {
+      pp3.sprite.material.rotation = POPPY_SWAY_AMP * Math.sin(frameN * POPPY_SWAY_SPD + pp3.swayPhase);
+    }
+    // Recoil: springy wobble on picked stem after bloom detaches (~300ms, 3 oscillations)
+    if (pp3.recoilSt > 0) {
+      var _rcT = Math.min(1, (Date.now() - pp3.recoilSt) / 300);
+      pp3.sprite.material.rotation = pp3.recoilDir * 0.22 * Math.sin(_rcT * Math.PI * 3) * (1 - _rcT);
+      if (_rcT >= 1) { pp3.recoilSt = 0; pp3.sprite.material.rotation = 0; }
+    }
     pp3.sprite.position.set(_ppTX + (0.5 - pp3.tuftU) * POPPY_W, POPPY_SEAT_Y, pp3.z);
-    // Glow: pulse when live; flare on pickup
+    // Glow: pulse when live; flare burst on pickup; hidden once flare ends
     if (pp3.glow) {
       if (pp3.picked && pp3.glowFlareSt > 0) {
-        var _ft = Math.min(1, (Date.now() - pp3.glowFlareSt) / 250);
-        var _fSc = (POPPY_GLOW_SCALE + (1.8 - POPPY_GLOW_SCALE) * Math.sin(_ft * Math.PI)) * POPPY_W;
+        var _ft = Math.min(1, (Date.now() - pp3.glowFlareSt) / 300);
+        var _fSc = (POPPY_GLOW_SCALE + (2.0 - POPPY_GLOW_SCALE) * Math.sin(_ft * Math.PI)) * POPPY_W;
         pp3.glow.scale.setScalar(_fSc);
-        pp3.glow.material.opacity = 0.8 * Math.sin(_ft * Math.PI);
+        pp3.glow.material.opacity = 0.9 * Math.sin(_ft * Math.PI);
         pp3.glow.position.z = pp3.z;
         if (_ft >= 1) { pp3.glow.material.opacity = 0; pp3.glowFlareSt = 0; }
       } else if (!pp3.picked) {
         var _ppBX = _ppTX + (pp3.bloomU - pp3.tuftU) * POPPY_W;
-        var _ppBY = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
+        // Bloom bobs slightly out of phase with stem sway (as if weight on end)
+        var _ppBY = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W
+                  + Math.sin(frameN * POPPY_SWAY_SPD * 1.3 + pp3.swayPhase + 0.7) * 0.05;
         pp3.glow.position.set(_ppBX, _ppBY, pp3.z);
         pp3.glow.scale.setScalar(POPPY_GLOW_SCALE * POPPY_W);
-        pp3.glow.material.opacity = 0.30 + Math.sin(frameN * 0.05) * 0.12;
+        pp3.glow.material.opacity = 0.40 + Math.sin(frameN * 0.07 + pp3.swayPhase) * 0.25;
       }
-      // if picked and glowFlareSt===0: flare has ended; opacity stays at 0 until recycle
-    }
-  }
-
-  // Advance active bloom sprites (rise + fade over 0.5s, then dispose)
-  for (var bli = _activePopBloom.length - 1; bli >= 0; bli--) {
-    var bl3 = _activePopBloom[bli];
-    var blEl = (Date.now() - bl3.startMs) / 500; // 0->1 over 0.5s
-    if (blEl >= 1) {
-      scene.remove(bl3.sprite);
-      if (bl3.sprite.material) bl3.sprite.material.dispose();
-      _activePopBloom.splice(bli, 1);
-    } else {
-      bl3.sprite.position.y = bl3.startY + blEl * 0.8;
-      bl3.sprite.position.z += spd;
-      bl3.sprite.material.opacity = 1 - blEl;
     }
   }
 
@@ -3832,6 +4599,7 @@ function update3() {
     hse.z += spd;
     hse.sprite.position.z = hse.z;
     hse.sprite.position.x = hse.side * (rwCur / 2 + SHORE_W + hse.xOff);
+    hse.sprite.position.y = DECOR_SEAT_GND;
     if (hse.z > DESPAWN_Z + 2) {
       hse.z = SPAWN_Z - Math.random() * 12;
       hse.xOff = 6.0 + Math.random() * 4.0;
@@ -3855,6 +4623,7 @@ function update3() {
     var st5 = bankStumps5[st5i];
     st5.z += spd; st5.sprite.position.z = st5.z;
     st5.sprite.position.x = st5.side * (rwCur / 2 + SHORE_W + st5.xOff);
+    st5.sprite.position.y = DECOR_SEAT_GND;
     if (st5.z > DESPAWN_Z + 2) {
       st5.z = SPAWN_Z - Math.random() * 8;
       st5.xOff = 1.2 + Math.random() * 3.0;
@@ -3872,6 +4641,7 @@ function update3() {
     var fm5 = bankFarms5[fm5i];
     fm5.z += spd; fm5.sprite.position.z = fm5.z;
     fm5.sprite.position.x = fm5.side * (rwCur / 2 + SHORE_W + fm5.xOff);
+    fm5.sprite.position.y = DECOR_SEAT_GND - 3.21;
     if (fm5.z > DESPAWN_Z + 2) {
       fm5.z = SPAWN_Z - Math.random() * 12;
       fm5.xOff = 6.0 + Math.random() * 4.0;
@@ -3892,6 +4662,7 @@ function update3() {
     var fs5 = bankFishing5[fs5i];
     fs5.z += spd; fs5.sprite.position.z = fs5.z;
     fs5.sprite.position.x = fs5.side * (rwCur / 2 + SHORE_W + fs5.xOff);
+    fs5.sprite.position.y = DECOR_SEAT_GND;
     if (fs5.z > DESPAWN_Z + 2) {
       fs5.z = SPAWN_Z - Math.random() * 8;
       fs5.xOff = 1.2 + Math.random() * 3.0;
@@ -3951,10 +4722,69 @@ function checkCollisions3() {
     if (player3.hasShield) { player3.hasShield = false; continue; }
     if (o.type === 'river_wash') {
       player3.spinoutFrames = Math.max(player3.spinoutFrames, 90);
+      // Swell theft: knock a few oranges out of the box (score already banked)
+      var _lost = Math.min(player3.oranges, SWELL_ORANGE_LOSS);
+      if (_lost > 0) {
+        player3.oranges -= _lost;
+        // Fling from basket world position
+        var _bkwp = new THREE.Vector3();
+        if (_basketGroup) { _basketGroup.getWorldPosition(_bkwp); }
+        else { _bkwp.set(player3.x, 0.28, playerGroup.position.z + 0.82); }
+        for (var _lfi = 0; _lfi < _lost; _lfi++) {
+          var _omsh = new THREE.Mesh(
+            new THREE.SphereGeometry(0.10, 6, 5),
+            new THREE.MeshBasicMaterial({ color: 0xF97316, transparent: true, opacity: 1 })
+          );
+          _omsh.position.set(
+            _bkwp.x + (Math.random() - 0.5) * 0.30,
+            _bkwp.y + 0.08 + Math.random() * 0.12,
+            _bkwp.z + (Math.random() - 0.5) * 0.30
+          );
+          scene.add(_omsh);
+          _swellOrangeSprites.push({
+            mesh: _omsh,
+            vx: (Math.random() - 0.5) * 0.07,
+            vy: 0.05 + Math.random() * 0.04,
+            vz: 0.06 + Math.random() * 0.04,
+            rotSpd: (Math.random() - 0.5) * 0.25,
+            startT: Date.now()
+          });
+        }
+      }
     } else {
       endRun3(false);
     }
   }
+}
+
+function _spawnScorePopup3(wx, wy, wz, text) {
+  var _cv = document.createElement('canvas');
+  _cv.width = 256; _cv.height = 80;
+  var _ctx = _cv.getContext('2d');
+  _ctx.font = POPUP_FONT_PX + 'px "Press Start 2P", monospace';
+  _ctx.lineJoin = 'round';
+  _ctx.lineWidth = Math.round(POPUP_FONT_PX * 0.25);
+  _ctx.strokeStyle = 'rgba(0,0,0,0.88)';
+  _ctx.textAlign = 'center';
+  _ctx.textBaseline = 'middle';
+  _ctx.strokeText(text, 128, 40);
+  _ctx.fillStyle = '#F97316';
+  _ctx.fillText(text, 128, 40);
+  var _tex = new THREE.CanvasTexture(_cv);
+  var _mat = new THREE.SpriteMaterial({ map: _tex, transparent: true, depthTest: false });
+  var _spr = new THREE.Sprite(_mat);
+  var _bh = POPUP_FONT_PX * 0.022;   // world height; 32px -> 0.70
+  var _bw = _bh * (256 / 80);        // canvas AR 3.2
+  // stacking: bump spawn Y up if another active popup is within 0.45 world units
+  var _spawnY = wy + 0.3;
+  for (var _sc = 0; _sc < _scorePopups.length; _sc++) {
+    if (Math.abs(_scorePopups[_sc].spr.position.y - _spawnY) < 0.45) _spawnY += 0.45;
+  }
+  _spr.scale.set(_bw * 1.3, _bh * 1.3, 1); // start punched out at 1.3x
+  _spr.position.set(wx, _spawnY, wz);
+  _spr.renderOrder = 20;
+  scene.add(_spr);
+  _scorePopups.push({ spr: _spr, tex: _tex, startY: _spawnY, startT: Date.now(), bw: _bw, bh: _bh });
 }
 
 function checkCollectibles3() {
@@ -3963,56 +4793,143 @@ function checkCollectibles3() {
     if (c.z < COLL_FRONT || c.z > COLL_BACK) continue;
     if (c.lane !== player3.targetLane) continue;
     c.collected = true;
-    score3 += (c.type === 'mountain_crystal' || c.type === 'treasure_chest') ? 150 : 50;
+    c._inFlight = true;
+    var _ov = ORANGE_VALUE[stageIdx] !== undefined ? ORANGE_VALUE[stageIdx] : 100;
+    if (c.mesh) {
+      var _px = c.mesh.position.x, _py = c.mesh.position.y, _pz = c.mesh.position.z;
+      _orangeFlights.push({ mesh: c.mesh, sx: _px, sy: _py, sz: _pz, px: _px, py: _py, pz: _pz, value: _ov, startT: Date.now() });
+    }
   }
 }
 
 function checkBankPoppies3() {
-  // Apex check: fire pickup effect when reach animation is ~45% through
-  if (_poppyReachFrame > 0 && _poppyReachPp && !_poppyReachApexFired) {
-    var _rTNow = 1 - (_poppyReachFrame / POPPY_LEAN_DUR);
-    if (_rTNow >= 0.45) {
-      _poppyReachApexFired = true;
-      var _ppA = _poppyReachPp;
+  // CONTACT: fires once when elapsed >= POPPY_REACH_MS
+  if (_poppyPickSt > 0 && _poppyPickPp && !_poppyContactFired) {
+    if ((Date.now() - _poppyPickSt) >= POPPY_REACH_MS) {
+      _poppyContactFired = true;
+      var _ppA = _poppyPickPp;
       _ppA.picked = true;
+      // Replace existing hat poppy if player already has shield (will re-seat new one)
+      if (_hatPoppySpr) { _hatPoppySpr.visible = false; }
       player3.hasShield = true;
+      // Swap to picked texture
       var _ptex = _ppA.side === -1 ? _poppyTexLP : _poppyTexRP;
       if (_ptex) { _ppA.sprite.material.map = _ptex; _ppA.sprite.material.needsUpdate = true; }
-      // Bloom sprite: rises from the bloom head position using tuftU/bloomU anchoring
+      // Stem recoil: springy wobble as if weight was pulled off
+      _ppA.recoilSt  = Date.now();
+      _ppA.recoilDir = -_ppA.side; // recoils toward water
+      // Capture bloom world position for travelling sprite
+      var _bTX = _ppA.side * (rwCur / 2 + POPPY_BANK_OFF);
+      var _bxC = _bTX + (_ppA.bloomU - _ppA.tuftU) * POPPY_W;
+      var _byC = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
+      _poppyBloomCPos.x = _bxC;
+      _poppyBloomCPos.y = _byC;
+      _poppyBloomCPos.z = _ppA.z;
+      // Create travelling bloom sprite
       var _btex = _ppA.side === -1 ? _poppyTexLB : _poppyTexRB;
       if (_btex) {
-        var _bTX  = _ppA.side * (rwCur / 2 + POPPY_BANK_OFF);
-        var _bxOvr = _bTX + (_ppA.bloomU - _ppA.tuftU) * POPPY_W;
-        var _byOvr = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
         var _bMat = new THREE.SpriteMaterial({ map: _btex, transparent: true, opacity: 1, depthWrite: false });
-        var _bSpr = new THREE.Sprite(_bMat);
-        _bSpr.center.set(0.5, 0);
-        _bSpr.scale.set(POPPY_W, 0.53 * POPPY_W, 1);
-        _bSpr.position.set(_bxOvr, _byOvr, _ppA.sprite.position.z);
-        scene.add(_bSpr);
-        _activePopBloom.push({ sprite: _bSpr, startMs: Date.now(), startY: _byOvr });
-        console.log('[KRR POPPY] bloom_x=' + _bxOvr.toFixed(3) + ' bankOff=' + POPPY_BANK_OFF.toFixed(2) + ' W=' + POPPY_W.toFixed(2));
+        _poppyBloomSpr = new THREE.Sprite(_bMat);
+        _poppyBloomSpr.renderOrder = 6;
+        _poppyBloomSpr.center.set(0.5, 0);
+        var _bSc = POPPY_PICK_SIZE;
+        _poppyBloomSpr.scale.set(_bSc, 0.53 * _bSc, 1);
+        _poppyBloomSpr.position.set(_bxC, _byC, _ppA.z);
+        scene.add(_poppyBloomSpr);
       }
-      // Glow flare: brief scale+opacity burst at the bloom position (handled in scroll loop)
+      // Glow flare burst
       _ppA.glowFlareSt = Date.now();
     }
   }
 
-  // Reach detection: scan poppies entering the approach window
+  // Reach detection: player enters edge lane while poppy is in approach window
+  if (_poppyPickSt > 0) return; // already picking one
   for (var _bpi = 0; _bpi < bankPoppies3.length; _bpi++) {
     var _pp = bankPoppies3[_bpi];
     if (_pp.picked || _pp.claimed) continue;
-    if (_pp.z < POPPY_REACH_Z) continue;        // not in reach window yet
-    if (_pp.z > COLL_BACK) continue;            // scrolled past without pickup
+    if (_pp.z < POPPY_REACH_Z) continue;
+    if (_pp.z > COLL_BACK) continue;
     var _edgeLane = _pp.side === -1 ? 0 : curLanes - 1;
     if (player3.targetLane !== _edgeLane) continue;
-    // Begin reach: claim poppy, start animation; apex fires the actual pickup
-    _pp.claimed          = true;
-    _poppyReachSide      = _pp.side;
-    _poppyReachFrame     = POPPY_LEAN_DUR;
-    _poppyReachApexFired = false;
-    _poppyReachPp        = _pp;
+    _pp.claimed        = true;
+    _poppyPickSide     = _pp.side;
+    _poppyPickSt       = Date.now();
+    _poppyPickPp       = _pp;
+    _poppyContactFired = false;
+    break;
   }
+}
+
+// Re-apply TORSO_HINGE_Y/Z after a tuner change; called live so the model stays in place.
+function _applyTorsoHinge() {
+  if (!glbTorsoGroup) return;
+  glbTorsoGroup.position.set(0, TORSO_HINGE_Y, TORSO_HINGE_Z);
+  // Re-offset all direct mesh children (torso/head/hat; not arm groups or paddle group)
+  _ubNodes.forEach(function(n) { n.position.set(0, -TORSO_HINGE_Y, -TORSO_HINGE_Z); });
+  // Paddle group: position in waist-local = pivot_model - waist_pivot
+  if (glbPaddleGroup) glbPaddleGroup.position.set(_paddlePivot.x, _paddlePivot.y - TORSO_HINGE_Y, _paddlePivot.z - TORSO_HINGE_Z);
+  // Arm groups: position in waist-local = shoulder_model - waist_pivot
+  if (glbArmRGroup) glbArmRGroup.position.set( ARM_R_HINGE_X, ARM_HINGE_Y - TORSO_HINGE_Y, ARM_HINGE_Z - TORSO_HINGE_Z);
+  if (glbArmLGroup) glbArmLGroup.position.set(-ARM_R_HINGE_X, ARM_HINGE_Y - TORSO_HINGE_Y, ARM_HINGE_Z - TORSO_HINGE_Z);
+  if (_hatPoppySpr && _hatPoppySpr.parent === glbTorsoGroup) {
+    _hatPoppySpr.position.set(POPPY_HAT_MX, POPPY_HAT_MY - TORSO_HINGE_Y, POPPY_HAT_MZ - TORSO_HINGE_Z);
+  }
+  console.log('[KRR HINGE] Y=' + TORSO_HINGE_Y.toFixed(3) + ' Z=' + TORSO_HINGE_Z.toFixed(3) +
+    ' world_y~' + (TORSO_HINGE_Y * KAYAKER_SCALE).toFixed(3));
+}
+
+function _applyArmHinge() {
+  // Arm groups live INSIDE the waist group; their position is shoulder_model - waist_pivot
+  if (glbArmRGroup && glbArmRNode) {
+    glbArmRGroup.position.set( ARM_R_HINGE_X, ARM_HINGE_Y - TORSO_HINGE_Y, ARM_HINGE_Z - TORSO_HINGE_Z);
+    glbArmRNode.position.set(-ARM_R_HINGE_X, -ARM_HINGE_Y, -ARM_HINGE_Z);
+  }
+  if (glbArmLGroup && glbArmLNode) {
+    glbArmLGroup.position.set(-ARM_R_HINGE_X, ARM_HINGE_Y - TORSO_HINGE_Y, ARM_HINGE_Z - TORSO_HINGE_Z);
+    glbArmLNode.position.set( ARM_R_HINGE_X, -ARM_HINGE_Y, -ARM_HINGE_Z);
+  }
+  console.log('[KRR ARM HINGE] X=' + ARM_R_HINGE_X.toFixed(3) + ' Y=' + ARM_HINGE_Y.toFixed(3) + ' Z=' + ARM_HINGE_Z.toFixed(3));
+}
+
+// Create (or re-seat) the hat poppy sprite.
+// Uses poppy-hat.png (256x317, stem-tip anchor at bottom).
+// Parented to glbTorsoGroup so it leans with the full upper body.
+function _ensureHatPoppy3(side) {
+  var _useGroup = !!glbTorsoGroup;
+  var _hatParent = _useGroup ? glbTorsoGroup : scene;
+  if (!_hatPoppySpr) {
+    var _hm = new THREE.SpriteMaterial({
+      map: _hatFlowerTex || null,
+      transparent: true, opacity: 1, depthWrite: false
+    });
+    _hatPoppySpr = new THREE.Sprite(_hm);
+    _hatPoppySpr.renderOrder = 6;
+    _hatPoppySpr.center.set(0.41, 0.0); // stem tip anchors the placement point
+    _hatParent.add(_hatPoppySpr);
+  } else {
+    _hatPoppySpr.material.opacity = 1;
+    if (_hatFlowerTex && _hatPoppySpr.material.map !== _hatFlowerTex) {
+      _hatPoppySpr.material.map = _hatFlowerTex; _hatPoppySpr.material.needsUpdate = true;
+    }
+    // Re-parent if detached during knock-off
+    if (_hatPoppySpr.parent !== _hatParent) {
+      if (_hatPoppySpr.parent) _hatPoppySpr.parent.remove(_hatPoppySpr);
+      _hatParent.add(_hatPoppySpr);
+    }
+  }
+  // 256x317 aspect: height = 1.24 * width -> scale.x = _hs / 1.24
+  // POPPY_HAT_SCALE is direct model-local size; world size = POPPY_HAT_SCALE * KAYAKER_SCALE
+  var _hs = POPPY_HAT_SCALE;
+  _hatPoppySpr.scale.set(_hs / 1.24, _hs, 1);
+  if (_useGroup) {
+    // Position in waist-group-local space = model-local position minus waist pivot
+    _hatPoppySpr.position.set(POPPY_HAT_MX, POPPY_HAT_MY - TORSO_HINGE_Y, POPPY_HAT_MZ - TORSO_HINGE_Z);
+  } else {
+    // World-space fallback (GLB not loaded)
+    _hatPoppySpr.position.set(player3.x - POPPY_HAT_MX * KAYAKER_SCALE, POPPY_HAT_MY * KAYAKER_SCALE, -POPPY_HAT_MZ * KAYAKER_SCALE);
+  }
+  _hatPoppySpr.material.rotation = POPPY_HAT_TILT;
+  _hatPoppySpr.visible = true;
 }
 
 // ── VISUAL UPDATE (every frame) ────────────────────────────────────
@@ -4149,34 +5066,189 @@ function updateVisuals3() {
         glbTorsoSquashFrames--;
         _tRock += -JUMP_LAND_SQUASH * (glbTorsoSquashFrames / 7.0);
       }
-      glbTorsoNode.rotation.x = _tRock;
+      if (!_breathFrozen) {
+        (glbTorsoGroup || glbTorsoNode).rotation.x = _tRock;
+      }
     }
   }
 
-  // Bank poppy reach animation: torso leans toward bank + paddle dips on that side
-  if (_poppyReachFrame > 0) {
-    // Jump or spinout cancels the reach cleanly
-    if (player3.isJumping || player3.spinoutFrames > 0) {
-      _poppyReachFrame = 0;
-      _poppyReachPp    = null;
-      if (glbTorsoNode) glbTorsoNode.rotation.z = 0;
-    } else {
-      _poppyReachFrame--;
-      var _rT   = 1 - (_poppyReachFrame / POPPY_LEAN_DUR); // 0->1 over animation
-      var _rAng = POPPY_LEAN_ANG * Math.sin(_rT * Math.PI); // peaks at midpoint, back to 0
-      if (glbTorsoNode) {
-        glbTorsoNode.rotation.z = _poppyReachSide * _rAng;
+  // Hat poppy idle: pinned in hat band -- no bob. Sway reacts to boat yaw.
+  if (_hatPoppySpr && _hatPoppySpr.visible && _poppyPickSt === 0 && _hatKnockSt === 0) {
+    _hatPoppySpr.material.rotation = POPPY_HAT_TILT + kayakTurnY3 * POPPY_HAT_SWAY_K;
+  }
+
+  // Knocked-off flower: sprite was detached to scene on knock-off start; spins and fades
+  if (_hatKnockSt > 0) {
+    var _knT = Math.min(1, (Date.now() - _hatKnockSt) / 800);
+    if (_hatPoppySpr) {
+      _hatPoppySpr.position.x += _hatKnockVel.x;
+      _hatPoppySpr.position.y += _hatKnockVel.y;
+      _hatPoppySpr.position.z += 0.14;
+      _hatPoppySpr.material.rotation += 0.18;
+      _hatPoppySpr.material.opacity = 1 - _knT;
+    }
+    if (_knT >= 1) {
+      if (_hatPoppySpr) {
+        if (_hatPoppySpr.parent) _hatPoppySpr.parent.remove(_hatPoppySpr);
+        _hatPoppySpr.material.opacity = 1;
+        _hatPoppySpr.material.rotation = POPPY_HAT_TILT;
       }
-      // Small lateral nudge of whole playerGroup (cosmetic; player3.x unchanged)
-      playerGroup.position.x += _poppyReachSide * 0.12 * Math.sin(_rT * Math.PI);
-      // Bias paddle rotation toward bank side (additive on top of stroke)
-      // Uses geometry-based glbPaddleGroup (name lookup does not work on this GLB)
-      if (glbPaddleGroup) {
-        glbPaddleGroup.rotation.z += _poppyReachSide * -0.22 * Math.sin(_rT * Math.PI);
+      _hatKnockSt = 0;
+    }
+  }
+
+  // Shield-loss edge detection: detach hat flower from hinge group and throw it
+  if (_poppyShieldWas && !player3.hasShield && _hatKnockSt === 0) {
+    if (_hatPoppySpr && _hatPoppySpr.visible) {
+      var _kwp = new THREE.Vector3();
+      _hatPoppySpr.getWorldPosition(_kwp);
+      if (_hatPoppySpr.parent) _hatPoppySpr.parent.remove(_hatPoppySpr);
+      _hatPoppySpr.position.copy(_kwp);
+      scene.add(_hatPoppySpr);
+      _hatKnockSt   = Date.now();
+      _hatKnockVel.x = _poppyPickSide * 0.04 + (Math.random() - 0.5) * 0.03;
+      _hatKnockVel.y = 0.06 + Math.random() * 0.04;
+    }
+    _shieldBurstSt = Date.now(); // trigger bubble burst regardless of hat state
+    _launchShieldShards();       // fragment the bubble into iridescent shards
+  }
+  _poppyShieldWas = player3.hasShield;
+
+  // ── Shield bubble: shimmer while active; flare + scale-out burst on loss ──
+  if (_shieldGroup) {
+    if (_shieldBurstSt > 0) {
+      var _bEl = Date.now() - _shieldBurstSt;
+      _shieldGroup.visible = true;
+      if (_bEl < 100) {
+        // Flare: keep scale, ramp opacity up 4x
+        var _flT = _bEl / 100;
+        _shieldGroup.scale.setScalar(SHIELD_RADIUS_MULT);
+        _shieldInner.material.opacity = SHIELD_INNER_OP * (1 + _flT * 3);
+        _shieldOuter.material.opacity = SHIELD_OUTER_OP * (1 + _flT * 3);
+      } else if (_bEl < 400) {
+        // Burst: scale up 1->1.3, opacity fall to 0
+        var _brT = (_bEl - 100) / 300;
+        var _brE = 1 - (1 - _brT) * (1 - _brT); // ease-out quad
+        _shieldGroup.scale.setScalar(SHIELD_RADIUS_MULT * (1 + 0.30 * _brE));
+        _shieldInner.material.opacity = SHIELD_INNER_OP * 4 * (1 - _brT);
+        _shieldOuter.material.opacity = SHIELD_OUTER_OP * 4 * (1 - _brT);
+      } else {
+        // Done: hide and reset
+        _shieldBurstSt = 0;
+        _shieldGroup.visible = false;
+        _shieldGroup.scale.setScalar(SHIELD_RADIUS_MULT);
+        _shieldInner.material.opacity = SHIELD_INNER_OP;
+        _shieldOuter.material.opacity = SHIELD_OUTER_OP;
+      }
+    } else if (player3.hasShield) {
+      _shieldGroup.visible = true;
+      _shieldGroup.scale.setScalar(SHIELD_RADIUS_MULT);
+      // Slow iridescent hue cycle: inner and outer offset 0.10 apart for rim interference shimmer
+      var _hue  = (frameN * SHIELD_HUE_SPEED) % 1.0;
+      var _shim = Math.sin(frameN * SHIELD_SHIMMER_F) * SHIELD_SHIMMER_A;
+      _shieldInner.material.color.setHSL(_hue, 0.85, 0.70);
+      _shieldOuter.material.color.setHSL((_hue + 0.10) % 1.0, 0.90, 0.75);
+      _shieldInner.material.opacity = Math.max(0, SHIELD_INNER_OP + _shim * 0.5);
+      _shieldOuter.material.opacity = Math.max(0, SHIELD_OUTER_OP + _shim);
+    } else {
+      _shieldGroup.visible = false;
+    }
+  }
+
+  // ── Shield shards: arc outward, tumble, gravity-fall, fade ──
+  for (var _sfi = 0; _sfi < _shardPool.length; _sfi++) {
+    var _sf = _shardPool[_sfi];
+    if (!_sf.active) continue;
+    var _sfEl = Date.now() - _sf.startT;
+    if (_sfEl >= SHARD_DURATION) { _sf.active = false; _sf.mesh.visible = false; continue; }
+    var _sfT = _sfEl / SHARD_DURATION;
+    _sf.vy -= SHARD_GRAVITY;
+    _sf.mesh.position.x += _sf.vx;
+    _sf.mesh.position.y += _sf.vy;
+    _sf.mesh.position.z += _sf.vz;
+    _sf.mesh.rotation.x += _sf.sx;
+    _sf.mesh.rotation.y += _sf.sy;
+    _sf.mesh.rotation.z += _sf.sz;
+    // Hold full opacity for first 30% of life then ease to 0
+    _sf.mesh.material.opacity = 0.80 * (_sfT < 0.30 ? 1.0 : (1 - (_sfT - 0.30) / 0.70));
+  }
+
+  // Bank poppy pick: ms-based reach → retract → seat (POPPY_PULL_MS total)
+  if (_poppyPickSt > 0 && _poppyPickPp) {
+    if (player3.isJumping || player3.spinoutFrames > 0) {
+      // Cancel: clean up bloom sprite, reset state
+      if (_poppyBloomSpr) { scene.remove(_poppyBloomSpr); _poppyBloomSpr.material.dispose(); _poppyBloomSpr = null; }
+      _poppyPickSt = 0; _poppyPickPp = null;
+      (glbTorsoGroup || glbTorsoNode).rotation.z = 0;
+      if (glbArmRGroup) glbArmRGroup.rotation.z = 0;
+      if (glbArmLGroup) glbArmLGroup.rotation.z = 0;
+    } else {
+      var _pxNow = Date.now();
+      var _pxEl  = _pxNow - _poppyPickSt;
+      // Lean arc: ramp up to contact, ramp back down over retract
+      var _leanFrac;
+      if (_pxEl <= POPPY_REACH_MS) {
+        _leanFrac = _pxEl / POPPY_REACH_MS;
+      } else {
+        _leanFrac = 1 - Math.min(1, (_pxEl - POPPY_REACH_MS) / POPPY_RETRACT_MS);
+      }
+      var _rAng = POPPY_LEAN_ANG * Math.sin(_leanFrac * Math.PI / 2);
+      (glbTorsoGroup || glbTorsoNode).rotation.z = _poppyPickSide * _rAng;
+      // Arm reach: the arm on the flower-side swings outward+down toward bank
+      // _poppyPickSide=1 (right bank, world +X): ARM L group is GLB -X which maps to world +X
+      // _poppyPickSide=-1 (left bank, world -X): ARM R group is GLB +X which maps to world -X
+      var _reachArm   = (_poppyPickSide === 1) ? glbArmLGroup : glbArmRGroup;
+      var _restArm    = (_poppyPickSide === 1) ? glbArmRGroup : glbArmLGroup;
+      var _armSweep   = ARM_REACH_ANG * Math.sin(_leanFrac * Math.PI / 2);
+      if (_reachArm) _reachArm.rotation.z = _poppyPickSide * -_armSweep;
+      if (_restArm)  _restArm.rotation.z  = 0;
+      playerGroup.position.x += _poppyPickSide * 0.12 * Math.sin(_leanFrac * Math.PI / 2);
+      if (glbPaddleGroup) glbPaddleGroup.rotation.z += _poppyPickSide * -0.22 * Math.sin(_leanFrac * Math.PI / 2);
+
+      // Bloom sprite travel: RETRACT then SEAT
+      // Hat world position: model-space (MX, MY, MZ) → world via scale and rotY=PI
+      var _hatWX = player3.x - POPPY_HAT_MX * KAYAKER_SCALE;
+      var _hatWY = playerGroup.position.y + POPPY_HAT_MY * KAYAKER_SCALE;
+      var _hatWZ = -POPPY_HAT_MZ * KAYAKER_SCALE;
+      if (_poppyContactFired && _poppyBloomSpr) {
+        var _handX = _hatWX;
+        var _handY = _hatWY - 0.48;
+        if (_pxEl < POPPY_REACH_MS + POPPY_RETRACT_MS) {
+          // RETRACT: bloom flies from bank to chest
+          var _retT = (_pxEl - POPPY_REACH_MS) / POPPY_RETRACT_MS;
+          var _eR = _retT < 0.5 ? 2*_retT*_retT : 1 - Math.pow(-2*_retT+2, 2)/2;
+          _poppyBloomSpr.position.x = _poppyBloomCPos.x + (_handX - _poppyBloomCPos.x) * _eR;
+          _poppyBloomSpr.position.y = _poppyBloomCPos.y + (_handY - _poppyBloomCPos.y) * _eR;
+          _poppyBloomSpr.position.z = _poppyBloomCPos.z + (_hatWZ - _poppyBloomCPos.z) * _eR;
+        } else {
+          // SEAT: bloom rises from chest to hat, scaling down
+          var _stEl = _pxEl - POPPY_REACH_MS - POPPY_RETRACT_MS;
+          var _stT  = Math.min(1, _stEl / POPPY_SEAT_MS);
+          var _eS   = _stT < 0.5 ? 2*_stT*_stT : 1 - Math.pow(-2*_stT+2, 2)/2;
+          _poppyBloomSpr.position.x = _handX + (_hatWX - _handX) * _eS;
+          _poppyBloomSpr.position.y = _handY + (_hatWY - _handY) * _eS;
+          _poppyBloomSpr.position.z = _hatWZ;
+          // Ease from world pickup size down to world hat size so the seated sprite appears seamlessly
+          var _bSc = POPPY_PICK_SIZE + (POPPY_HAT_SCALE * KAYAKER_SCALE - POPPY_PICK_SIZE) * _eS;
+          _poppyBloomSpr.scale.set(_bSc, 0.53 * _bSc, 1);
+          if (_stT >= 1.0) {
+            scene.remove(_poppyBloomSpr);
+            _poppyBloomSpr.material.dispose();
+            _poppyBloomSpr = null;
+            _ensureHatPoppy3(_poppyPickSide);
+            _poppyPickSt = 0;
+            _poppyPickPp = null;
+          }
+        }
+      } else if (_pxEl >= POPPY_PULL_MS) {
+        // Safety fallback: animation window expired
+        _poppyPickSt = 0; _poppyPickPp = null;
       }
     }
-  } else if (glbTorsoNode) {
-    glbTorsoNode.rotation.z = 0;
+  } else if (_poppyPickSt === 0) {
+    (glbTorsoGroup || glbTorsoNode).rotation.z = 0;
+    if (glbArmRGroup) glbArmRGroup.rotation.z = 0;
+    if (glbArmLGroup) glbArmLGroup.rotation.z = 0;
   }
 
   // Refinement 2: Alternating paddle splashes at blade water entry.
@@ -4194,10 +5266,7 @@ function updateVisuals3() {
   }
   paddleSplashPrev3 = pSin3;
 
-  // Shield ring pulse
-  shieldMat3.opacity = player3.hasShield
-    ? 0.60 + Math.sin(frameN * 0.14) * 0.32
-    : 0;
+  // Shield indicator: hat poppy sprite (see _hatPoppySpr block above; no torus ring)
 
   // Chase camera
   camXSmooth += (player3.x - camXSmooth) * 0.07;
@@ -4210,8 +5279,9 @@ function updateVisuals3() {
     document.getElementById('hud3-stage').textContent    = stg.name;
     document.getElementById('hud3-mile').textContent     = 'MILE ' + curMile3 + ' / 165';
     document.getElementById('hud3-stageNum').textContent = 'STAGE ' + stg.num + '/5';
-    document.getElementById('hud3-score').textContent    = 'SCORE ' + Math.floor(score3);
-    document.getElementById('hud3-best').textContent     = 'BEST '  + Math.floor(highScore3);
+    document.getElementById('hud3-score').textContent        = Math.floor(score3);
+    document.getElementById('hud3-best').textContent         = Math.floor(highScore3);
+    document.getElementById('hud3-orange-count').textContent = player3.oranges;
   }
 
   // Animate water surface -- three overlapping sine waves traveling downstream (+world z).
@@ -4246,30 +5316,18 @@ function updateVisuals3() {
     riverbedTexRef.offset.y -= 0.0008;
   }
 
-  // Scroll bank segment textures to match the river-forward feel (Part 4)
-  for (var bsi = 0; bsi < bankSegMats3.length; bsi++) {
-    bankSegMats3[bsi].offset.y -= 0.0005;
-  }
+  // Bank segs are now z-scrolled like trees (see bank seg loop above); no offset.y needed here.
 
-  // Scroll Stage 3 grass textures (ground plane + bank segments) toward the player
+  // Stage 1 ground plane: gndPlaneTex is unique to S1; S3 uses grassBankMats3, S4 floorMats4, S5 s5GndScrollTex
+  if (stageIdx === 0 && gndPlaneTex) {
+    gndPlaneTex.offset.y -= curSpd3 / GROUND_TEX_WORLD;
+  }
+  // Scroll Stage 3 grass ground plane at the same rate as every other stage
   for (var gbi = 0; gbi < grassBankMats3.length; gbi++) {
-    grassBankMats3[gbi].offset.y -= 0.0005 * GRASS3_SCROLL_MULT;
-  }
-
-  // Stage 5: scroll bank segment tops and ground plane at world speed so they match decoration movement.
-  // UV delta = curSpd3 / world_units_per_UV_unit (same formula as Stage 4 floor at line 3640).
-  // Bank segs: BoxGeometry depth = BK_SEG_Z+0.25 = 5.75, V_repeat = 1 -> 1 UV unit = 5.75 wu.
-  // Ground plane: PlaneGeometry(200,600), S5_TERR_REPEAT_Y=12 -> 1 UV unit = 600/12 = 50 wu.
-  // Both give apparent scroll of curSpd3 * 60 wu/sec = 7.2 wu/sec at Stage 5 max speed. S5_TERR_SCROLL
-  // remains the multiplier: 1.0 = world speed, <1.0 = atmospheric slower look.
-  for (var s5i = 0; s5i < swampBankMats5.length; s5i++) {
-    swampBankMats5[s5i].offset.y -= curSpd3 * S5_TERR_SCROLL / 5.75;
-    if (s5i === 0 && stageIdx === 4 && frameN % 60 === 0) {
-      console.log('[KRR TERRDBG] bankOffY=' + swampBankMats5[0].offset.y.toFixed(4) + ' gndOffY=' + (s5GndScrollTex ? s5GndScrollTex.offset.y.toFixed(4) : 'null') + ' scroll=' + S5_TERR_SCROLL + ' world=' + curSpd3.toFixed(4));
-    }
+    grassBankMats3[gbi].offset.y -= curSpd3 / GROUND_TEX_WORLD;
   }
   if (stageIdx === 4 && s5GndScrollTex) {
-    s5GndScrollTex.offset.y -= curSpd3 * S5_TERR_SCROLL / 50;
+    s5GndScrollTex.offset.y -= curSpd3 / GROUND_TEX_WORLD * S5_TERR_SCROLL;
   }
 
   // Stage 5 water recede: shrink waterMesh.scale.x to 0 over miles ENDING_WATER_START -> ENDING_WATER_GONE.
@@ -4289,28 +5347,20 @@ function updateVisuals3() {
     var _elapsed = Date.now() - endingBeachStartMs;
     if (!endingCinematicFired && _elapsed >= ENDING_PAUSE_MS) {
       endingCinematicFired = true;
-      buildVictoryCard3(function() { startEnding3(); });
+      showTitleCard({ title: 'Victory?', subtitle: '', holdMs: 1900, dramatic: true, onComplete: function() { startEnding3(); } });
     }
   }
 
   // Scroll Stage 4 pebble floor textures toward player, tied to curSpd3 so they match world movement.
-  // Ground plane is PlaneGeometry(200,170); after rotation UV-V maps to 170 world-Z units.
-  // UV delta = spd * repeat / plane_z_extent = curSpd3 * WALL4_FLOOR_REPEAT / 170
+  // With repeat.y = gndZ / GROUND_TEX_WORLD on a gndZ-deep plane, 1 world unit = 1/GROUND_TEX_WORLD UV.
   if (floorMats4.length > 0) {
-    var floorDelta = curSpd3 * WALL4_FLOOR_REPEAT / 170 * WALL4_FLOOR_SCROLL_MULT;
+    var floorDelta = curSpd3 / GROUND_TEX_WORLD * WALL4_FLOOR_SCROLL_MULT;
     for (var f4i = 0; f4i < floorMats4.length; f4i++) {
       floorMats4[f4i].offset.y -= floorDelta;
     }
   }
 
-  // Scroll Stage 4 rock wall textures along U (Z axis) to match boulder/world movement.
-  // Wall quad spans z_far to z_near (74 world units). UV delta = curSpd3 * RPT_U / z_extent.
-  if (rockWallMats4.length > 0) {
-    var rwDelta = curSpd3 * WALL4_ROCK_RPT_U / 74 * WALL4_ROCK_SCROLL_MULT;
-    for (var rw4i = 0; rw4i < rockWallMats4.length; rw4i++) {
-      rockWallMats4[rw4i].offset.x += rwDelta;
-    }
-  }
+  // Stage 4 rock wall: z-scrolled via canyonFillSegs4 pool above; no UV animation here.
 
   // Drift clouds slowly downstream; loop back to the far end when they pass the threshold.
   // Scale grows from CLOUD_START_SCALE to CLOUD_END_SCALE as z travels -96 -> -38.
@@ -4458,107 +5508,296 @@ function updateVisuals3() {
     wcV.attrR.setXYZ(2, -lxEnd, 0, lzEnd);
     wcV.attrR.needsUpdate = true;
   }
-}
 
-// ── VICTORY TITLE CARD ───────────────────────────────────────────────
-// Full-screen DOM overlay. Drives itself via rAF; fires onComplete() at 13.0s.
-// All timing is card-relative (ms from when the function is called).
-//
-// Timeline:
-//   0.0s  veil fades in -> 74% at 1.6s
-//   1.2s  "V" in (1.1s: opacity/blur/scale); +0.55s each subsequent letter: i c t o r y
-//   5.6s  "y" fully landed  -- 2s of dead air --
-//   7.6s  "?" in (same 1.1s animation)
-//  10.6s  2.4s fade-out (letters blur to 6px on exit)
-//  13.0s  onComplete()
-function buildVictoryCard3(onComplete) {
-  var prevCard = document.getElementById('krr-victory-card');
-  if (prevCard) prevCard.parentNode.removeChild(prevCard);
+  // ── Basket orange fill: sync visible count and pop-in newest orange
+  _updateBasketOranges3();
 
-  var card = document.createElement('div');
-  card.id = 'krr-victory-card';
-  card.style.cssText = 'position:fixed;inset:0;z-index:50;pointer-events:none;' +
-    'display:flex;align-items:center;justify-content:center;';
-
-  var veil = document.createElement('div');
-  veil.style.cssText = 'position:absolute;inset:0;background:#0B1F3A;opacity:0;';
-  card.appendChild(veil);
-
-  var row = document.createElement('div');
-  row.style.cssText = 'position:relative;display:flex;align-items:baseline;';
-  card.appendChild(row);
-
-  var letterChars = ['V','i','c','t','o','r','y','?'];
-  var spans = [];
-  for (var li = 0; li < letterChars.length; li++) {
-    var sp = document.createElement('span');
-    sp.textContent = letterChars[li];
-    sp.style.cssText = 'font-family:"Press Start 2P",monospace;' +
-      'font-size:' + VICTORY_FONT_PX + 'px;color:#C9883A;' +
-      'display:inline-block;opacity:0;' +
-      'filter:blur(10px);transform:scale(1.18);' +
-      'text-shadow:0 0 24px rgba(201,136,58,0.50);';
-    row.appendChild(sp);
-    spans.push(sp);
-  }
-
-  document.body.appendChild(card);
-  victoryEl3 = card;
-
-  // Card-relative start times (ms) -- V i c t o r y then 2s gap then ?
-  var STARTS       = [1200, 1750, 2300, 2850, 3400, 3950, 4500, 7600];
-  var LETTER_DUR   = 1100;   // each letter animates in over this duration
-  var VEIL_PEAK_MS = 1600;   // veil reaches VEIL_MAX at this time
-  var VEIL_MAX     = 0.74;
-  var FADEOUT_START = 10600; // ms when collective fade-out begins
-  var FADEOUT_DUR   = 2400;  // ms duration of fade-out
-  var CARD_DONE_MS  = 13000; // ms when onComplete fires
-
-  var startMs   = Date.now();
-  var cancelled = false;
-  _victoryCancelFn = function() { cancelled = true; };
-
-  function tick() {
-    if (cancelled) return;
-    var el = Date.now() - startMs;
-
-    var veilBase  = Math.min(VEIL_MAX, (el / VEIL_PEAK_MS) * VEIL_MAX);
-    var fadeFrac  = el >= FADEOUT_START
-      ? Math.min(1, (el - FADEOUT_START) / FADEOUT_DUR)
-      : 0;
-
-    veil.style.opacity = String(+(veilBase * (1 - fadeFrac)).toFixed(4));
-
-    for (var i = 0; i < 8; i++) {
-      var s   = STARTS[i];
-      var spn = spans[i];
-      if (el < s) {
-        spn.style.opacity   = '0';
-        spn.style.filter    = 'blur(10px)';
-        spn.style.transform = 'scale(1.18)';
+  // ── Score popups: scale punch (1.3->1.0 in first 100ms), rise, hold, late fade
+  if (_scorePopups.length > 0) {
+    var _spNow = Date.now();
+    var _PTOT = 800, _PPUN = 100, _PFD = 0.67;
+    for (var _spi = _scorePopups.length - 1; _spi >= 0; _spi--) {
+      var _spe = _scorePopups[_spi];
+      var _spFrac = Math.min(1, (_spNow - _spe.startT) / _PTOT);
+      _spe.spr.position.y = _spe.startY + _spFrac * POPUP_RISE;
+      var _spMs = _spFrac * _PTOT;
+      if (_spMs < _PPUN) {
+        var _pt = _spMs / _PPUN;
+        var _sc = 1.3 - 0.3 * (1 - (1 - _pt) * (1 - _pt)); // ease-out quad 1.3->1.0
+        _spe.spr.scale.set(_spe.bw * _sc, _spe.bh * _sc, 1);
       } else {
-        var t = (el - s) / LETTER_DUR;
-        if (t < 1) {
-          var ease = t * t * (3 - 2 * t);  // smoothstep
-          spn.style.opacity   = String(+(ease * (1 - fadeFrac)).toFixed(4));
-          spn.style.filter    = 'blur(' + (10 * (1 - ease)).toFixed(1) + 'px)';
-          spn.style.transform = 'scale(' + (1.18 - 0.18 * ease).toFixed(4) + ')';
-        } else {
-          spn.style.opacity   = String(+(1 - fadeFrac).toFixed(4));
-          spn.style.filter    = 'blur(' + (fadeFrac * 6).toFixed(1) + 'px)';
-          spn.style.transform = 'scale(1)';
-        }
+        _spe.spr.scale.set(_spe.bw, _spe.bh, 1);
+      }
+      _spe.spr.material.opacity = _spFrac > _PFD ? 1 - (_spFrac - _PFD) / (1 - _PFD) : 1;
+      if (_spFrac >= 1) {
+        scene.remove(_spe.spr);
+        _spe.spr.material.dispose();
+        _spe.tex.dispose();
+        _scorePopups.splice(_spi, 1);
       }
     }
+  }
 
-    if (el >= CARD_DONE_MS) {
+  // ── Swell-theft orange sprites: tumble toward camera and fade over 800ms
+  if (_swellOrangeSprites.length > 0) {
+    var _soNow = Date.now();
+    for (var _soi = _swellOrangeSprites.length - 1; _soi >= 0; _soi--) {
+      var _soe = _swellOrangeSprites[_soi];
+      var _soFrac = Math.min(1, (_soNow - _soe.startT) / 800);
+      _soe.mesh.position.x += _soe.vx;
+      _soe.mesh.position.y += _soe.vy;
+      _soe.mesh.position.z += _soe.vz;
+      _soe.vy -= 0.003; // light gravity
+      _soe.mesh.rotation.x += _soe.rotSpd;
+      _soe.mesh.rotation.z += _soe.rotSpd * 0.7;
+      _soe.mesh.material.opacity = 1 - _soFrac;
+      if (_soFrac >= 1) {
+        scene.remove(_soe.mesh);
+        _soe.mesh.material.dispose();
+        _soe.mesh.geometry.dispose();
+        _swellOrangeSprites.splice(_soi, 1);
+      }
+    }
+  }
+
+  // ── Flying oranges: arc from pickup point into basket on collection
+  if (_orangeFlights.length > 0) {
+    var _ofNow = Date.now();
+    var _bkwp2 = new THREE.Vector3();
+    if (_basketGroup) { _basketGroup.getWorldPosition(_bkwp2); }
+    else { _bkwp2.set(player3.x, BASKET_Y, playerGroup.position.z + BASKET_Z); }
+    for (var _ofi = _orangeFlights.length - 1; _ofi >= 0; _ofi--) {
+      var _of = _orangeFlights[_ofi];
+      var _ofT = Math.min(1, (_ofNow - _of.startT) / ORANGE_FLIGHT_MS);
+      var _ofE = _ofT * _ofT * (3 - 2 * _ofT); // smoothstep ease
+      _of.mesh.position.x = _of.sx + (_bkwp2.x - _of.sx) * _ofE;
+      _of.mesh.position.z = _of.sz + (_bkwp2.z - _of.sz) * _ofE;
+      _of.mesh.position.y = (_of.sy + (_bkwp2.y - _of.sy) * _ofE) + Math.sin(_ofT * Math.PI) * 0.30;
+      _of.mesh.scale.setScalar(1.0 + (0.29 - 1.0) * _ofT); // shrink toward basket-orange size
+      if (_ofT >= 1) {
+        player3.oranges++;
+        score3 += _of.value;
+        _spawnScorePopup3(_of.px, _of.py, _of.pz, '+' + _of.value);
+        scene.remove(_of.mesh);
+        disposeMesh(_of.mesh);
+        _orangeFlights.splice(_ofi, 1);
+      }
+    }
+  }
+}
+
+// ── SHARED TITLE CARD ────────────────────────────────────────────────
+// showTitleCard({ title, subtitle, holdMs, onComplete, dramatic })
+//
+// Standard path (stage announcements):
+//   ENTER (~TITLE_ENTER_MS): title + subtitle fade/scale in, centred mid-screen.
+//   HOLD  (holdMs ms):       static. Obstacle spawning is suppressed.
+//   SHRINK (~TITLE_SHRINK_MS): card flies up to the top of the screen and
+//                              scales down to a compact strip. onComplete fires.
+//
+// Dramatic path (ending only, dramatic:true):
+//   ENTER: per-letter V-i-c-t-o-r-y...? reveal (existing tuned timing).
+//   HOLD:  holdMs ms of dead air after "?" lands.
+//   EXIT:  2.4s collective blur-out, then onComplete.
+//   (No shrink-to-top on the ending -- it fades to black and yields to the
+//    Kern River message screen.)
+//
+// Tuner keys: Shift+T/G = TITLE_ENTER_MS +/-100; Shift+Y/H = TITLE_HOLD_MS +/-250;
+//             Shift+U/J = TITLE_FONT_PX +/-2
+function showTitleCard(opts) {
+  var holdMs   = (opts.holdMs != null) ? opts.holdMs : TITLE_HOLD_MS;
+  var dramatic = !!opts.dramatic;
+  var onDone   = opts.onComplete || function() {};
+
+  // Tear down any existing card (stage or ending)
+  if (_titleCancelFn) { _titleCancelFn(); _titleCancelFn = null; }
+  if (_titleCardEl && _titleCardEl.parentNode) { _titleCardEl.parentNode.removeChild(_titleCardEl); }
+
+  var card = document.createElement('div');
+  card.id = 'krr-title-card';
+  card.style.cssText = 'position:fixed;inset:0;z-index:50;pointer-events:none;overflow:hidden;';
+  document.body.appendChild(card);
+  _titleCardEl = card;
+  // Legacy aliases so startGame3 cleanup still works without changes
+  victoryEl3 = card;
+
+  var cancelled = false;
+  function _cancel() { cancelled = true; _titleCardSuppressSpawn = false; }
+  _titleCancelFn = _cancel;
+  _victoryCancelFn = _cancel;
+
+  // ── DRAMATIC PATH (Victory? per-letter reveal) ──────────────────
+  if (dramatic) {
+    _titleCardSuppressSpawn = false; // game is stopped during ending; no spawn concern
+
+    var veil = document.createElement('div');
+    veil.style.cssText = 'position:absolute;inset:0;background:#0B1F3A;opacity:0;';
+    card.appendChild(veil);
+
+    var row = document.createElement('div');
+    row.style.cssText = 'position:absolute;left:50%;top:50%;' +
+      'transform:translate(-50%,-50%);display:flex;align-items:baseline;';
+    card.appendChild(row);
+
+    var lChars = ['V','i','c','t','o','r','y','?'];
+    var spans = [];
+    for (var li = 0; li < lChars.length; li++) {
+      var sp = document.createElement('span');
+      sp.textContent = lChars[li];
+      sp.style.cssText = 'font-family:"Press Start 2P",monospace;' +
+        'font-size:' + VICTORY_FONT_PX + 'px;color:#C9883A;' +
+        '-webkit-text-stroke:0.8px rgba(255,245,220,0.45);' +
+        'display:inline-block;opacity:0;filter:blur(10px);transform:scale(1.18);' +
+        'text-shadow:' +
+          '0 0 2px rgba(255,245,220,0.50),' +
+          '0 0 var(--krr-halo-blur) rgba(0,0,0,var(--krr-halo-op)),' +
+          '0 2px 5px rgba(0,0,0,0.55),' +
+          '0 0 24px rgba(201,136,58,0.65);';
+      row.appendChild(sp);
+      spans.push(sp);
+    }
+
+    // Timeline: V i c t o r y spaced 550ms apart starting at 1200ms; 2s gap; ?
+    var STARTS        = [1200, 1750, 2300, 2850, 3400, 3950, 4500, 7600];
+    var LETTER_DUR    = 1100;
+    var VEIL_PEAK_MS  = 1600;
+    var VEIL_MAX      = 0.74;
+    var LETTER_DONE   = 7600 + LETTER_DUR;          // ? fully landed = 8700ms
+    var FADEOUT_START = LETTER_DONE + holdMs;        // dead air after ? = 10600ms
+    var FADEOUT_DUR   = 2400;
+    var CARD_DONE_MS  = FADEOUT_START + FADEOUT_DUR; // 13000ms
+
+    var dStartMs = Date.now();
+    function tickDramatic() {
+      if (cancelled) return;
+      var el = Date.now() - dStartMs;
+      var veilBase  = Math.min(VEIL_MAX, (el / VEIL_PEAK_MS) * VEIL_MAX);
+      var fadeFrac  = el >= FADEOUT_START ? Math.min(1, (el - FADEOUT_START) / FADEOUT_DUR) : 0;
+      veil.style.opacity = String(+(veilBase * (1 - fadeFrac)).toFixed(4));
+      for (var i = 0; i < 8; i++) {
+        var s = STARTS[i]; var spn = spans[i];
+        if (el < s) {
+          spn.style.opacity = '0'; spn.style.filter = 'blur(10px)'; spn.style.transform = 'scale(1.18)';
+        } else {
+          var t = (el - s) / LETTER_DUR;
+          if (t < 1) {
+            var ease = t * t * (3 - 2 * t);
+            spn.style.opacity   = String(+(ease * (1 - fadeFrac)).toFixed(4));
+            spn.style.filter    = 'blur(' + (10 * (1 - ease)).toFixed(1) + 'px)';
+            spn.style.transform = 'scale(' + (1.18 - 0.18 * ease).toFixed(4) + ')';
+          } else {
+            spn.style.opacity   = String(+(1 - fadeFrac).toFixed(4));
+            spn.style.filter    = 'blur(' + (fadeFrac * 6).toFixed(1) + 'px)';
+            spn.style.transform = 'scale(1)';
+          }
+        }
+      }
+      if (el >= CARD_DONE_MS) {
+        cancelled = true;
+        if (card.parentNode) card.parentNode.removeChild(card);
+        _titleCardEl = null; victoryEl3 = null; _titleCancelFn = null; _victoryCancelFn = null;
+        onDone();
+        return;
+      }
+      requestAnimationFrame(tickDramatic);
+    }
+    requestAnimationFrame(tickDramatic);
+    return;
+  }
+
+  // ── STANDARD PATH (stage announcements: enter → hold → shrink to top) ──
+  _titleCardSuppressSpawn = true;
+
+  var inner = document.createElement('div');
+  inner.style.cssText = 'position:absolute;left:50%;top:42%;' +
+    'transform:translate(-50%,-50%) scale(1);text-align:center;white-space:nowrap;';
+  card.appendChild(inner);
+
+  var titleEl = document.createElement('div');
+  titleEl.textContent = opts.title || '';
+  titleEl.style.cssText = 'font-family:"Press Start 2P",monospace;font-size:' + TITLE_FONT_PX + 'px;' +
+    'color:#C9883A;-webkit-text-stroke:0.8px rgba(255,245,220,0.45);' +
+    'text-shadow:' +
+      '0 0 2px rgba(255,245,220,0.50),' +
+      '0 0 var(--krr-halo-blur) rgba(0,0,0,var(--krr-halo-op)),' +
+      '0 2px 5px rgba(0,0,0,0.55),' +
+      '0 0 20px rgba(201,136,58,0.65);' +
+    'opacity:0;filter:blur(10px);transform:scale(1.15);display:block;';
+  inner.appendChild(titleEl);
+
+  var subEl = null;
+  if (opts.subtitle) {
+    subEl = document.createElement('div');
+    subEl.textContent = opts.subtitle;
+    subEl.style.cssText = 'font-family:"Press Start 2P",monospace;font-size:9px;' +
+      'color:#F5F0E8;margin-top:10px;opacity:0;filter:blur(8px);' +
+      'transform:scale(1.08);display:block;';
+    inner.appendChild(subEl);
+  }
+
+  var sStartMs  = Date.now();
+  var ENTER_MS  = TITLE_ENTER_MS;
+  var HOLD_END  = ENTER_MS + holdMs;
+  var DONE_MS   = HOLD_END + TITLE_SHRINK_MS;
+  var spawnReleased = false;
+  var _shrinkTargetTop = null; // measured lazily at start of SHRINK phase
+
+  function tickStandard() {
+    if (cancelled) return;
+    var el = Date.now() - sStartMs;
+
+    if (el < ENTER_MS) {
+      // ENTER: fade/bloom in
+      var t = el / ENTER_MS;
+      var ease = t * t * (3 - 2 * t);
+      inner.style.opacity = String(+ease.toFixed(4));
+      titleEl.style.opacity = String(+ease.toFixed(4));
+      titleEl.style.filter = 'blur(' + (10 * (1 - ease)).toFixed(1) + 'px)';
+      titleEl.style.transform = 'scale(' + (1.15 - 0.15 * ease).toFixed(4) + ')';
+      if (subEl) {
+        subEl.style.opacity = String(+(ease * 0.90).toFixed(4));
+        subEl.style.filter = 'blur(' + (8 * (1 - ease)).toFixed(1) + 'px)';
+        subEl.style.transform = 'scale(' + (1.08 - 0.08 * ease).toFixed(4) + ')';
+      }
+    } else if (el < HOLD_END) {
+      // HOLD: fully visible
+      titleEl.style.opacity = '1'; titleEl.style.filter = 'blur(0)'; titleEl.style.transform = 'scale(1)';
+      if (subEl) { subEl.style.opacity = '0.90'; subEl.style.filter = 'blur(0)'; subEl.style.transform = 'scale(1)'; }
+      inner.style.opacity = '1';
+    } else if (el < DONE_MS) {
+      // SHRINK: fly up to top-center stage label
+      if (!spawnReleased) { _titleCardSuppressSpawn = false; spawnReleased = true; }
+      // Measure target once at the first SHRINK frame (HUD is guaranteed visible by now)
+      if (_shrinkTargetTop === null) {
+        var _stEl = document.getElementById('hud3-stage');
+        var _inH  = inner.getBoundingClientRect().height;
+        _shrinkTargetTop = 6; // fallback if HUD not visible
+        if (_stEl) {
+          var _stR = _stEl.getBoundingClientRect();
+          if (_stR.width > 0) _shrinkTargetTop = _stR.top + _stR.height / 2 - _inH / 2;
+        }
+      }
+      var t2 = (el - HOLD_END) / TITLE_SHRINK_MS;
+      var ease2 = t2 < 0.5 ? 2 * t2 * t2 : 1 - Math.pow(-2 * t2 + 2, 2) / 2;
+      var targetSc = Math.max(0.20, STAGE_LABEL_PX / TITLE_FONT_PX);
+      var topPx  = window.innerHeight * 0.42 * (1 - ease2) + _shrinkTargetTop * ease2;
+      var tyPct  = -50 * (1 - ease2);
+      var sc     = 1 - (1 - targetSc) * ease2;
+      inner.style.top = topPx.toFixed(1) + 'px';
+      inner.style.transform = 'translate(-50%,' + tyPct.toFixed(1) + '%) scale(' + sc.toFixed(4) + ')';
+      inner.style.opacity = String((1 - 0.25 * ease2).toFixed(4));
+    } else {
+      // Done
       cancelled = true;
-      onComplete();
+      _titleCardSuppressSpawn = false;
+      if (card.parentNode) card.parentNode.removeChild(card);
+      _titleCardEl = null; victoryEl3 = null; _titleCancelFn = null; _victoryCancelFn = null;
+      onDone();
       return;
     }
-    requestAnimationFrame(tick);
+    requestAnimationFrame(tickStandard);
   }
-  requestAnimationFrame(tick);
+  requestAnimationFrame(tickStandard);
 }
 
 // ── ENDING SEQUENCE ────────────────────────────────────────────────
@@ -4587,6 +5826,10 @@ function startEnding3() {
 function endRun3(complete) {
   if (gameState3 === 'gameover' || gameState3 === 'ending1' || gameState3 === 'ending2' || gameState3 === 'beaching') return;
   player3.dead = true;
+  // Tear down any active stage/ending title card so it doesn't sit above the game-over overlay
+  if (_titleCancelFn) { _titleCancelFn(); _titleCancelFn = null; }
+  if (_titleCardEl && _titleCardEl.parentNode) { _titleCardEl.parentNode.removeChild(_titleCardEl); _titleCardEl = null; }
+  _titleCardSuppressSpawn = false;
   if (score3 > highScore3) { highScore3 = Math.floor(score3); localStorage.setItem('krr3d_hs', highScore3); }
   gameState3 = 'gameover';
   showScreen3('gameover', complete);
@@ -4601,11 +5844,17 @@ function startGame3() {
   endingBeachStartMs     = 0;
   endingCinematicFired   = false;
   glbTorsoSquashFrames   = 0;
-  if (_victoryCancelFn) { _victoryCancelFn(); _victoryCancelFn = null; }
-  if (victoryEl3 && victoryEl3.parentNode) { victoryEl3.parentNode.removeChild(victoryEl3); victoryEl3 = null; }
-  _poppyReachFrame     = 0;
-  _poppyReachPp        = null;
-  _poppyReachApexFired = false;
+  if (_titleCancelFn) { _titleCancelFn(); _titleCancelFn = null; }
+  if (_titleCardEl && _titleCardEl.parentNode) { _titleCardEl.parentNode.removeChild(_titleCardEl); _titleCardEl = null; }
+  _titleCardSuppressSpawn = false;
+  victoryEl3 = null; _victoryCancelFn = null;
+  _poppyPickSt = 0; _poppyPickPp = null; _poppyContactFired = false;
+  if (_poppyBloomSpr) { scene.remove(_poppyBloomSpr); _poppyBloomSpr.material.dispose(); _poppyBloomSpr = null; }
+  if (_hatPoppySpr)   { _hatPoppySpr.visible = false; }
+  _hatKnockSt = 0; _poppyShieldWas = false;
+  if (_shieldGroup) { _shieldGroup.visible = false; _shieldGroup.scale.setScalar(1); }
+  _shieldBurstSt = 0;
+  for (var _sr = 0; _sr < _shardPool.length; _sr++) { _shardPool[_sr].active = false; _shardPool[_sr].mesh.visible = false; }
   narrowing = false;
   camXSmooth = 0;
 
@@ -4614,6 +5863,14 @@ function startGame3() {
   player3.x    = laneXPos(mid);
   player3.isJumping = false; player3.jumpFrame  = 0;
   player3.dead      = false; player3.hasShield  = false; player3.spinoutFrames = 0;
+  player3.oranges   = 0;
+  for (var _psr = 0; _psr < _scorePopups.length; _psr++) { scene.remove(_scorePopups[_psr].spr); _scorePopups[_psr].spr.material.dispose(); _scorePopups[_psr].tex.dispose(); }
+  _scorePopups = [];
+  for (var _sor = 0; _sor < _swellOrangeSprites.length; _sor++) { scene.remove(_swellOrangeSprites[_sor].mesh); }
+  _swellOrangeSprites = [];
+  for (var _ofR = 0; _ofR < _orangeFlights.length; _ofR++) { scene.remove(_orangeFlights[_ofR].mesh); disposeMesh(_orangeFlights[_ofR].mesh); }
+  _orangeFlights = [];
+  _basketPrevOranges = -1; // force basket re-sync on next frame
   playerGroup.rotation.y = 0; playerGroup.position.y = 0;
   kayakTurnY3 = 0; kayakWasSpinning3 = false; splashWasJumping3 = false;
   paddleSplashPrev3 = 0; wakeChevronTimer3 = 0;
@@ -4638,6 +5895,14 @@ function startGame3() {
   document.getElementById('overlay3').classList.add('hidden');
   document.getElementById('hud3').classList.add('visible');
   gameState3 = 'playing';
+
+  // Stage 1 title card on game start (subsequent stages are triggered via applyStage3)
+  showTitleCard({
+    title:    STAGES3[0].name,
+    subtitle: 'MILE 0',
+    holdMs:   TITLE_HOLD_MS,
+    onComplete: function() {}
+  });
 }
 
 // ── SCREEN MANAGEMENT ────────────────────────────────────────────────
@@ -4748,41 +6013,54 @@ window.addEventListener('keydown', e => {
     }
     // ===== END TEMP STAGE5 BACKDROP FRAMING TUNER =====
 
-    // ===== TEMP STAGE5 TERRAIN TUNER (REMOVE BEFORE LAUNCH) =====
-    // t/g = repeatX -/+ ; y/h = repeatY -/+ ; u/j = scroll -/+ ; [ / ] = seatY down/up ; m = toggle width mirror
-    // T = master (source for future bank clones); G = ground plane clone (live visible surface)
-    if (stageIdx === 4 && swampTerrainTex) {
-      var T = swampTerrainTex;
-      var G = s5GndScrollTex;
-      if (e.key === 't') { S5_TERR_REPEAT_X = Math.max(0.25, +(S5_TERR_REPEAT_X - 0.25).toFixed(2)); T.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); if (G) { G.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); G.needsUpdate = true; } }
-      if (e.key === 'g') { S5_TERR_REPEAT_X = +(S5_TERR_REPEAT_X + 0.25).toFixed(2); T.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); if (G) { G.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); G.needsUpdate = true; } }
-      if (e.key === 'y') { S5_TERR_REPEAT_Y = Math.max(0.25, +(S5_TERR_REPEAT_Y - 0.25).toFixed(2)); T.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); if (G) { G.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); G.needsUpdate = true; } }
-      if (e.key === 'h') { S5_TERR_REPEAT_Y = +(S5_TERR_REPEAT_Y + 0.25).toFixed(2); T.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); if (G) { G.repeat.set(S5_TERR_REPEAT_X, S5_TERR_REPEAT_Y); G.needsUpdate = true; } }
-      if (e.key === 'u') { S5_TERR_SCROLL = Math.max(0, +(S5_TERR_SCROLL - 0.1).toFixed(2)); }
-      if (e.key === 'j') { S5_TERR_SCROLL = +(S5_TERR_SCROLL + 0.1).toFixed(2); }
-      if (e.key === '[') { S5_TERR_Y -= 0.2; T.offset.y -= 0.2; if (G) G.offset.y -= 0.2; }
-      if (e.key === ']') { S5_TERR_Y += 0.2; T.offset.y += 0.2; if (G) G.offset.y += 0.2; }
-      if (e.key === 'm') { T.wrapS = (T.wrapS === THREE.MirroredRepeatWrapping) ? THREE.RepeatWrapping : THREE.MirroredRepeatWrapping; T.needsUpdate = true; if (G) { G.wrapS = T.wrapS; G.needsUpdate = true; } }
-      if ('tgyhuj[]m'.indexOf(e.key) !== -1) {
-        console.log('[KRR TERR5] repX=' + S5_TERR_REPEAT_X + ' repY=' + S5_TERR_REPEAT_Y + ' scroll=' + S5_TERR_SCROLL + ' seatY=' + S5_TERR_Y.toFixed(2) + ' wrapS=' + (T.wrapS === THREE.MirroredRepeatWrapping ? 'mirror' : 'repeat'));
-      }
-    }
-    // ===== END TEMP STAGE5 TERRAIN TUNER =====
 
-    // ===== TEMP STAGE5 FARMHOUSE SEAT TUNER (REMOVE BEFORE LAUNCH) =====
-    // , = seat down (more negative, lower into ground) ; . = seat up
-    if (stageIdx === 4) {
+    // ===== DECOR GROUND SEAT FINE-TUNER (, / . keys, finer step than [ / ]) =====
+    // , = lower -0.01  . = raise +0.01  applies to all far-ground decor via DECOR_SEAT_GND
+    {
       var fsmoved = false;
-      if (e.key === ',') { S5_FARMHOUSE_SEAT_Y -= 0.05; fsmoved = true; }
-      if (e.key === '.') { S5_FARMHOUSE_SEAT_Y += 0.05; fsmoved = true; }
-      if (fsmoved) {
-        for (var fsti = 0; fsti < bankFarms5.length; fsti++) {
-          bankFarms5[fsti].sprite.position.y = S5_FARMHOUSE_SEAT_Y;
-        }
-        console.log('[KRR FARMSEAT] y=' + S5_FARMHOUSE_SEAT_Y.toFixed(2));
+      if (e.key === ',') { DECOR_SEAT_GND = +(DECOR_SEAT_GND - 0.01).toFixed(3); fsmoved = true; }
+      if (e.key === '.') { DECOR_SEAT_GND = +(DECOR_SEAT_GND + 0.01).toFixed(3); fsmoved = true; }
+      if (fsmoved) { console.log('[KRR DECORSEAT] DECOR_SEAT_GND=' + DECOR_SEAT_GND.toFixed(3) + ' farmhouse_base=' + (DECOR_SEAT_GND - 3.21).toFixed(3)); }
+    }
+    // ===== END DECOR GROUND SEAT FINE-TUNER =====
+
+    // ===== DECOR GROUND SEAT TUNER (all far-ground decor: houses, stumps, fishing, trees, boulders) =====
+    // [ = lower -0.02  ] = raise +0.02   applies live via per-frame Y writes; farmhouse tracks as DECOR_SEAT_GND - 3.21
+    {
+      var _bbm = false;
+      if (e.key === '[' && !e.ctrlKey) { DECOR_SEAT_GND = +(DECOR_SEAT_GND - 0.02).toFixed(3); _bbm = true; }
+      if (e.key === ']' && !e.ctrlKey) { DECOR_SEAT_GND = +(DECOR_SEAT_GND + 0.02).toFixed(3); _bbm = true; }
+      if (_bbm) { console.log('[KRR DECORSEAT] DECOR_SEAT_GND=' + DECOR_SEAT_GND.toFixed(3) + ' farmhouse_base=' + (DECOR_SEAT_GND - 3.21).toFixed(3)); }
+    }
+    // ===== END DECOR GROUND SEAT TUNER =====
+
+    // ===== ORANGE FLIGHT DURATION TUNER =====
+    // < (Shift+,) = shorter -25ms   > (Shift+.) = longer +25ms
+    {
+      var _ofm = false;
+      if (e.key === '<') { ORANGE_FLIGHT_MS = Math.max(100, ORANGE_FLIGHT_MS - 25); _ofm = true; }
+      if (e.key === '>') { ORANGE_FLIGHT_MS = Math.min(1000, ORANGE_FLIGHT_MS + 25); _ofm = true; }
+      if (_ofm) { console.log('[KRR OFLT] ORANGE_FLIGHT_MS=' + ORANGE_FLIGHT_MS); }
+    }
+    // ===== END ORANGE FLIGHT DURATION TUNER =====
+
+    // ===== TITLE CARD HALO TUNER =====
+    // { (Shift+[) = halo blur -1px   } (Shift+]) = halo blur +1px
+    // _ (Shift+-)  = halo opacity -0.05   + (Shift+=) = halo opacity +0.05
+    // Changes are live: active title card letters repaint immediately.
+    {
+      var _thm = false;
+      if (e.key === '{') { TITLE_HALO_BLUR = Math.max(0, TITLE_HALO_BLUR - 1); _thm = true; }
+      if (e.key === '}') { TITLE_HALO_BLUR = Math.min(40, TITLE_HALO_BLUR + 1); _thm = true; }
+      if (e.key === '_') { TITLE_HALO_OP = Math.max(0, +(TITLE_HALO_OP - 0.05).toFixed(2)); _thm = true; }
+      if (e.key === '+') { TITLE_HALO_OP = Math.min(1, +(TITLE_HALO_OP + 0.05).toFixed(2)); _thm = true; }
+      if (_thm) {
+        document.documentElement.style.setProperty('--krr-halo-blur', TITLE_HALO_BLUR + 'px');
+        document.documentElement.style.setProperty('--krr-halo-op', String(TITLE_HALO_OP));
+        console.log('[KRR HALO] TITLE_HALO_BLUR=' + TITLE_HALO_BLUR + ' TITLE_HALO_OP=' + TITLE_HALO_OP.toFixed(2));
       }
     }
-    // ===== END TEMP STAGE5 FARMHOUSE SEAT TUNER =====
+    // ===== END TITLE CARD HALO TUNER =====
 
     // ===== TEMP STAGE5 LOG SEAT TUNER (REMOVE BEFORE LAUNCH) =====
     // ; = logs down (more negative, lower toward channel) ; ' = logs up
@@ -5041,6 +6319,141 @@ window.addEventListener('keydown', e => {
     // Note: tuning SHORE_W or SHORE_TOE_Y takes effect on the next buildWorld() call (stage enter or DEV jump)
     // ===== END TEMP SHORE APRON TUNER =====
 
+    // ===== TEMP POPPY PICK TIMING TUNER =====
+    // Ctrl+F1/F2 = POPPY_PULL_MS -/+50   Ctrl+F3/F4 = POPPY_REACH_MS -/+25   Ctrl+F5/F6 = POPPY_RETRACT_MS -/+25
+    if (e.key === 'F1' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); POPPY_PULL_MS = Math.max(400, POPPY_PULL_MS - 50); console.log('[KRR POPPY TIMING] PULL=' + POPPY_PULL_MS + ' REACH=' + POPPY_REACH_MS + ' RETRACT=' + POPPY_RETRACT_MS); }
+    if (e.key === 'F2' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); POPPY_PULL_MS += 50; console.log('[KRR POPPY TIMING] PULL=' + POPPY_PULL_MS + ' REACH=' + POPPY_REACH_MS + ' RETRACT=' + POPPY_RETRACT_MS); }
+    if (e.key === 'F3' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); POPPY_REACH_MS = Math.max(100, POPPY_REACH_MS - 25); console.log('[KRR POPPY TIMING] PULL=' + POPPY_PULL_MS + ' REACH=' + POPPY_REACH_MS + ' RETRACT=' + POPPY_RETRACT_MS); }
+    if (e.key === 'F4' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); POPPY_REACH_MS = Math.min(900, POPPY_REACH_MS + 25); console.log('[KRR POPPY TIMING] PULL=' + POPPY_PULL_MS + ' REACH=' + POPPY_REACH_MS + ' RETRACT=' + POPPY_RETRACT_MS); }
+    if (e.key === 'F5' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); POPPY_RETRACT_MS = Math.max(100, POPPY_RETRACT_MS - 25); console.log('[KRR POPPY TIMING] PULL=' + POPPY_PULL_MS + ' REACH=' + POPPY_REACH_MS + ' RETRACT=' + POPPY_RETRACT_MS); }
+    if (e.key === 'F6' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); POPPY_RETRACT_MS += 25; console.log('[KRR POPPY TIMING] PULL=' + POPPY_PULL_MS + ' REACH=' + POPPY_REACH_MS + ' RETRACT=' + POPPY_RETRACT_MS); }
+    // ===== END TEMP POPPY PICK TIMING TUNER =====
+
+    // ===== TEMP POPPY HAT POSITION TUNER (model-space coords) =====
+    // Ctrl+Shift+Y/U = MY -/+0.02  I/O = MZ -/+0.02  G/J = MX -/+0.02  K/L = SCALE -/+0.02
+    // Ctrl+Shift+C/V = TILT -/+0.02  N/M = SWAY_K -/+0.05
+    var _hatTunerLog = function() { console.log('[KRR HAT] MX=' + POPPY_HAT_MX.toFixed(3) + ' MY=' + POPPY_HAT_MY.toFixed(3) + ' MZ=' + POPPY_HAT_MZ.toFixed(3) + ' SCALE=' + POPPY_HAT_SCALE.toFixed(2) + ' TILT=' + POPPY_HAT_TILT.toFixed(3) + ' SWAY_K=' + POPPY_HAT_SWAY_K.toFixed(3)); };
+    var _hatTunerApply = function() {
+      if (_hatPoppySpr) {
+        if (glbTorsoGroup && _hatPoppySpr.parent === glbTorsoGroup) {
+          _hatPoppySpr.position.set(POPPY_HAT_MX, POPPY_HAT_MY - TORSO_HINGE_Y, POPPY_HAT_MZ - TORSO_HINGE_Z);
+        }
+        var _hs2 = POPPY_HAT_SCALE; _hatPoppySpr.scale.set(_hs2 / 1.24, _hs2, 1);
+      }
+    };
+    if (e.key === 'y' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_HAT_MY = +(POPPY_HAT_MY - 0.02).toFixed(3); _hatTunerApply(); _hatTunerLog(); }
+    if (e.key === 'u' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_HAT_MY = +(POPPY_HAT_MY + 0.02).toFixed(3); _hatTunerApply(); _hatTunerLog(); }
+    if (e.key === 'i' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_HAT_MZ = +(POPPY_HAT_MZ - 0.02).toFixed(3); _hatTunerApply(); _hatTunerLog(); }
+    if (e.key === 'o' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_HAT_MZ = +(POPPY_HAT_MZ + 0.02).toFixed(3); _hatTunerApply(); _hatTunerLog(); }
+    if (e.key === 'g' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_HAT_MX = +(POPPY_HAT_MX - 0.02).toFixed(3); _hatTunerApply(); _hatTunerLog(); }
+    if (e.key === 'j' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_HAT_MX = +(POPPY_HAT_MX + 0.02).toFixed(3); _hatTunerApply(); _hatTunerLog(); }
+    if (e.key === 'k' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_HAT_SCALE = Math.max(0.05, +(POPPY_HAT_SCALE - 0.02).toFixed(2)); _hatTunerApply(); _hatTunerLog(); }
+    if (e.key === 'l' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_HAT_SCALE = +(POPPY_HAT_SCALE + 0.02).toFixed(2); _hatTunerApply(); _hatTunerLog(); }
+    if (e.key === 'c' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_HAT_TILT = +(POPPY_HAT_TILT - 0.02).toFixed(3); _hatTunerLog(); }
+    if (e.key === 'v' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_HAT_TILT = +(POPPY_HAT_TILT + 0.02).toFixed(3); _hatTunerLog(); }
+    if (e.key === 'n' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_HAT_SWAY_K = +(POPPY_HAT_SWAY_K - 0.05).toFixed(3); _hatTunerLog(); }
+    if (e.key === 'm' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_HAT_SWAY_K = +(POPPY_HAT_SWAY_K + 0.05).toFixed(3); _hatTunerLog(); }
+    // ===== END TEMP POPPY HAT POSITION TUNER =====
+
+    // ===== TEMP TORSO HINGE TUNER =====
+    // Ctrl+Shift+F7/F8 = TORSO_HINGE_Y -/+0.01   Ctrl+Shift+F9/F10 = TORSO_HINGE_Z -/+0.01
+    if (e.key === 'F7' && e.ctrlKey && e.shiftKey) { e.preventDefault(); TORSO_HINGE_Y = +(TORSO_HINGE_Y - 0.01).toFixed(3); _applyTorsoHinge(); }
+    if (e.key === 'F8' && e.ctrlKey && e.shiftKey) { e.preventDefault(); TORSO_HINGE_Y = +(TORSO_HINGE_Y + 0.01).toFixed(3); _applyTorsoHinge(); }
+    if (e.key === 'F9' && e.ctrlKey && e.shiftKey) { e.preventDefault(); TORSO_HINGE_Z = +(TORSO_HINGE_Z - 0.01).toFixed(3); _applyTorsoHinge(); }
+    if (e.key === 'F10' && e.ctrlKey && e.shiftKey) { e.preventDefault(); TORSO_HINGE_Z = +(TORSO_HINGE_Z + 0.01).toFixed(3); _applyTorsoHinge(); }
+    // ===== END TEMP TORSO HINGE TUNER =====
+
+    // ===== TEMP POPPY SWAY TUNER =====
+    // Ctrl+Shift+S/D = POPPY_SWAY_AMP -/+0.01   Ctrl+Shift+F5/F6 = POPPY_SWAY_SPD -/+0.002
+    if (e.key === 's' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_SWAY_AMP = Math.max(0, +(POPPY_SWAY_AMP - 0.01).toFixed(3)); console.log('[KRR SWAY] AMP=' + POPPY_SWAY_AMP.toFixed(3) + ' SPD=' + POPPY_SWAY_SPD.toFixed(4)); }
+    if (e.key === 'd' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_SWAY_AMP = +(POPPY_SWAY_AMP + 0.01).toFixed(3); console.log('[KRR SWAY] AMP=' + POPPY_SWAY_AMP.toFixed(3) + ' SPD=' + POPPY_SWAY_SPD.toFixed(4)); }
+    if (e.key === 'F5' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_SWAY_SPD = Math.max(0, +(POPPY_SWAY_SPD - 0.002).toFixed(4)); console.log('[KRR SWAY] AMP=' + POPPY_SWAY_AMP.toFixed(3) + ' SPD=' + POPPY_SWAY_SPD.toFixed(4)); }
+    if (e.key === 'F6' && e.ctrlKey && e.shiftKey) { e.preventDefault(); POPPY_SWAY_SPD = +(POPPY_SWAY_SPD + 0.002).toFixed(4); console.log('[KRR SWAY] AMP=' + POPPY_SWAY_AMP.toFixed(3) + ' SPD=' + POPPY_SWAY_SPD.toFixed(4)); }
+    // ===== END TEMP POPPY SWAY TUNER =====
+
+    // ===== GROUND TEXEL DENSITY TUNER =====
+    // Ctrl+[ / Ctrl+] = GROUND_TEX_WORLD -/+0.25 (world units per tile; smaller = denser)
+    // Updates all bank segments (each has own tex) and all aprons (share one tex per stage).
+    if (e.key === '[' && e.ctrlKey && !e.shiftKey) {
+      e.preventDefault();
+      GROUND_TEX_WORLD = Math.max(0.25, +(GROUND_TEX_WORLD - 0.25).toFixed(2));
+      var _gSlope = Math.hypot(SHORE_W, 0.60 - SHORE_TOE_Y);
+      bankSegs3.forEach(function(bs) {
+        if (bs.mesh.material && bs.mesh.material.map) {
+          bs.mesh.material.map.repeat.set(bs.segW / GROUND_TEX_WORLD, (BK_SEG_Z + 0.25) / GROUND_TEX_WORLD);
+          bs.mesh.material.map.needsUpdate = true;
+        }
+        if (bs.apron && bs.apron.material && bs.apron.material.map) {
+          bs.apron.material.map.repeat.set(_gSlope / GROUND_TEX_WORLD, (BK_SEG_Z + 0.25) / GROUND_TEX_WORLD);
+          bs.apron.material.map.needsUpdate = true;
+        }
+      });
+      if (gndPlaneTex) {
+        var _gZ = (stageIdx === 4) ? 600 : 170;
+        gndPlaneTex.repeat.set(200 / GROUND_TEX_WORLD, _gZ / GROUND_TEX_WORLD);
+        gndPlaneTex.needsUpdate = true;
+      }
+      console.log('[KRR GROUND] GROUND_TEX_WORLD=' + GROUND_TEX_WORLD.toFixed(2));
+    }
+    if (e.key === ']' && e.ctrlKey && !e.shiftKey) {
+      e.preventDefault();
+      GROUND_TEX_WORLD = +(GROUND_TEX_WORLD + 0.25).toFixed(2);
+      var _gSlope2 = Math.hypot(SHORE_W, 0.60 - SHORE_TOE_Y);
+      bankSegs3.forEach(function(bs) {
+        if (bs.mesh.material && bs.mesh.material.map) {
+          bs.mesh.material.map.repeat.set(bs.segW / GROUND_TEX_WORLD, (BK_SEG_Z + 0.25) / GROUND_TEX_WORLD);
+          bs.mesh.material.map.needsUpdate = true;
+        }
+        if (bs.apron && bs.apron.material && bs.apron.material.map) {
+          bs.apron.material.map.repeat.set(_gSlope2 / GROUND_TEX_WORLD, (BK_SEG_Z + 0.25) / GROUND_TEX_WORLD);
+          bs.apron.material.map.needsUpdate = true;
+        }
+      });
+      if (gndPlaneTex) {
+        var _gZ2 = (stageIdx === 4) ? 600 : 170;
+        gndPlaneTex.repeat.set(200 / GROUND_TEX_WORLD, _gZ2 / GROUND_TEX_WORLD);
+        gndPlaneTex.needsUpdate = true;
+      }
+      console.log('[KRR GROUND] GROUND_TEX_WORLD=' + GROUND_TEX_WORLD.toFixed(2));
+    }
+    // ===== END GROUND TEXEL DENSITY TUNER =====
+
+    // ===== BANK BRIGHTNESS TUNER =====
+    // Ctrl+Shift+[ / ] = BANK_BRIGHT_MULT -/+0.05
+    if (e.key === '[' && e.ctrlKey && e.shiftKey) {
+      e.preventDefault();
+      BANK_BRIGHT_MULT = Math.max(0, +(BANK_BRIGHT_MULT - 0.05).toFixed(2));
+      bankSegs3.forEach(function(bs) {
+        if (bs.mesh.material) bs.mesh.material.color.setScalar(BANK_BRIGHT_MULT);
+        if (bs.apron && bs.apron.material) bs.apron.material.color.setScalar(BANK_BRIGHT_MULT);
+      });
+      if (gndPlaneMat) gndPlaneMat.color.setScalar(BANK_BRIGHT_MULT);
+      console.log('[KRR BRIGHT] BANK_BRIGHT_MULT=' + BANK_BRIGHT_MULT.toFixed(2));
+    }
+    if (e.key === ']' && e.ctrlKey && e.shiftKey) {
+      e.preventDefault();
+      BANK_BRIGHT_MULT = Math.min(2, +(BANK_BRIGHT_MULT + 0.05).toFixed(2));
+      bankSegs3.forEach(function(bs) {
+        if (bs.mesh.material) bs.mesh.material.color.setScalar(BANK_BRIGHT_MULT);
+        if (bs.apron && bs.apron.material) bs.apron.material.color.setScalar(BANK_BRIGHT_MULT);
+      });
+      if (gndPlaneMat) gndPlaneMat.color.setScalar(BANK_BRIGHT_MULT);
+      console.log('[KRR BRIGHT] BANK_BRIGHT_MULT=' + BANK_BRIGHT_MULT.toFixed(2));
+    }
+    // ===== END BANK BRIGHTNESS TUNER =====
+
+    // ===== ARM HINGE + REACH TUNER =====
+    // Ctrl+Shift+Q/W = ARM_HINGE_Y -/+0.01
+    // Ctrl+Shift+E/R = ARM_HINGE_Z -/+0.01
+    // Ctrl+Shift+A/Z = ARM_REACH_ANG -/+0.05
+    if (e.key === 'q' && e.ctrlKey && e.shiftKey) { e.preventDefault(); ARM_HINGE_Y = Math.max(0, +(ARM_HINGE_Y - 0.01).toFixed(3)); _applyArmHinge(); }
+    if (e.key === 'w' && e.ctrlKey && e.shiftKey) { e.preventDefault(); ARM_HINGE_Y = +(ARM_HINGE_Y + 0.01).toFixed(3); _applyArmHinge(); }
+    if (e.key === 'e' && e.ctrlKey && e.shiftKey) { e.preventDefault(); ARM_HINGE_Z = Math.max(0, +(ARM_HINGE_Z - 0.01).toFixed(3)); _applyArmHinge(); }
+    if (e.key === 'r' && e.ctrlKey && e.shiftKey) { e.preventDefault(); ARM_HINGE_Z = +(ARM_HINGE_Z + 0.01).toFixed(3); _applyArmHinge(); }
+    if (e.key === 'a' && e.ctrlKey && e.shiftKey) { e.preventDefault(); ARM_REACH_ANG = Math.max(0, +(ARM_REACH_ANG - 0.05).toFixed(2)); console.log('[KRR ARM] reach=' + ARM_REACH_ANG.toFixed(2)); }
+    if (e.key === 'z' && e.ctrlKey && e.shiftKey) { e.preventDefault(); ARM_REACH_ANG = +(ARM_REACH_ANG + 0.05).toFixed(2); console.log('[KRR ARM] reach=' + ARM_REACH_ANG.toFixed(2)); }
+    // ===== END ARM HINGE + REACH TUNER =====
+
   } else if (gameState3 === 'paused') {
     if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
       gameState3 = 'playing';
@@ -5053,7 +6466,7 @@ window.addEventListener('keydown', e => {
   if (e.key === 'F4' && !e.shiftKey) {
     e.preventDefault();
     if (_victoryCancelFn) { _victoryCancelFn(); _victoryCancelFn = null; }
-    buildVictoryCard3(function() { console.log('[KRR VICTORY] dev replay complete'); });
+    showTitleCard({ title: 'Victory?', subtitle: '', holdMs: 1900, dramatic: true, onComplete: function() { console.log('[KRR VICTORY] dev replay complete'); } });
   }
   if ((e.key === 'F2' || e.key === 'F3') && !e.shiftKey) {
     e.preventDefault();
@@ -5070,6 +6483,155 @@ window.addEventListener('keydown', e => {
   if (e.key === 'F2' && e.shiftKey) { e.preventDefault(); ENDING_MSG_FADE_MS = Math.max(100, ENDING_MSG_FADE_MS - 500); console.log('[KRR ENDING] ENDING_MSG_FADE_MS=' + ENDING_MSG_FADE_MS); }
   if (e.key === 'F3' && e.shiftKey) { e.preventDefault(); ENDING_MSG_FADE_MS += 500; console.log('[KRR ENDING] ENDING_MSG_FADE_MS=' + ENDING_MSG_FADE_MS); }
   // ===== END TEMP VICTORY CARD DEV KEYS =====
+
+  // ===== TITLE CARD TIMING TUNER =====
+  // Shift+T/G = TITLE_ENTER_MS -/+100  Shift+Y/H = TITLE_HOLD_MS -/+250  Shift+U/J = TITLE_FONT_PX -/+2
+  if (e.key === 'T' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); TITLE_ENTER_MS = Math.max(100, TITLE_ENTER_MS - 100); console.log('[KRR TITLE] ENTER=' + TITLE_ENTER_MS + ' HOLD=' + TITLE_HOLD_MS + ' FONT=' + TITLE_FONT_PX); }
+  if (e.key === 'G' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); TITLE_ENTER_MS += 100; console.log('[KRR TITLE] ENTER=' + TITLE_ENTER_MS + ' HOLD=' + TITLE_HOLD_MS + ' FONT=' + TITLE_FONT_PX); }
+  if (e.key === 'Y' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); TITLE_HOLD_MS = Math.max(250, TITLE_HOLD_MS - 250); console.log('[KRR TITLE] ENTER=' + TITLE_ENTER_MS + ' HOLD=' + TITLE_HOLD_MS + ' FONT=' + TITLE_FONT_PX); }
+  if (e.key === 'H' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); TITLE_HOLD_MS += 250; console.log('[KRR TITLE] ENTER=' + TITLE_ENTER_MS + ' HOLD=' + TITLE_HOLD_MS + ' FONT=' + TITLE_FONT_PX); }
+  if (e.key === 'U' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); TITLE_FONT_PX = Math.max(12, TITLE_FONT_PX - 2); console.log('[KRR TITLE] ENTER=' + TITLE_ENTER_MS + ' HOLD=' + TITLE_HOLD_MS + ' FONT=' + TITLE_FONT_PX); }
+  if (e.key === 'J' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); TITLE_FONT_PX += 2; console.log('[KRR TITLE] ENTER=' + TITLE_ENTER_MS + ' HOLD=' + TITLE_HOLD_MS + ' FONT=' + TITLE_FONT_PX); }
+  // ===== END TITLE CARD TIMING TUNER =====
+
+  // ===== STAGE LABEL FONT TUNER =====
+  // Shift+F4 = STAGE_LABEL_PX -1;  Shift+F5 = STAGE_LABEL_PX +1
+  if (e.key === 'F4' && e.shiftKey && !e.ctrlKey) {
+    e.preventDefault();
+    STAGE_LABEL_PX = Math.max(6, STAGE_LABEL_PX - 1);
+    var _slE = document.getElementById('hud3-stage');
+    if (_slE) _slE.style.fontSize = STAGE_LABEL_PX + 'px';
+    console.log('[KRR HUD] STAGE_LABEL_PX=' + STAGE_LABEL_PX);
+  }
+  if (e.key === 'F5' && e.shiftKey && !e.ctrlKey) {
+    e.preventDefault();
+    STAGE_LABEL_PX = Math.min(18, STAGE_LABEL_PX + 1);
+    var _slE2 = document.getElementById('hud3-stage');
+    if (_slE2) _slE2.style.fontSize = STAGE_LABEL_PX + 'px';
+    console.log('[KRR HUD] STAGE_LABEL_PX=' + STAGE_LABEL_PX);
+  }
+  // ===== END STAGE LABEL FONT TUNER =====
+
+  // ===== HUD ORANGE DISPLAY TUNER =====
+  // Shift+B/M = HUD_ORANGE_ICON_PX -/+1   Shift+S/N = HUD_ORANGE_COUNT_PX -/+1
+  if (e.key === 'B' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); HUD_ORANGE_ICON_PX = Math.max(6, HUD_ORANGE_ICON_PX - 1); var _ico = document.getElementById('hud3-orange-icon'); if (_ico) { _ico.style.width = HUD_ORANGE_ICON_PX + 'px'; _ico.style.height = HUD_ORANGE_ICON_PX + 'px'; } console.log('[KRR HUD] icon=' + HUD_ORANGE_ICON_PX + ' count=' + HUD_ORANGE_COUNT_PX); }
+  if (e.key === 'M' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); HUD_ORANGE_ICON_PX += 1; var _ico2 = document.getElementById('hud3-orange-icon'); if (_ico2) { _ico2.style.width = HUD_ORANGE_ICON_PX + 'px'; _ico2.style.height = HUD_ORANGE_ICON_PX + 'px'; } console.log('[KRR HUD] icon=' + HUD_ORANGE_ICON_PX + ' count=' + HUD_ORANGE_COUNT_PX); }
+  if (e.key === 'S' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); HUD_ORANGE_COUNT_PX = Math.max(5, HUD_ORANGE_COUNT_PX - 1); var _cnt = document.getElementById('hud3-orange-count'); if (_cnt) _cnt.style.fontSize = HUD_ORANGE_COUNT_PX + 'px'; console.log('[KRR HUD] icon=' + HUD_ORANGE_ICON_PX + ' count=' + HUD_ORANGE_COUNT_PX); }
+  if (e.key === 'N' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); HUD_ORANGE_COUNT_PX += 1; var _cnt2 = document.getElementById('hud3-orange-count'); if (_cnt2) _cnt2.style.fontSize = HUD_ORANGE_COUNT_PX + 'px'; console.log('[KRR HUD] icon=' + HUD_ORANGE_ICON_PX + ' count=' + HUD_ORANGE_COUNT_PX); }
+  // ===== END HUD ORANGE DISPLAY TUNER =====
+
+  // ===== HUD FONT SCALE TUNER =====
+  // Ctrl+, = scale -0.10   Ctrl+. = scale +0.10  (applies all HUD text proportionally)
+  if (e.key === ',' && e.ctrlKey) { e.preventDefault(); HUD_FONT_SCALE = Math.max(0.5, +(HUD_FONT_SCALE - 0.10).toFixed(2)); _applyHudFontScale(); }
+  if (e.key === '.' && e.ctrlKey) { e.preventDefault(); HUD_FONT_SCALE = Math.min(2.0, +(HUD_FONT_SCALE + 0.10).toFixed(2)); _applyHudFontScale(); }
+  // ===== END HUD FONT SCALE TUNER =====
+
+  // ===== SHIELD BUBBLE TUNER =====
+  // Shift+I/K = SHIELD_INNER_OP -/+0.01   Shift+O/L = SHIELD_OUTER_OP -/+0.01   Shift+R/V = SHIELD_RADIUS_MULT -/+0.05
+  if (e.key === 'I' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); SHIELD_INNER_OP = Math.max(0, +(SHIELD_INNER_OP - 0.01).toFixed(3)); if (_shieldInner) _shieldInner.material.opacity = SHIELD_INNER_OP; console.log('[KRR SHIELD] inner=' + SHIELD_INNER_OP + ' outer=' + SHIELD_OUTER_OP + ' r=' + SHIELD_RADIUS_MULT); }
+  if (e.key === 'K' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); SHIELD_INNER_OP = +(SHIELD_INNER_OP + 0.01).toFixed(3); if (_shieldInner) _shieldInner.material.opacity = SHIELD_INNER_OP; console.log('[KRR SHIELD] inner=' + SHIELD_INNER_OP + ' outer=' + SHIELD_OUTER_OP + ' r=' + SHIELD_RADIUS_MULT); }
+  if (e.key === 'O' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); SHIELD_OUTER_OP = Math.max(0, +(SHIELD_OUTER_OP - 0.01).toFixed(3)); if (_shieldOuter) _shieldOuter.material.opacity = SHIELD_OUTER_OP; console.log('[KRR SHIELD] inner=' + SHIELD_INNER_OP + ' outer=' + SHIELD_OUTER_OP + ' r=' + SHIELD_RADIUS_MULT); }
+  if (e.key === 'L' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); SHIELD_OUTER_OP = +(SHIELD_OUTER_OP + 0.01).toFixed(3); if (_shieldOuter) _shieldOuter.material.opacity = SHIELD_OUTER_OP; console.log('[KRR SHIELD] inner=' + SHIELD_INNER_OP + ' outer=' + SHIELD_OUTER_OP + ' r=' + SHIELD_RADIUS_MULT); }
+  if (e.key === 'R' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); SHIELD_RADIUS_MULT = Math.max(0.3, +(SHIELD_RADIUS_MULT - 0.05).toFixed(2)); if (_shieldGroup && !_shieldBurstSt) _shieldGroup.scale.setScalar(SHIELD_RADIUS_MULT); console.log('[KRR SHIELD] inner=' + SHIELD_INNER_OP + ' outer=' + SHIELD_OUTER_OP + ' r=' + SHIELD_RADIUS_MULT); }
+  if (e.key === 'V' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); SHIELD_RADIUS_MULT = +(SHIELD_RADIUS_MULT + 0.05).toFixed(2); if (_shieldGroup && !_shieldBurstSt) _shieldGroup.scale.setScalar(SHIELD_RADIUS_MULT); console.log('[KRR SHIELD] inner=' + SHIELD_INNER_OP + ' outer=' + SHIELD_OUTER_OP + ' r=' + SHIELD_RADIUS_MULT); }
+  // ===== END SHIELD BUBBLE TUNER =====
+
+  // ===== SHIELD HUE CYCLE SPEED TUNER =====
+  // ~ (Shift+`) = slower -0.0005   | (Shift+\) = faster +0.0005
+  if (e.key === '~') { SHIELD_HUE_SPEED = Math.max(0, +(SHIELD_HUE_SPEED - 0.0005).toFixed(4)); console.log('[KRR SHIELD] hueSpd=' + SHIELD_HUE_SPEED.toFixed(4) + ' (~' + (SHIELD_HUE_SPEED > 0 ? (1 / (SHIELD_HUE_SPEED * 60)).toFixed(1) : 'inf') + 's/cycle)'); }
+  if (e.key === '|') { SHIELD_HUE_SPEED = +(SHIELD_HUE_SPEED + 0.0005).toFixed(4); console.log('[KRR SHIELD] hueSpd=' + SHIELD_HUE_SPEED.toFixed(4) + ' (~' + (1 / (SHIELD_HUE_SPEED * 60)).toFixed(1) + 's/cycle)'); }
+  // ===== END SHIELD HUE CYCLE SPEED TUNER =====
+
+  // ===== SWELL ORANGE LOSS TUNER =====
+  // Shift+Z/X = SWELL_ORANGE_LOSS -/+1
+  if (e.key === 'Z' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); SWELL_ORANGE_LOSS = Math.max(0, SWELL_ORANGE_LOSS - 1); console.log('[KRR ORANGE] SWELL_LOSS=' + SWELL_ORANGE_LOSS); }
+  if (e.key === 'X' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); SWELL_ORANGE_LOSS++;                                    console.log('[KRR ORANGE] SWELL_LOSS=' + SWELL_ORANGE_LOSS); }
+  // ===== END SWELL ORANGE LOSS TUNER =====
+
+  // ===== BILLBOARD TUNER =====
+  // Shift+C/F = BILLBOARD_SCALE -/+0.25   Shift+Q/E = BILLBOARD_GAP_MIN -/+100
+  if (e.key === 'C' && e.shiftKey && !e.ctrlKey) {
+    e.preventDefault(); BILLBOARD_SCALE = Math.max(0.5, +(BILLBOARD_SCALE - 0.25).toFixed(2));
+    bankBillboards3.forEach(function(b) { var h=BILLBOARD_SCALE; b.sprite.scale.set(h*billboardNatAR[b.texIdx],h,1); });
+    console.log('[KRR BILLBOARD] scale=' + BILLBOARD_SCALE + ' gap=' + BILLBOARD_GAP_MIN);
+  }
+  if (e.key === 'F' && e.shiftKey && !e.ctrlKey) {
+    e.preventDefault(); BILLBOARD_SCALE = +(BILLBOARD_SCALE + 0.25).toFixed(2);
+    bankBillboards3.forEach(function(b) { var h=BILLBOARD_SCALE; b.sprite.scale.set(h*billboardNatAR[b.texIdx],h,1); });
+    console.log('[KRR BILLBOARD] scale=' + BILLBOARD_SCALE + ' gap=' + BILLBOARD_GAP_MIN);
+  }
+  if (e.key === 'Q' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); BILLBOARD_GAP_MIN = Math.max(100, BILLBOARD_GAP_MIN - 100); console.log('[KRR BILLBOARD] scale=' + BILLBOARD_SCALE + ' gap=' + BILLBOARD_GAP_MIN); }
+  if (e.key === 'E' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); BILLBOARD_GAP_MIN += 100; console.log('[KRR BILLBOARD] scale=' + BILLBOARD_GAP_MIN + ' gap=' + BILLBOARD_GAP_MIN); }
+  // ===== END BILLBOARD TUNER =====
+
+  // ===== SCORE POPUP TUNER =====
+  // Shift+F6/F7 = POPUP_FONT_PX -/+2   Shift+F8/F9 = POPUP_RISE -/+0.10
+  if (e.key === 'F6' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); POPUP_FONT_PX = Math.max(10, POPUP_FONT_PX - 2); console.log('[KRR POPUP] font=' + POPUP_FONT_PX + ' rise=' + POPUP_RISE); }
+  if (e.key === 'F7' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); POPUP_FONT_PX += 2; console.log('[KRR POPUP] font=' + POPUP_FONT_PX + ' rise=' + POPUP_RISE); }
+  if (e.key === 'F8' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); POPUP_RISE = Math.max(0.20, +(POPUP_RISE - 0.10).toFixed(2)); console.log('[KRR POPUP] font=' + POPUP_FONT_PX + ' rise=' + POPUP_RISE); }
+  if (e.key === 'F9' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); POPUP_RISE = +(POPUP_RISE + 0.10).toFixed(2); console.log('[KRR POPUP] font=' + POPUP_FONT_PX + ' rise=' + POPUP_RISE); }
+  // ===== END SCORE POPUP TUNER =====
+
+  // ===== BASKET POSITION / SCALE TUNER =====
+  // Shift+!/@ = BASKET_Y -/+0.02   Shift+#/$ = BASKET_Z -/+0.02
+  // Shift+%/^ = BASKET_SCALE -/+0.05   Shift+&/* = BASKET_X -/+0.02
+  // Shift+(/) = BASKET_MAX_VIS -/+1   { / } (Shift+[/]) = BASKET_HEAP_Y -/+0.01
+  if (e.key === '!' && e.shiftKey) { e.preventDefault(); BASKET_Y = +(BASKET_Y - 0.02).toFixed(3); if (_basketGroup) _basketGroup.position.y = BASKET_Y; console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
+  if (e.key === '@' && e.shiftKey) { e.preventDefault(); BASKET_Y = +(BASKET_Y + 0.02).toFixed(3); if (_basketGroup) _basketGroup.position.y = BASKET_Y; console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
+  if (e.key === '#' && e.shiftKey) { e.preventDefault(); BASKET_Z = +(BASKET_Z - 0.02).toFixed(3); if (_basketGroup) _basketGroup.position.z = BASKET_Z; console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
+  if (e.key === '$' && e.shiftKey) { e.preventDefault(); BASKET_Z = +(BASKET_Z + 0.02).toFixed(3); if (_basketGroup) _basketGroup.position.z = BASKET_Z; console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
+  if (e.key === '%' && e.shiftKey) { e.preventDefault(); BASKET_SCALE = Math.max(0.20, +(BASKET_SCALE - 0.05).toFixed(2)); if (_basketGroup) _basketGroup.scale.setScalar(BASKET_SCALE); console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
+  if (e.key === '^' && e.shiftKey) { e.preventDefault(); BASKET_SCALE = +(BASKET_SCALE + 0.05).toFixed(2); if (_basketGroup) _basketGroup.scale.setScalar(BASKET_SCALE); console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
+  if (e.key === '&' && e.shiftKey) { e.preventDefault(); BASKET_X = +(BASKET_X - 0.02).toFixed(3); if (_basketGroup) _basketGroup.position.x = BASKET_X; console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
+  if (e.key === '*' && e.shiftKey) { e.preventDefault(); BASKET_X = +(BASKET_X + 0.02).toFixed(3); if (_basketGroup) _basketGroup.position.x = BASKET_X; console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
+  if (e.key === '(' && e.shiftKey) { e.preventDefault(); BASKET_MAX_VIS = Math.max(1, BASKET_MAX_VIS - 1); console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y); }
+  if (e.key === ')' && e.shiftKey) { e.preventDefault(); BASKET_MAX_VIS = Math.min(_basketOranges.length, BASKET_MAX_VIS + 1); console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y); }
+  if (e.key === '{') { e.preventDefault(); BASKET_HEAP_Y = +(BASKET_HEAP_Y - 0.01).toFixed(3); if (_orangePileGroup) _orangePileGroup.position.y = BASKET_HEAP_Y; console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y); }
+  if (e.key === '}') { e.preventDefault(); BASKET_HEAP_Y = +(BASKET_HEAP_Y + 0.01).toFixed(3); if (_orangePileGroup) _orangePileGroup.position.y = BASKET_HEAP_Y; console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y); }
+  // ===== END BASKET TUNER =====
+
+  // ===== SHARD TUNER =====
+  // Ctrl+Shift+J/L = SHARD_COUNT -1/+1   Ctrl+Shift+Y/U = SHARD_SPEED -/+0.005   Ctrl+Shift+T/P = SHARD_DURATION -/+50ms
+  if (e.key === 'J' && e.shiftKey && e.ctrlKey) { e.preventDefault(); SHARD_COUNT = Math.max(1, SHARD_COUNT - 1); console.log('[KRR SHARD] count=' + SHARD_COUNT + ' spd=' + SHARD_SPEED + ' dur=' + SHARD_DURATION); }
+  if (e.key === 'L' && e.shiftKey && e.ctrlKey) { e.preventDefault(); SHARD_COUNT = Math.min(12, SHARD_COUNT + 1); console.log('[KRR SHARD] count=' + SHARD_COUNT + ' spd=' + SHARD_SPEED + ' dur=' + SHARD_DURATION); }
+  if (e.key === 'Y' && e.shiftKey && e.ctrlKey) { e.preventDefault(); SHARD_SPEED = Math.max(0.005, +(SHARD_SPEED - 0.005).toFixed(3)); console.log('[KRR SHARD] count=' + SHARD_COUNT + ' spd=' + SHARD_SPEED + ' dur=' + SHARD_DURATION); }
+  if (e.key === 'U' && e.shiftKey && e.ctrlKey) { e.preventDefault(); SHARD_SPEED = +(SHARD_SPEED + 0.005).toFixed(3); console.log('[KRR SHARD] count=' + SHARD_COUNT + ' spd=' + SHARD_SPEED + ' dur=' + SHARD_DURATION); }
+  if (e.key === 'T' && e.shiftKey && e.ctrlKey) { e.preventDefault(); SHARD_DURATION = Math.max(100, SHARD_DURATION - 50); console.log('[KRR SHARD] count=' + SHARD_COUNT + ' spd=' + SHARD_SPEED + ' dur=' + SHARD_DURATION); }
+  if (e.key === 'P' && e.shiftKey && e.ctrlKey) { e.preventDefault(); SHARD_DURATION += 50; console.log('[KRR SHARD] count=' + SHARD_COUNT + ' spd=' + SHARD_SPEED + ' dur=' + SHARD_DURATION); }
+  // ===== END SHARD TUNER =====
+
+  // ===== TEMP DIAG: black-patch mesh isolation + breath freeze =====
+  // Ctrl+Shift+H: step through GLB meshes, hiding one at a time by elimination
+  if (e.ctrlKey && e.shiftKey && e.key.toUpperCase() === 'H') {
+    e.preventDefault();
+    if (_kayakerMeshes.length === 0) { console.log('[KRR DIAG] GLB not yet loaded'); return; }
+    // Restore the previously hidden mesh (if any)
+    if (_kayakerHideIdx >= 0 && _kayakerHideIdx < _kayakerMeshes.length) {
+      _kayakerMeshes[_kayakerHideIdx].visible = true;
+    }
+    // Advance: -1 means all visible; indices 0..N-1 each hide one mesh
+    _kayakerHideIdx = (_kayakerHideIdx + 1 >= _kayakerMeshes.length) ? -1 : _kayakerHideIdx + 1;
+    if (_kayakerHideIdx === -1) {
+      console.log('[KRR DIAG] All ' + _kayakerMeshes.length + ' meshes visible');
+    } else {
+      _kayakerMeshes[_kayakerHideIdx].visible = false;
+      var _hm = _kayakerMeshes[_kayakerHideIdx];
+      console.log('[KRR DIAG] Hiding ' + _kayakerHideIdx + '/' + (_kayakerMeshes.length - 1) + ': "' + _hm.name + '"' +
+        ' map=' + (_hm.material.map ? 'SET' : 'null') + ' color=#' + _hm.material.color.getHexString());
+    }
+  }
+  // Ctrl+Shift+B: toggle torso freeze at maximum-forward rotation (holds black patch still)
+  if (e.ctrlKey && e.shiftKey && e.key.toUpperCase() === 'B') {
+    e.preventDefault();
+    _breathFrozen = !_breathFrozen;
+    var _tgFrz = glbTorsoGroup || glbTorsoNode;
+    if (_breathFrozen && _tgFrz) {
+      _tgFrz.rotation.x = -TORSO_ROCK;  // pin at peak forward lean (sin=1 peak)
+    }
+    console.log('[KRR DIAG] breathFrozen=' + _breathFrozen +
+      (_tgFrz ? ' hinge.rx=' + _tgFrz.rotation.x.toFixed(3) : ' (torso not found)'));
+  }
+  // ===== END TEMP DIAG =====
 });
 
 let tX3 = 0, tY3 = 0, tT3 = 0;
@@ -5089,7 +6651,14 @@ canvas3d.addEventListener('touchend', e => {
 }, { passive: false });
 
 // ── BUTTON WIRING ─────────────────────────────────────────────────
-document.getElementById('btn3-start').addEventListener('click', startGame3);
+document.getElementById('btn3-start').addEventListener('click', function() {
+  document.getElementById('overlay3').classList.add('hidden');
+  document.getElementById('notice3').classList.add('visible');
+});
+document.getElementById('btn3-ready').addEventListener('click', function() {
+  document.getElementById('notice3').classList.remove('visible');
+  startGame3();
+});
 document.getElementById('btn3-retry').addEventListener('click', startGame3);
 document.getElementById('btn3-menu').addEventListener('click', () => showScreen3('start'));
 document.getElementById('btn3-resume').addEventListener('click', () => {

@@ -21,7 +21,7 @@
     /* ── HUD ── */
     #hud3 {
       position: fixed; top: 0; left: 50%; transform: translateX(-50%);
-      width: min(430px, 100vw); height: 54px;
+      width: min(430px, 100vw); height: 62px;
       background: rgba(11,31,58,0.88);
       font-family: 'Press Start 2P', monospace;
       color: #F5F0E8;
@@ -32,19 +32,46 @@
       flex-wrap: wrap; gap: 2px;
     }
     #hud3.visible { display: flex; }
-    .hud3-row { display: flex; justify-content: space-between; align-items: center; width: 100%; }
-    #hud3-score { color: #C9883A; }
-    #hud3-best  { color: #C9883A; }
 
+    /* HUD rows: flex with absolute-centered middle element (same pattern for both rows) */
+    .hud3-row { display: flex; justify-content: space-between; align-items: center; width: 100%; position: relative; }
+    .hud3-spc { display: block; }
+
+    /* Row 1 left: mile + stage# stacked */
+    #hud3-left { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+    #hud3-mile     { font-size: 7px; }
+    #hud3-stageNum { font-size: 7px; }
+
+    /* Row 1 center: stage name, abs-centered within its row */
+    #hud3-stage {
+      position: absolute; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      color: #C9883A; font-size: 9px; white-space: nowrap;
+    }
+
+    /* Row 2 center: pause button, abs-centered (same pattern as stage name) */
     #btn3-pause {
+      position: absolute; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
       font-family: 'Press Start 2P', monospace;
       font-size: 7px; color: #F5F0E8;
       background: rgba(30,58,95,0.70);
       border: 1px solid rgba(245,240,232,0.35);
       padding: 4px 8px; cursor: pointer;
-      pointer-events: auto;
+      pointer-events: auto; white-space: nowrap;
     }
     #btn3-pause:hover { background: rgba(45,106,79,0.80); }
+
+    /* Row 2 right: score-wrap (score+best side-by-side) + orange block */
+    #hud3-right { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+    #hud3-score-wrap { display: flex; align-items: flex-end; gap: 5px; }
+    #hud3-score-block, #hud3-best-block { display: flex; flex-direction: column; align-items: flex-end; gap: 0px; }
+    .hud3-micro { font-size: 5px; color: #C9883A; opacity: 0.65; }
+    #hud3-score { color: #C9883A; font-size: 12px; }
+    #hud3-best  { color: #C9883A; font-size: 8px; }
+    #hud3-oranges { display: flex; align-items: center; gap: 3px; }
+    #hud3-orange-icon  { width: 14px; height: 14px; image-rendering: pixelated; object-fit: contain; }
+    #hud3-orange-count { color: #F97316; font-size: 10px; }
 
     /* ── STAGE TRANSITION FLASH ── */
     #transitionMsg3 {
@@ -109,6 +136,125 @@
       background: #C9883A; border-radius: 1px;
     }
 
+    /* ── RIVER RULES NOTICE (clipboard) ── */
+    #notice3 {
+      position: fixed; inset: 0; z-index: 21;
+      display: none;
+      flex-direction: column; align-items: center; justify-content: flex-start;
+      padding-top: 14px;
+      overflow-y: auto;
+      /* River landscape backdrop -- stage-1 palette */
+      background: linear-gradient(180deg, #0c2d40 0%, #0f4560 30%, #145e75 60%, #0c3a52 100%);
+    }
+    #notice3.visible { display: flex; }
+
+    /* Clipboard wood body -- rounds top, extends off bottom of screen */
+    .cb-body {
+      width: min(370px, 92vw);
+      min-height: calc(100vh - 14px);
+      background: linear-gradient(160deg, #9e7c52 0%, #7d5530 50%, #8d6238 100%);
+      border-radius: 10px 10px 0 0;
+      padding: 0 10px 60px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.75), inset 0 1px 0 rgba(255,255,255,0.12);
+      position: relative;
+    }
+
+    /* Metal clip bar overhangs the clipboard top edge */
+    .cb-clip {
+      width: 76px; height: 26px;
+      background: linear-gradient(180deg, #d0d8df 0%, #9eb0bc 60%, #7a8e98 100%);
+      border: 1px solid #6a7d87;
+      border-radius: 5px 5px 7px 7px;
+      margin: 0 auto;
+      position: relative; top: -13px;
+      box-shadow: 0 3px 7px rgba(0,0,0,0.55), inset 0 1px 1px rgba(255,255,255,0.45);
+    }
+    .cb-clip::before, .cb-clip::after {
+      content: ''; position: absolute;
+      width: 9px; height: 9px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #c0cdd4, #7a8e98);
+      top: 50%; transform: translateY(-50%);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
+    }
+    .cb-clip::before { left: 9px; }
+    .cb-clip::after  { right: 9px; }
+
+    /* Cream paper sheet */
+    .cb-paper {
+      background: #f7f2e8;
+      border-radius: 3px;
+      padding: 16px 16px 20px;
+      margin-top: 3px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      position: relative; overflow: hidden;
+    }
+    /* Faint ruled lines behind content */
+    .cb-paper::before {
+      content: ''; position: absolute; inset: 28px 0 0;
+      background: repeating-linear-gradient(
+        transparent, transparent 22px,
+        rgba(120,140,160,0.12) 22px, rgba(120,140,160,0.12) 23px
+      );
+      pointer-events: none;
+    }
+
+    /* Paper header */
+    .cb-header {
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(10px, 2.8vw, 15px);
+      color: #1a5c38; text-align: center; margin-bottom: 14px;
+      position: relative; text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+    }
+    .cb-header::after {
+      content: ''; display: block; height: 2px;
+      background: linear-gradient(90deg, transparent, #1a5c38, transparent);
+      margin-top: 8px; opacity: 0.35;
+    }
+
+    /* Rule rows: icon + text */
+    .cb-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 9px 0; border-bottom: 1px solid rgba(0,0,0,0.07);
+      position: relative;
+    }
+    .cb-row:last-of-type { border-bottom: none; }
+
+    /* Fixed 44×44 icon cell */
+    .cb-icon {
+      width: 44px; height: 44px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    .cb-icon img { max-width: 44px; max-height: 44px; object-fit: contain; display: block; }
+
+    /* Rule text */
+    .cb-text {
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(5px, 1.5vw, 6.5px);
+      color: #2a2a2a; line-height: 1.95;
+    }
+    .cb-text b { display: block; color: #b84000; margin-bottom: 2px; font-size: clamp(5.5px, 1.6vw, 7px); }
+
+    /* Orange icon +100 badge */
+    .cb-orange-wrap { position: relative; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; }
+    .cb-orange-badge {
+      position: absolute; bottom: 0; right: -3px;
+      font-family: 'Press Start 2P', monospace; font-size: 5px;
+      color: #1a5c38; background: #f7f2e8; border: 1px solid #1a5c38;
+      padding: 1px 3px; line-height: 1;
+    }
+
+    /* READY? button */
+    .cb-ready-row { display: flex; justify-content: flex-end; padding-top: 14px; }
+    .cb-ready {
+      font-family: 'Press Start 2P', monospace; font-size: 9px;
+      color: #f7f2e8; background: #1a5c38; border: 2px solid #0f3d25;
+      padding: 11px 18px; cursor: pointer; box-shadow: 0 4px 0 #0f3d25;
+      transition: transform 0.07s, box-shadow 0.07s;
+    }
+    .cb-ready:hover { background: #246b45; }
+    .cb-ready:active { transform: translateY(3px); box-shadow: 0 1px 0 #0f3d25; }
+
     /* ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) ===== */
     #dev-stage-label {
       position: fixed; bottom: 8px; left: 50%;
@@ -128,15 +274,35 @@
 
   <!-- HUD (shown while playing) -->
   <div id="hud3">
+    <!-- Row 1: left=mile+stage# stacked | center=stage name (abs) | right=empty spc -->
     <div class="hud3-row">
+      <div id="hud3-left">
+        <span id="hud3-mile">MILE 0 / 165</span>
+        <span id="hud3-stageNum">STAGE 1/5</span>
+      </div>
       <span id="hud3-stage">HEADWATERS</span>
-      <span id="hud3-mile">MILE 0 / 165</span>
-      <span id="hud3-stageNum">STAGE 1/5</span>
+      <div class="hud3-spc"></div>
     </div>
+    <!-- Row 2: left=empty spc | center=pause (abs) | right=score+best+orange -->
     <div class="hud3-row">
-      <span id="hud3-score">SCORE 0</span>
-      <button id="btn3-pause">❚❚ PAUSE</button>
-      <span id="hud3-best">BEST 0</span>
+      <div class="hud3-spc"></div>
+      <button id="btn3-pause">&#10074;&#10074; PAUSE</button>
+      <div id="hud3-right">
+        <div id="hud3-score-wrap">
+          <div id="hud3-score-block">
+            <span class="hud3-micro">SCORE</span>
+            <span id="hud3-score">0</span>
+          </div>
+          <div id="hud3-best-block">
+            <span class="hud3-micro">BEST</span>
+            <span id="hud3-best">0</span>
+          </div>
+        </div>
+        <div id="hud3-oranges">
+          <img id="hud3-orange-icon" src="orange.png" alt="">
+          <span id="hud3-orange-count">0</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -222,6 +388,72 @@
     </div>
 
   </div>
+
+  <!-- RIVER RULES clipboard notice (shown between START RUN and actual game start) -->
+  <div id="notice3">
+    <div class="cb-body">
+      <div class="cb-clip"></div>
+      <div class="cb-paper">
+        <div class="cb-header">RIVER RULES</div>
+
+        <!-- 1. Whirlpool — whirlpool-icon.png: spiral on teal water disc -->
+        <div class="cb-row">
+          <div class="cb-icon">
+            <img src="whirlpool-icon.png" alt="Whirlpool">
+          </div>
+          <div class="cb-text">
+            <b>AVOID WHIRLPOOLS</b>
+            they spin you out and<br>knock oranges loose.
+          </div>
+        </div>
+
+        <!-- 2. Boulder — real game art -->
+        <div class="cb-row">
+          <div class="cb-icon">
+            <img src="boulder-2.png" alt="Boulder">
+          </div>
+          <div class="cb-text">
+            <b>AVOID BOULDERS</b>
+            steer around them.
+          </div>
+        </div>
+
+        <!-- 3. Poppy + dashed shield ring overlay -->
+        <div class="cb-row">
+          <div class="cb-icon">
+            <img src="poppy-icon.png" alt="Poppy" style="width:44px;height:44px;object-fit:contain;">
+            <svg viewBox="0 0 100 110" width="52" height="57" fill="none"
+                 style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none;">
+              <path d="M50 6 L88 20 V52 C88 80 68 98 50 106 C32 98 12 80 12 52 V20 Z"
+                    stroke="#F9A03C" stroke-width="5" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="cb-text">
+            <b>GRAB POPPIES</b>
+            from the bank –<br>earns a shield.
+          </div>
+        </div>
+
+        <!-- 4. Orange — real game art with +100 badge -->
+        <div class="cb-row">
+          <div class="cb-icon">
+            <div class="cb-orange-wrap">
+              <img src="orange.png" alt="Orange" style="width:36px;height:36px;object-fit:contain;">
+              <span class="cb-orange-badge">+100</span>
+            </div>
+          </div>
+          <div class="cb-text">
+            <b>COLLECT ORANGES</b>
+            fill your basket,<br>worth more each stage.
+          </div>
+        </div>
+
+        <div class="cb-ready-row">
+          <button class="cb-ready" id="btn3-ready">READY? &gt;</button>
+        </div>
+      </div><!-- /.cb-paper -->
+    </div><!-- /.cb-body -->
+  </div><!-- /#notice3 -->
 
   <!-- ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) ===== -->
   <div id="dev-stage-label">DEV: press 1-5 to jump stages</div>
