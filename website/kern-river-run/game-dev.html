@@ -255,6 +255,52 @@
     .cb-ready:hover { background: #246b45; }
     .cb-ready:active { transform: translateY(3px); box-shadow: 0 1px 0 #0f3d25; }
 
+    /* ── STORY VIEWER ── */
+    #story-viewer {
+      position: fixed; inset: 0; z-index: 30;
+      background: #000;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: space-between;
+      padding: 12px 16px 16px; gap: 10px;
+      opacity: 0; pointer-events: none; visibility: hidden;
+    }
+    #story-viewer.sv-visible { visibility: visible; }
+
+    #story-progress {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 7px; color: rgba(245,240,232,0.65);
+      flex-shrink: 0; letter-spacing: 0.08em;
+    }
+
+    .story-flip-wrap {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      perspective: 1000px;
+      width: 100%; overflow: hidden; position: relative;
+    }
+    #story-flip {
+      /* Portrait panels ~2:3; box sized to whichever constraint binds first */
+      width:  min(calc((100vh - 130px) * 0.667), calc(100vw - 32px));
+      height: min(calc(100vh - 130px), calc((100vw - 32px) * 1.5));
+      transform-origin: center; will-change: transform;
+    }
+    #story-img {
+      width: 100%; height: 100%; object-fit: contain;
+      display: block; background: #000;
+    }
+
+    .sv-zone {
+      position: absolute; top: 0; bottom: 0; width: 50%;
+      cursor: pointer; z-index: 1;
+    }
+    .sv-zone-left  { left: 0; }
+    .sv-zone-right { right: 0; }
+
+    .story-controls {
+      display: flex; gap: 10px; align-items: center;
+      justify-content: center; flex-shrink: 0; flex-wrap: wrap;
+    }
+    .story-controls .btn3 { max-width: 170px; font-size: 8px; padding: 10px 14px; }
+
     /* ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) ===== */
     #dev-stage-label {
       position: fixed; bottom: 8px; left: 50%;
@@ -299,7 +345,7 @@
           </div>
         </div>
         <div id="hud3-oranges">
-          <img id="hud3-orange-icon" src="orange.png" alt="">
+          <img id="hud3-orange-icon" src="orange.png?v=13" alt="">
           <span id="hud3-orange-count">0</span>
         </div>
       </div>
@@ -323,6 +369,7 @@
         P / Esc to pause
       </p>
       <button class="btn3" id="btn3-start">START RUN</button>
+      <button class="btn3 secondary" id="btn3-story">WHERE IS OUR WATER?</button>
       <p class="sub" style="font-size:5px;color:#4B5563;margin-top:4px">
         Standalone experiment — original game-2d-backup.html untouched
       </p>
@@ -389,6 +436,24 @@
 
   </div>
 
+  <!-- STORY VIEWER (full-screen comic panel reader) -->
+  <div id="story-viewer">
+    <div id="story-progress">1 / 7</div>
+    <div class="story-flip-wrap">
+      <div id="story-flip">
+        <img id="story-img" src="" alt="Story panel">
+      </div>
+      <div class="sv-zone sv-zone-left"  id="sv-zone-left"></div>
+      <div class="sv-zone sv-zone-right" id="sv-zone-right"></div>
+    </div>
+    <div class="story-controls">
+      <button class="btn3 secondary" id="story-back">&#9664; BACK</button>
+      <button class="btn3"           id="story-next">NEXT &#9654;</button>
+      <button class="btn3 teal"      id="story-done"   style="display:none">DONE</button>
+      <button class="btn3 secondary" id="story-replay" style="display:none">&#8635; REPLAY</button>
+    </div>
+  </div>
+
   <!-- RIVER RULES clipboard notice (shown between START RUN and actual game start) -->
   <div id="notice3">
     <div class="cb-body">
@@ -421,7 +486,7 @@
         <!-- 3. Poppy + dashed shield ring overlay -->
         <div class="cb-row">
           <div class="cb-icon">
-            <img src="poppy-icon.png" alt="Poppy" style="width:44px;height:44px;object-fit:contain;">
+            <img src="poppy-icon.png?v=13" alt="Poppy" style="width:44px;height:44px;object-fit:contain;">
             <svg viewBox="0 0 100 110" width="52" height="57" fill="none"
                  style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none;">
               <path d="M50 6 L88 20 V52 C88 80 68 98 50 106 C32 98 12 80 12 52 V20 Z"
@@ -438,7 +503,7 @@
         <div class="cb-row">
           <div class="cb-icon">
             <div class="cb-orange-wrap">
-              <img src="orange.png" alt="Orange" style="width:36px;height:36px;object-fit:contain;">
+              <img src="orange.png?v=13" alt="Orange" style="width:36px;height:36px;object-fit:contain;">
               <span class="cb-orange-badge">+100</span>
             </div>
           </div>
@@ -461,6 +526,6 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="game-3d.js?v=12"></script>
+  <script src="game-3d.js?v=16"></script>
 </body>
 </html>

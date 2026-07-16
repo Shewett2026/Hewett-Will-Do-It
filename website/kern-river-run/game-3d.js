@@ -42,8 +42,9 @@ var BASKET_X       = 0.00;  // X offset in playerGroup; Shift+&/* to tune
 var BASKET_Y       = 0.41;  // Y center; basket bottom = Y-0.11, stern deck = BOAT_WALL_H+GUNWALE_H = 0.30; Shift+!/@ to tune
 var BASKET_Z       = 0.82;  // Z offset stern-ward (hull inner half-width ~0.35 here); Shift+#/$ to tune
 var BASKET_SCALE   = 1.00;  // uniform scale of basket group; Shift+%/^ to tune
-var BASKET_MAX_VIS = 15;    // max oranges shown (pool has 15 stacking slots); Shift+(/): to tune
+var BASKET_MAX_VIS = 24;    // max oranges shown (pool has 24 stacking slots); Shift+(/): to tune
 var BASKET_HEAP_Y  = 0.00;  // Y offset of orange pile sub-group; { / } (Shift+[/]) keys to tune
+var BASKET_SPREAD  = 1.00;  // x/z scale of orange pile group; < / > to tune
 const MIN_GAP   = 135;
 const MI_PER_PX = 900;
 const COLL_FREQ  = 0.006;
@@ -54,6 +55,20 @@ const CAM_Z_BK  = 8.5;
 const CAM_LOOK_Z = -8.0;
 const WATER_OPACITY = 0.60;   // tune here: 0=invisible 1=solid; 0.60 = clear shallow river
 var NARROW_MILES = 1.5;        // miles over which sub-narrow squeeze animates (Shift+F7/F8 to tune)
+// ── CLOUD SHADOW / SUN BREAK CONSTANTS ───────────────────────────
+var CLOUD_SHADOW_OPACITY = 0.10;  // max opacity of shadow patches (normal blend); Ctrl+Shift+1/2
+var CLOUD_SUN_OPACITY    = 0.05;  // max opacity of sun break patches (additive blend); Ctrl+Shift+3/4
+var CLOUD_DRIFT_SPEED    = 0.60;  // wu/s base speed; Ctrl+Shift+5/6 (live — scales all drift)
+var CLOUD_SHADOW_COUNT   = 3;     // shadow patch pool; set before init (page reload to change)
+var CLOUD_SUN_COUNT      = 1;     // sun break pool; set before init (page reload to change)
+// ── WILDLIFE CONSTANTS ────────────────────────────────────────────
+var FISH_FREQ_MIN  = 20;   // seconds min between fish sightings; Ctrl+Shift+7/8
+var FISH_FREQ_MAX  = 48;   // seconds max
+var FISH_OPACITY   = 0.45; // sprite max opacity — water (0.60) reduces effective to ~18%; Ctrl+Shift+9/0
+var BIRD_FREQ_MIN  = 35;   // seconds min between bird crossings; Ctrl+-/=
+var BIRD_FREQ_MAX  = 80;   // seconds max
+var BIRD_SPEED     = 4.5;  // wu/s horizontal crossing speed
+var BIRD_OPACITY   = 0.80; // bird sprite opacity
 
 // ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) =====
 const DEV_STAGE_JUMP = true;  // flip to false or delete this whole block to disable
@@ -292,13 +307,40 @@ let horizonGrp  = null;
 let waterMesh   = null;
 let backdropMesh = null;
 let stageBackdropMesh = null;   // Stage 5 persistent backdrop handle (framing tuner)
+var _cloudPatches   = [];      // { mesh, mat, type, vxDir, vzDir, cycleDur, onFrac, cycleOff }
+var _cloudShadowTex = null;    // shared 256x256 dark blob CanvasTexture
+var _cloudSunTex    = null;    // shared 256x256 warm blob CanvasTexture
+var _cloudInitDone  = false;   // guard — initCloudPatches() runs exactly once
+var _cloudLastMs    = 0;       // wall-clock ms at last _updateCloudPatches call
+// Fish
+var _fishSprite  = null;   // THREE.Sprite
+var _fishMat     = null;   // SpriteMaterial
+var _fishState   = 'idle'; // 'idle' | 'in' | 'hold' | 'out'
+var _fishNextMs  = 0;      // wall-clock ms when next fish appears
+var _fishStartMs = 0;      // start of current fade phase
+var _fishHoldMs  = 0;      // hold duration for current sighting
+var _fishBaseX   = 0;      // world X at spawn (snapped to player lane)
+var _fishBaseZ   = 0;      // world Z at spawn (near player)
+var _fishDriftZ  = 0;      // Z drift speed for this sighting (wu/s)
+var _fishWave    = 0;      // accumulated seconds for sine X-wander
+// Bird
+var _birdSprite  = null;   // THREE.Sprite
+var _birdMat     = null;   // SpriteMaterial
+var _birdState   = 'idle'; // 'idle' | 'crossing'
+var _birdNextMs  = 0;      // wall-clock ms when next bird starts
+var _birdX       = 0;      // current world X
+var _birdVx      = 0;      // X velocity (wu/s; negative = right-to-left)
+var _birdY       = 0;      // fixed Y for this crossing
+var _birdZ       = 0;      // fixed Z for this crossing
+var _birdExitX   = 0;      // X threshold where bird becomes hidden
 var obsGlbCache = {};           // path -> null (loading) | THREE.Group (ready); populated by _preloadObsGlb
 let wfGroup     = null;
 let wfStrips    = [];
 let bankTrees3      = [];  // scrolling tree sprite pool (not riverGroup children)
 let bankBoulders3   = [];  // scrolling bank boulder sprite pool (stages 2-4, decoration only)
 let bankBillboards3 = [];  // scrolling billboard sprite pool (stages 1,3,5)
-var _lastBillboardIdx = -1; // last texture index used; avoid back-to-back repeats on recycle
+var _lastBillboardIdx      = -1;  // last texture index used; avoid back-to-back repeats on recycle
+var _lastBillboardDespawnT =  0;  // wall-clock ms when any billboard last left the view (for cadence log)
 let bankSegs3    = [];   // { mesh, side, segW } -- all bank-segment meshes from latest buildWorld
 let groundChain3 = [];   // { mesh, z } -- far-ground tile chain; shares bank-seg scroll clock
 let bankAprons3  = [];   // { mesh, side } -- sloped apron meshes that join bank to water edge
@@ -315,6 +357,8 @@ var _hatPoppySpr        = null; // persistent bloom sprite parented to hat posit
 var _hatKnockSt         = 0;   // Date.now() when shield-knock-off started; 0 = idle
 var _hatKnockVel        = { x: 0, y: 0 };        // screen drift of knocked-off flower
 var _poppyShieldWas     = false; // previous-frame hasShield (for edge detection)
+var _diagS3HouseDone    = false; // one-shot diag for stage-3 lake-house y; remove after reading
+var _diagS5FarmDone     = false; // one-shot diag for stage-5 farm-house y; remove after reading
 let bankHouses3   = [];  // scrolling lake-house sprite pool (Stage 3 only)
 let canyonWalls4  = [];  // scrolling canyon-wall boulder sprite pool (Stage 4 only)
 let canyonFill4     = [];  // mesh refs for disposal (Stage 4 canyon fill pool)
@@ -445,6 +489,13 @@ var treeTexNames = ['tree-pine-tall.png', 'tree-broadleaf-tall.png', 'tree-round
         tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
         tex.generateMipmaps = false; tex.needsUpdate = true;
         treeTex[idx] = tex;
+        tex._padFrac = _computePadFrac(tex);
+        _recordPadFrac(treeTexNames[idx], tex._padFrac);
+        for (var _tpf = 0; _tpf < bankTrees3.length; _tpf++) {
+          if (bankTrees3[_tpf].sprite.material.map === tex) {
+            bankTrees3[_tpf].sprite.center.set(0.5, _effectivePadFrac(tex._padFrac));
+          }
+        }
       }, undefined, function(e) { console.error('[KRR] ' + treeTexNames[idx] + ' FAILED', e); });
     })(ti);
   }
@@ -453,7 +504,7 @@ var treeTexNames = ['tree-pine-tall.png', 'tree-broadleaf-tall.png', 'tree-round
 // ── ORANGE COLLECTIBLE TEXTURE PRELOAD ───────────────────────────────────
 var orangeCollTex = null; // orange.png sprite; used by makeCollMesh3('orange') for unlit true-color render
 (function() {
-  new THREE.TextureLoader().load('orange.png', function(tex) {
+  new THREE.TextureLoader().load('orange.png?v=13', function(tex) {
     tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
     tex.generateMipmaps = true; tex.needsUpdate = true;
     orangeCollTex = tex;
@@ -466,6 +517,27 @@ var orangeCollTex = null; // orange.png sprite; used by makeCollMesh3('orange') 
       }
     });
   }, undefined, function(e) { console.error('[KRR] orange.png FAILED', e); });
+})();
+
+// ── ORANGE-IN-BASKET TEXTURE ─────────────────────────────────────────
+// orange-collected.png: illustrated flat orange art with clean transparent edge.
+// Used for basket pile sprites so dark-side-of-sphere never reads as mud.
+var orangeInBasketTex = null;
+(function() {
+  new THREE.TextureLoader().load('orange-collected.png?v=13', function(tex) {
+    tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true; tex.needsUpdate = true;
+    orangeInBasketTex = tex;
+    // Late-patch sprites already built before texture loaded
+    _basketOranges.forEach(function(bo) {
+      if (bo.mesh && bo.mesh.material) {
+        bo.mesh.material.map = tex;
+        bo.mesh.material.color.setHex(0xFFFFFF);
+        bo.mesh.material.needsUpdate = true;
+      }
+    });
+    console.log('[KRR] orange-collected.png OK (basket pile)');
+  }, undefined, function(e) { console.error('[KRR] orange-collected.png FAILED', e); });
 })();
 
 // ── BOULDER TEXTURE PRELOAD ──────────────────────────────────────────
@@ -498,6 +570,74 @@ var boulderObsTexNames = ['boulder-2.png', 'boulder-3.png', 'boulder-5.png'];
   }
 })();
 
+// ── ALPHA-BOTTOM PADDING HELPER ──────────────────────────────────────────
+// Reads a loaded THREE.Texture into a canvas and returns the fraction of the
+// image height that is fully transparent at the bottom.  Caller sets:
+//   spr.center.set(0.5, padFrac)
+// which shifts the Three.js sprite anchor up to the opaque base, so seating
+// the sprite at DECOR_SEAT_GND puts the VISIBLE art on the ground -- no
+// per-sprite hardcoded constants needed.
+function _computePadFrac(tex) {
+  var img = tex && tex.image;
+  if (!img || !img.width || !img.height) return 0;
+  var w = img.width, h = img.height;
+  try {
+    var cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    var ctx = cv.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    var px = ctx.getImageData(0, 0, w, h).data;
+    // canvas y=0 is the image TOP; y=h-1 is the image BOTTOM.
+    // Scan upward from bottom row to find the first row with any opaque pixel.
+    for (var row = h - 1; row >= 0; row--) {
+      for (var col = 0; col < w; col++) {
+        if (px[(row * w + col) * 4 + 3] > 10) {
+          // rows row+1 … h-1 are all transparent = empty bottom padding
+          return ((h - 1) - row) / h;
+        }
+      }
+    }
+  } catch (e) { /* cross-origin or other canvas error — fall back to 0 */ }
+  return 0;
+}
+
+// Apply threshold + DECOR_SINK_TRIM to raw padFrac before setting sprite.center.y.
+// Sprites with near-zero padding (pf <= 0.02) get no offset; otherwise subtract trim so
+// we can nudge all anchors up slightly if the alpha scan reads a touch high.
+function _effectivePadFrac(pf) {
+  return (pf > 0.02) ? Math.max(0, pf - DECOR_SINK_TRIM) : 0;
+}
+
+// Re-apply center.y to all live bank-decor sprites after DECOR_SINK_TRIM changes at runtime.
+function _applyAllDecorCenters() {
+  function _reCenter(arr) {
+    arr.forEach(function(o) {
+      if (o.sprite && o.sprite.material && o.sprite.material.map) {
+        o.sprite.center.set(0.5, _effectivePadFrac(o.sprite.material.map._padFrac || 0));
+      }
+    });
+  }
+  _reCenter(bankTrees3);
+  _reCenter(bankBillboards3);
+  _reCenter(bankHouses3);
+  _reCenter(bankStumps5);
+  _reCenter(bankFarms5);
+  _reCenter(bankFishing5);
+}
+
+// Consolidated padFrac report: each decor texture loader calls _recordPadFrac(name, val).
+// After the last texture fires, a 1.5s debounce prints one summary line.
+var _padFracLog   = {};
+var _padFracTimer = null;
+function _recordPadFrac(name, val) {
+  _padFracLog[name] = val.toFixed(3);
+  clearTimeout(_padFracTimer);
+  _padFracTimer = setTimeout(function() {
+    var parts = Object.keys(_padFracLog).map(function(k) { return k + ':' + _padFracLog[k]; });
+    console.log('[KRR padFrac] ' + parts.join(' | '));
+  }, 1500);
+}
+
 // ── BILLBOARD TEXTURE PRELOAD ─────────────────────────────────────────────
 // Three roadside sign PNGs, bottom-anchored (posts + grass base).
 // Natural aspect ratios (W/H): billboard-1=1.689, billboard-2=1.458, billboard-3=1.484
@@ -513,6 +653,13 @@ var billboardNatAR = [512/303, 512/351, 512/345];
       tex.generateMipmaps = true;
       tex.needsUpdate = true;
       billboardTex[idx] = tex;
+      tex._padFrac = _computePadFrac(tex);
+      _recordPadFrac(name, tex._padFrac);
+      for (var _bbpf = 0; _bbpf < bankBillboards3.length; _bbpf++) {
+        if (bankBillboards3[_bbpf].texIdx === idx) {
+          bankBillboards3[_bbpf].sprite.center.set(0.5, _effectivePadFrac(tex._padFrac));
+        }
+      }
     }, undefined, function(e) { console.error('[KRR] ' + name + ' FAILED', e); });
   });
 })();
@@ -544,7 +691,7 @@ var swampTerrainTex = null;
 })();
 var marshTerrainTex = null;
 (function() {
-  new THREE.TextureLoader().load('bank-stage5-marsh.png', function(tex) {
+  new THREE.TextureLoader().load('bank-stage5-marsh.png?v=16', function(tex) {
     tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
     tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
     tex.generateMipmaps = true; tex.needsUpdate = true;
@@ -568,12 +715,15 @@ var lakeHouseTexNames = ['lake-house-1.png', 'lake-house-2.png', 'lake-house-3.p
         console.log('[KRR] lake-house-' + (idx + 1) + '.png loaded naturalW=' +
           (tex.image ? tex.image.naturalWidth : '?') + ' naturalH=' +
           (tex.image ? tex.image.naturalHeight : '?'));
-        // Late-patch aspect ratio for any house sprite created before this texture finished loading
+        // Late-patch aspect ratio and anchor for sprites built before this texture loaded
+        tex._padFrac = _computePadFrac(tex);
+        _recordPadFrac('lake-house-' + (idx + 1) + '.png', tex._padFrac);
         if (tex.image && tex.image.naturalHeight > 0) {
           var natAsp = tex.image.naturalWidth / tex.image.naturalHeight;
           for (var hpi = 0; hpi < bankHouses3.length; hpi++) {
             if (bankHouses3[hpi].texIdx === idx) {
               bankHouses3[hpi].sprite.scale.set(STAGE3_HOUSE_SCALE * natAsp, STAGE3_HOUSE_SCALE, 1);
+              bankHouses3[hpi].sprite.center.set(0.5, _effectivePadFrac(tex._padFrac));
             }
           }
         }
@@ -593,6 +743,8 @@ var fishingTex5 = null;
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
     tex.generateMipmaps = false; tex.needsUpdate = true;
     stumpTex5 = tex;
+    tex._padFrac = _computePadFrac(tex);
+    _recordPadFrac('tree-stump.png', tex._padFrac);
     if (tex.image && tex.image.naturalHeight > 0) {
       var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
       console.log('[KRR S5DECO] tree-stump ' + natW + 'x' + natH + ' -> world ' + (S5_STUMP_SCALE * natW / natH).toFixed(2) + 'x' + S5_STUMP_SCALE.toFixed(2));
@@ -600,6 +752,7 @@ var fishingTex5 = null;
       for (var i = 0; i < bankStumps5.length; i++) {
         bankStumps5[i].sprite.material.map = tex; bankStumps5[i].sprite.material.needsUpdate = true;
         bankStumps5[i].sprite.scale.set(S5_STUMP_SCALE * asp, S5_STUMP_SCALE, 1);
+        bankStumps5[i].sprite.center.set(0.5, _effectivePadFrac(tex._padFrac));
       }
     }
   }, undefined, function(e) { console.error('[KRR] tree-stump.png FAILED', e); });
@@ -607,6 +760,8 @@ var fishingTex5 = null;
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
     tex.generateMipmaps = false; tex.needsUpdate = true;
     farmTex5[0] = tex;
+    tex._padFrac = _computePadFrac(tex);
+    _recordPadFrac('farm-house-1.png', tex._padFrac);
     if (tex.image && tex.image.naturalHeight > 0) {
       var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
       console.log('[KRR S5DECO] farm-house-1 ' + natW + 'x' + natH + ' -> world ' + (S5_FARMHOUSE_SCALE * natW / natH).toFixed(2) + 'x' + S5_FARMHOUSE_SCALE.toFixed(2));
@@ -615,6 +770,7 @@ var fishingTex5 = null;
         if (bankFarms5[i].texIdx === 0) {
           bankFarms5[i].sprite.material.map = tex; bankFarms5[i].sprite.material.needsUpdate = true;
           bankFarms5[i].sprite.scale.set(S5_FARMHOUSE_SCALE * asp, S5_FARMHOUSE_SCALE, 1);
+          bankFarms5[i].sprite.center.set(0.5, _effectivePadFrac(tex._padFrac));
         }
       }
     }
@@ -623,6 +779,8 @@ var fishingTex5 = null;
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
     tex.generateMipmaps = false; tex.needsUpdate = true;
     farmTex5[1] = tex;
+    tex._padFrac = _computePadFrac(tex);
+    _recordPadFrac('farm-house-2.png', tex._padFrac);
     if (tex.image && tex.image.naturalHeight > 0) {
       var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
       console.log('[KRR S5DECO] farm-house-2 ' + natW + 'x' + natH + ' -> world ' + (S5_FARMHOUSE_SCALE * natW / natH).toFixed(2) + 'x' + S5_FARMHOUSE_SCALE.toFixed(2));
@@ -631,6 +789,7 @@ var fishingTex5 = null;
         if (bankFarms5[i].texIdx === 1) {
           bankFarms5[i].sprite.material.map = tex; bankFarms5[i].sprite.material.needsUpdate = true;
           bankFarms5[i].sprite.scale.set(S5_FARMHOUSE_SCALE * asp, S5_FARMHOUSE_SCALE, 1);
+          bankFarms5[i].sprite.center.set(0.5, _effectivePadFrac(tex._padFrac));
         }
       }
     }
@@ -639,6 +798,8 @@ var fishingTex5 = null;
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
     tex.generateMipmaps = false; tex.needsUpdate = true;
     fishingTex5 = tex;
+    tex._padFrac = _computePadFrac(tex);
+    _recordPadFrac('fishing-supplies.png', tex._padFrac);
     if (tex.image && tex.image.naturalHeight > 0) {
       var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
       console.log('[KRR S5DECO] fishing-supplies ' + natW + 'x' + natH + ' -> world ' + (S5_FISHING_SCALE * natW / natH).toFixed(2) + 'x' + S5_FISHING_SCALE.toFixed(2));
@@ -646,6 +807,7 @@ var fishingTex5 = null;
       for (var i = 0; i < bankFishing5.length; i++) {
         bankFishing5[i].sprite.material.map = tex; bankFishing5[i].sprite.material.needsUpdate = true;
         bankFishing5[i].sprite.scale.set(S5_FISHING_SCALE * asp, S5_FISHING_SCALE, 1);
+        bankFishing5[i].sprite.center.set(0.5, _effectivePadFrac(tex._padFrac));
       }
     }
   }, undefined, function(e) { console.error('[KRR] fishing-supplies.png FAILED', e); });
@@ -962,6 +1124,7 @@ function buildWorld() {
   bankBillboards3.forEach(function(bb) { scene.remove(bb.sprite); if (bb.sprite.material) bb.sprite.material.dispose(); });
   bankBillboards3 = [];
   _lastBillboardIdx = -1;
+  _lastBillboardDespawnT = 0;
   bankSegs3    = [];
   groundChain3 = [];
   bankAprons3 = [];   // geometries disposed by riverGroup traverse above
@@ -1095,10 +1258,15 @@ function buildWorld() {
   const gnd = new THREE.Mesh(new THREE.PlaneGeometry(gndW, gndZ), gndMat);
   gnd.rotation.x = -Math.PI / 2; gnd.position.set(0, -0.02, -55); gnd.receiveShadow = true;
   gnd.renderOrder = 0;
-  riverGroup.add(gnd);
+  if (stg.num !== 5) {
+    riverGroup.add(gnd);
+  } else {
+    // Stage 5 STEP 2: chain tiles cover the full ground; static far plane is redundant.
+    // Null refs so tuners don't write to an out-of-scene object.
+    gndPlaneTex = null; gndPlaneMat = null;
+  }
 
   // ── Ground chain: BK_SEG_N geometric tiles sharing the bank-seg scroll clock ──────────────
-  // STEP 1 of terrain-seam fix. Far plane stays for now; remove it in STEP 2 after this passes.
   groundChain3 = [];
   (function _buildGndChain() {
     var _tileD    = BK_SEG_Z + 0.25;   // 5.75 wu — same depth+overlap as bank segs
@@ -1381,7 +1549,7 @@ function buildWorld() {
   addBankDecor(riverGroup, rw, stg);
   addShoreline3(riverGroup, rw, stg);
   scene.add(riverGroup);
-  if (stg.backdrop && stg.num === 1) { initBankTrees3(rw, stg.backdrop); }
+  if (stg.backdrop && stg.num === 1) { initBankTrees3(rw, stg.backdrop, STAGE1_TREE_COUNT); }
   if (stg.backdrop && stg.num === 5) { initBankTrees3(rw, stg.backdrop, S5_TREE_COUNT); initBankBoulders3(rw, S5_BOULDER_COUNT); }
   if (stg.backdrop && stg.num === 3) { initBankTrees3(rw, stg.backdrop, STAGE3_TREE_COUNT); }
   if (stg.num === 2) { initStage2RockyShores(rw); }
@@ -1505,19 +1673,27 @@ var S5_BD_SCALE = 0.86; // Stage 5 backdrop initial scale (TEMP framing tuner; b
 var S5_BD_Y    = -3.0;  // Stage 5 backdrop Y offset from default y=26 (TEMP framing tuner)
 var S5_TERR_SCROLL   = 1.0;  // Stage 5 swamp terrain scroll multiplier
 // Stage 5 bank decoration pool sizes (module-level; tunable live via Ctrl+F7-F12)
-var S5_POOL_BASE     = 8;   // decor pool multiplier (Ctrl+F11/-F12 tune)
-var S5_TREE_COUNT    = 16;  // bank tree count for stage 5 only (Ctrl+F9/F10)
+var S5_POOL_BASE     = 6;   // decor pool multiplier (Ctrl+F11/F12 to tune; was 8)
+var S5_TREE_COUNT    = 24;  // bank tree count for stage 5 only (Ctrl+F9/F10; was 16)
 var S5_BOULDER_COUNT = 11;  // bank boulder count for stage 5 only (Ctrl+F7/F8)
 // Stage 5 bank decoration spawn frequencies (relative to S5_POOL_BASE)
 // pool count = Math.max(1, Math.round(freq * S5_POOL_BASE))
 var S5_FREQ_TREE_STUMP   = 0.60;   // semi-frequent ground clutter
 var S5_FREQ_FARMHOUSE    = 0.35;   // less common; farm-house-1 and farm-house-2 share this
 var S5_FREQ_FISHING      = 0.15;   // rare
+// Stage 5 xOff spread: random in [S5_XOFF_MIN, S5_XOFF_MIN + S5_XOFF_RANGE] wu past bank apron.
+// Bank segs reach ~8 wu past the apron at max width, so MIN=5 still clips wide segs but spreads
+// the field. Tune with Ctrl+Shift+F7/F8 (min) and Ctrl+Shift+F9/F10 (range).
+var S5_XOFF_MIN      = 5.0;   // nearest spawn wu past bank inner edge; Ctrl+Shift+F7/F8
+var S5_XOFF_RANGE    = 22.0;  // random band width (5–27 wu from apron); Ctrl+Shift+F9/F10
+var FLAT_XOFF_MIN    = 2.0;   // xOff min wu past bank apron for stages 1 & 3; Ctrl+Shift+F5/F6
+var FLAT_XOFF_RANGE  = 20.0;  // random band width for stages 1 & 3 (2–22 wu); Ctrl+Shift+F11/F12
 // Stage 5 bank decoration sprite heights (world units); aspect width computed from image
 var S5_STUMP_SCALE     = 2.5;
 var S5_FARMHOUSE_SCALE = 11.9;
 var GROUND_PLANE_Y     = -0.02; // far ground plane surface Y; matches gnd.position.y in buildWorld
 var DECOR_SEAT_GND     = -0.02; // seat Y for all far-ground decor (houses, stumps, fishing, trees, boulders); [ / ] to tune
+var DECOR_SINK_TRIM    = 0.03;  // subtracted from padFrac to lift slightly-buried sprites; Ctrl+,/. to tune (-/+0.005)
 var S5_FARMHOUSE_SEAT_Y = -3.23; // bottom anchor Y; seats building base at GROUND_PLANE_Y (-0.02) accounting for ~27% art padding (0.27*11.9=3.21); set by DECOR_SEAT_GND - 3.21 in per-frame loop
 var BANK_BLDG_SEAT_Y   = 0.60;  // bank top Y reference (bank box height=0.60, center 0.30); reserved for decor that sits ON the bank, not the far ground
 var S5_FISHING_SCALE   = 3.50;  // 2.0 base x 2.5 x 0.7
@@ -1534,6 +1710,8 @@ var ENDING_PAUSE_MS       = 3000;  // dead pause after boat beaches (ms)
 var ENDING_FADE_DUR_MS    = 1500;  // "Victory?" fade-in duration (ms)
 var VICTORY_FONT_PX       = 44;    // "Victory?" letter size in px; live-tune with F2/F3
 var ENDING_MSG_FADE_MS    = 2500;  // final message fade-in duration (ms); tune with Shift+F2/F3
+var ENDING_FORLORN_MS     = 6000;  // silence on beached kayaker before story viewer opens; Alt+1/2
+var STORY_TURN_MS         = 400;   // comic page-turn duration in ms; Alt+3/4
 // ── TITLE CARD TIMING (all stages + dramatic Victory? ending) ──────
 var TITLE_ENTER_MS  = 500;   // standard enter animation duration ms; Shift+T/G to tune
 var TITLE_HOLD_MS   = 1500;  // stage card hold duration ms; Shift+Y/H to tune
@@ -1708,18 +1886,20 @@ function makeBankTreeSprite(variety, h) {
     mat = new THREE.SpriteMaterial({ color: fallbackColors[variety], transparent: true, opacity: 0.85 });
   }
   var spr = new THREE.Sprite(mat);
-  spr.center.set(0.5, 0);
+  spr.center.set(0.5, _effectivePadFrac(tex && tex._padFrac !== undefined ? tex._padFrac : 0));
   spr.scale.set(h * 0.72, h, 1);
   return spr;
 }
 
-var STAGE3_TREE_COUNT    = 21;   // tune to thin or thicken Stage 3 bank trees
+var STAGE1_TREE_COUNT    = 64;   // bank tree pool for stage 1; requires stage reload to apply
+var STAGE3_TREE_COUNT    = 42;   // tune to thin or thicken Stage 3 bank trees; requires stage reload
+var TREE_XOFF_BIAS       = 0.50; // exponent for tree xOff: 0.5=strongly outward, 1.0=uniform; Ctrl+Shift+B/H
 var STAGE3_BOULDER_COUNT = 11;   // sparser than trees by design; tune separately
 
 // ── BILLBOARD CONSTANTS ───────────────────────────────────────────────────
 var BILLBOARD_SCALE     = 3.5;   // world-unit height of sign; Shift+C/F to tune (-/+0.25)
-var BILLBOARD_GAP_MIN   = 1000;  // min z-gap before next billboard appears after despawn; Shift+Q/E to tune
-var BILLBOARD_GAP_RANGE = 500;   // random extra gap on top of min
+var BILLBOARD_GAP_MIN   = 270;   // min wu per-sprite gap; pool=3 so any-billboard cadence ≈ gap/3; Shift+Q/E (-/+5)
+var BILLBOARD_GAP_RANGE = 60;    // random extra (per-sprite 270–330 wu → any-billboard ~30-37s at 3 wu/s)
 var BILLBOARD_STAGES    = [1, 3, 5]; // stg.num values where billboards spawn; edit directly to change
 
 function initBankTrees3(rw, bd, count) {
@@ -1727,7 +1907,10 @@ function initBankTrees3(rw, bd, count) {
   for (var ti = 0; ti < TREE_COUNT; ti++) {
     var side    = ti % 2 === 0 ? -1 : 1;
     var variety = Math.floor(Math.random() * 4);
-    var xOff    = 1.4 + Math.floor(Math.random() * 4) * 1.8;
+    var xOff;
+    if (stageIdx === 0 || stageIdx === 2) xOff = FLAT_XOFF_MIN + FLAT_XOFF_RANGE * Math.pow(Math.random(), TREE_XOFF_BIAS);
+    else if (stageIdx === 4) xOff = S5_XOFF_MIN + S5_XOFF_RANGE * Math.pow(Math.random(), TREE_XOFF_BIAS);
+    else xOff = 1.4 + Math.floor(Math.random() * 4) * 1.8;
     var xBase   = side * (rw / 2 + SHORE_W + xOff);
     // Spread evenly across the full visible river length at start
     var zInit   = SPAWN_Z + (ti / TREE_COUNT) * (Math.abs(SPAWN_Z) + 12);
@@ -1748,7 +1931,10 @@ function initBankBoulders3(rw, count) {
   for (var bi = 0; bi < BOULDER_COUNT; bi++) {
     var side   = bi % 2 === 0 ? -1 : 1;
     var texIdx = Math.floor(Math.random() * bankBoulderTex.length);
-    var xOff   = 1.0 + Math.floor(Math.random() * 4) * 1.6 + 0.3;
+    var xOff;
+    if (stageIdx === 2) xOff = FLAT_XOFF_MIN + Math.random() * FLAT_XOFF_RANGE;
+    else if (stageIdx === 4) xOff = S5_XOFF_MIN + Math.random() * S5_XOFF_RANGE;
+    else xOff = 1.0 + Math.floor(Math.random() * 4) * 1.6 + 0.3;
     var xBase  = side * (rw / 2 + SHORE_W + xOff);
     var zInit  = SPAWN_Z + (bi / BOULDER_COUNT) * (Math.abs(SPAWN_Z) + 12);
     var bH     = 1.2 + Math.random() * 1.6;
@@ -1787,16 +1973,18 @@ function initBankBillboards3(rw) {
     });
     if (bbTex) { bbTex.anisotropy = _maxA; bbTex.needsUpdate = true; }
     var bbSpr   = new THREE.Sprite(bbMat);
-    bbSpr.center.set(0.5, 0);   // bottom-anchored: base sits on ground
+    bbSpr.center.set(0.5, _effectivePadFrac(bbTex && bbTex._padFrac !== undefined ? bbTex._padFrac : 0));
     bbSpr.scale.set(bbH * bbAR, bbH, 1);
     var bbXOff  = 2.5 + Math.random() * 2.0;  // world units past bank-top edge
     var bbXBase = bbSide * (rw / 2 + SHORE_W + bbXOff);
     // Stagger widely so sprites don't all arrive at once
     var bbZ     = SPAWN_Z - (BILLBOARD_GAP_MIN + Math.random() * BILLBOARD_GAP_RANGE) * (bbi + 1);
-    bbSpr.position.set(bbXBase, 0.30, bbZ);
+    bbSpr.position.set(bbXBase, DECOR_SEAT_GND, bbZ);
     scene.add(bbSpr);
     bankBillboards3.push({ sprite: bbSpr, side: bbSide, z: bbZ, xOff: bbXOff, texIdx: bbTIdx });
   }
+  var _bbZs = bankBillboards3.map(function(b) { return b.z.toFixed(1); }).join(', ');
+  console.log('[KRR BILLBOARD INIT] ' + bankBillboards3.length + ' sprites, z=[' + _bbZs + '] gap_min=' + BILLBOARD_GAP_MIN + ' window=[' + SPAWN_Z + ',' + DESPAWN_Z + ']');
 }
 
 function initBankPoppies3(rw) {
@@ -2033,7 +2221,7 @@ function initBankHouses3(rw) {
   for (var hi = 0; hi < STAGE3_HOUSE_COUNT; hi++) {
     var side   = hi % 2 === 0 ? -1 : 1;
     var texIdx = Math.floor(Math.random() * lakeHouseTex.length);
-    var xOff   = 4.0 + 2.0 + Math.random() * 4.0;  // minimum 4 units outside play lane + 2-6 more
+    var xOff   = FLAT_XOFF_MIN + Math.random() * FLAT_XOFF_RANGE;
     var xBase  = side * (rw / 2 + xOff);
     var zInit  = SPAWN_Z + (hi / STAGE3_HOUSE_COUNT) * (Math.abs(SPAWN_Z) + 12);
     var tex    = lakeHouseTex[texIdx];
@@ -2044,7 +2232,7 @@ function initBankHouses3(rw) {
       mat = new THREE.SpriteMaterial({ color: 0xC8A870, transparent: true, opacity: 0.90 });
     }
     var spr = new THREE.Sprite(mat);
-    spr.center.set(0.5, 0);    // bottom-anchored: same as trees and boulders
+    spr.center.set(0.5, _effectivePadFrac(tex && tex._padFrac !== undefined ? tex._padFrac : 0));
     var hAspInit = (tex && tex.image && tex.image.naturalHeight > 0)
       ? tex.image.naturalWidth / tex.image.naturalHeight
       : 1.0;   // square fallback; late-patch corrects it once texture loads
@@ -2073,9 +2261,11 @@ function initBankDecor5(rw) {
     spr.center.set(0.5, 0);
     return spr;
   }
-  function groundClutterXOff() { return 1.2 + Math.random() * 3.0; }
+  // All stage-5 decor uses the same wide random band: S5_XOFF_MIN..S5_XOFF_MIN+S5_XOFF_RANGE wu
+  // past the bank apron, so sprites scatter across the flat ground instead of lining the bank.
+  function groundClutterXOff() { return S5_XOFF_MIN + Math.random() * S5_XOFF_RANGE; }
   function groundClutterX(rw5, side5, off) { return side5 * (rw5 / 2 + SHORE_W + off); }
-  function setbackXOff() { return 6.0 + Math.random() * 4.0; }
+  function setbackXOff() { return S5_XOFF_MIN + Math.random() * S5_XOFF_RANGE; }
   function setbackX(rw5, side5, off) { return side5 * (rw5 / 2 + SHORE_W + off); }
 
   // Tree stumps (ground clutter, close to bank)
@@ -2090,6 +2280,7 @@ function initBankDecor5(rw) {
     var sX = groundClutterX(rw, sSide, sXOff);
     var sZ = SPAWN_Z + (si / stumpCount) * zSpan;
     sspr.position.set(sX, DECOR_SEAT_GND, sZ);
+    sspr.center.set(0.5, _effectivePadFrac(sTex && sTex._padFrac !== undefined ? sTex._padFrac : 0));
     scene.add(sspr);
     bankStumps5.push({ sprite: sspr, side: sSide, z: sZ, xOff: sXOff });
   }
@@ -2106,7 +2297,8 @@ function initBankDecor5(rw) {
     var fXOff = setbackXOff();
     var fX = setbackX(rw, fSide, fXOff);
     var fZ = SPAWN_Z + (fi / farmCount) * zSpan;
-    fspr.position.set(fX, DECOR_SEAT_GND - 3.21, fZ);
+    fspr.position.set(fX, DECOR_SEAT_GND, fZ);
+    fspr.center.set(0.5, _effectivePadFrac(fTex && fTex._padFrac !== undefined ? fTex._padFrac : 0));
     scene.add(fspr);
     bankFarms5.push({ sprite: fspr, side: fSide, z: fZ, texIdx: fTexI, xOff: fXOff });
   }
@@ -2123,6 +2315,7 @@ function initBankDecor5(rw) {
     var fsX = groundClutterX(rw, fsSide, fsXOff);
     var fsZ = SPAWN_Z + (fsi / fishCount) * zSpan;
     fsspr.position.set(fsX, DECOR_SEAT_GND, fsZ);
+    fsspr.center.set(0.5, _effectivePadFrac(fsTex && fsTex._padFrac !== undefined ? fsTex._padFrac : 0));
     scene.add(fsspr);
     bankFishing5.push({ sprite: fsspr, side: fsSide, z: fsZ, xOff: fsXOff });
   }
@@ -2343,6 +2536,275 @@ function buildStageBackdrop(stg) {
 
   // Re-seat the worn hat flower if the player carries a shield into this stage
   if (player3.hasShield) { _ensureHatPoppy3(_poppyPickSide); }
+}
+
+// ── CLOUD SHADOW / SUN BREAK SYSTEM ─────────────────────────────
+// Large, soft horizontal planes drifting slowly in world XZ,
+// independent of terrain scroll. renderOrder=2.5 draws them above
+// water (renderOrder 2) and below decor/boat (renderOrder 3+).
+// depthTest:false lets them appear over the river surface which has
+// no solid depth written by the water mesh (depthWrite:false).
+// Called once from the game init sequence, survives buildWorld() calls
+// because patches live directly in scene (not riverGroup).
+
+function _makeCloudTex(isLight) {
+  var SZ  = 256;
+  var cvs = document.createElement('canvas');
+  cvs.width = cvs.height = SZ;
+  var ctx = cvs.getContext('2d');
+  var cx  = SZ / 2, r = cx * 0.90;
+  var g = ctx.createRadialGradient(cx, cx, 0, cx, cx, r);
+  if (isLight) {
+    g.addColorStop(0,    'rgba(255,220,110,0.90)');
+    g.addColorStop(0.45, 'rgba(255,210, 90,0.45)');
+    g.addColorStop(0.80, 'rgba(255,200, 80,0.08)');
+    g.addColorStop(1,    'rgba(255,200, 80,0)');
+  } else {
+    g.addColorStop(0,    'rgba(15,20,40,0.90)');
+    g.addColorStop(0.45, 'rgba(15,20,40,0.45)');
+    g.addColorStop(0.80, 'rgba(15,20,40,0.08)');
+    g.addColorStop(1,    'rgba(15,20,40,0)');
+  }
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, SZ, SZ);
+  return new THREE.CanvasTexture(cvs);
+}
+
+function initCloudPatches() {
+  if (_cloudInitDone) return;
+  _cloudInitDone  = true;
+  _cloudShadowTex = _makeCloudTex(false);
+  _cloudSunTex    = _makeCloudTex(true);
+
+  var xSpan = 80;
+  var zLo   = SPAWN_Z + 12;
+  var zHi   = DESPAWN_Z - 6;
+
+  function _spawnPatch(type, cycleOffMs) {
+    var isSun = (type === 'sun');
+    var w = isSun ? (12 + Math.random() * 18) : (28 + Math.random() * 22);
+    var h = w * (0.55 + Math.random() * 0.35);
+    var mat = new THREE.MeshBasicMaterial({
+      map:         isSun ? _cloudSunTex : _cloudShadowTex,
+      transparent: true,
+      opacity:     0,
+      blending:    isSun ? THREE.AdditiveBlending : THREE.NormalBlending,
+      depthWrite:  false,
+      depthTest:   false
+    });
+    var mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(
+      (Math.random() - 0.5) * xSpan * 2,
+      0.05,
+      zLo + Math.random() * (zHi - zLo)
+    );
+    mesh.renderOrder = 2.5;
+    scene.add(mesh);
+    return {
+      mesh:     mesh,
+      mat:      mat,
+      type:     type,
+      vxDir:    (Math.random() - 0.5) * 1.8,
+      vzDir:    (Math.random() - 0.5) * 0.50,
+      cycleDur: 38000 + Math.random() * 22000,
+      onFrac:   0.42  + Math.random() * 0.16,
+      cycleOff: cycleOffMs
+    };
+  }
+
+  var now = Date.now();
+  for (var i = 0; i < CLOUD_SHADOW_COUNT; i++) {
+    _cloudPatches.push(_spawnPatch('shadow', now - Math.random() * 55000));
+  }
+  for (var j = 0; j < CLOUD_SUN_COUNT; j++) {
+    _cloudPatches.push(_spawnPatch('sun',    now - 12000 - j * 20000));
+  }
+  console.log('[KRR CLOUD] init: ' + CLOUD_SHADOW_COUNT + ' shadows + ' + CLOUD_SUN_COUNT + ' sun(s)');
+}
+
+function _updateCloudPatches() {
+  if (!_cloudInitDone || _cloudPatches.length === 0) return;
+  var now = Date.now();
+  var dt  = _cloudLastMs > 0 ? (now - _cloudLastMs) / 1000 : 0;
+  _cloudLastMs = now;
+  if (dt > 0.25) dt = 0.25;
+
+  var xBound = 88;
+  var zLo    = SPAWN_Z + 10;
+  var zHi    = DESPAWN_Z - 5;
+
+  for (var i = 0; i < _cloudPatches.length; i++) {
+    var cp = _cloudPatches[i];
+    cp.mesh.position.x += cp.vxDir * CLOUD_DRIFT_SPEED * dt;
+    cp.mesh.position.z += cp.vzDir * CLOUD_DRIFT_SPEED * dt;
+
+    if (cp.mesh.position.x >  xBound) cp.mesh.position.x -= xBound * 2;
+    if (cp.mesh.position.x < -xBound) cp.mesh.position.x += xBound * 2;
+    if (cp.mesh.position.z > zHi + 6) cp.mesh.position.z = zLo;
+    if (cp.mesh.position.z < zLo - 6) cp.mesh.position.z = zHi;
+
+    var elapsed = (now - cp.cycleOff) % cp.cycleDur;
+    var phase   = elapsed / cp.cycleDur;
+    var maxOp   = (cp.type === 'sun') ? CLOUD_SUN_OPACITY : CLOUD_SHADOW_OPACITY;
+    cp.mat.opacity  = phase < cp.onFrac ? Math.sin((phase / cp.onFrac) * Math.PI) * maxOp : 0;
+    cp.mesh.visible = cp.mat.opacity > 0.003;
+  }
+}
+
+// ── WILDLIFE: FISH + BIRD ────────────────────────────────────────
+// Fish: Sprite at Y=-0.25 (below water at Y=0), renderOrder=1.5.
+//   Water (renderOrder 2, opacity 0.60 NormalBlend) renders on top,
+//   tinting the fish shape as if seen through water.
+// Bird: Sprite at Y=18-22, Z=-45 to -65. Crosses screen horizontally.
+//   Positioned in front of the backdrop (Z=-88) in 3D space; no special
+//   renderOrder needed — perspective depth handles layering.
+
+function _makeFishTex() {
+  var cvs = document.createElement('canvas');
+  cvs.width = 64; cvs.height = 32;
+  var ctx = cvs.getContext('2d');
+  ctx.fillStyle = 'rgba(8,12,30,0.96)';
+  // Body ellipse (wider than tall, left-of-center to leave room for tail)
+  ctx.beginPath(); ctx.ellipse(24, 16, 18, 9, 0, 0, Math.PI * 2); ctx.fill();
+  // Forked tail: two wedge triangles
+  ctx.beginPath(); ctx.moveTo(40, 16); ctx.lineTo(60, 5);  ctx.lineTo(53, 14); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(40, 16); ctx.lineTo(60, 27); ctx.lineTo(53, 18); ctx.closePath(); ctx.fill();
+  // Dorsal fin
+  ctx.beginPath(); ctx.moveTo(18, 8); ctx.lineTo(22, 1); ctx.lineTo(32, 8); ctx.closePath(); ctx.fill();
+  return new THREE.CanvasTexture(cvs);
+}
+
+function _makeBirdTex() {
+  var W = 64, H = 28;
+  var cvs = document.createElement('canvas');
+  cvs.width = W; cvs.height = H;
+  var ctx = cvs.getContext('2d');
+  ctx.fillStyle = 'rgba(12,12,22,0.96)';
+  // Small body
+  ctx.beginPath(); ctx.ellipse(W/2, H/2, 3, 4, 0, 0, Math.PI*2); ctx.fill();
+  // Left wing: bezier curve outward then back
+  ctx.beginPath();
+  ctx.moveTo(W/2 - 3, H/2 - 1);
+  ctx.bezierCurveTo(W*0.35, H*0.18, W*0.14, H*0.32, W*0.02, H*0.52);
+  ctx.bezierCurveTo(W*0.12, H*0.68, W*0.28, H*0.56, W/2 - 3, H/2 + 1);
+  ctx.closePath(); ctx.fill();
+  // Right wing: mirror
+  ctx.beginPath();
+  ctx.moveTo(W/2 + 3, H/2 - 1);
+  ctx.bezierCurveTo(W*0.65, H*0.18, W*0.86, H*0.32, W*0.98, H*0.52);
+  ctx.bezierCurveTo(W*0.88, H*0.68, W*0.72, H*0.56, W/2 + 3, H/2 + 1);
+  ctx.closePath(); ctx.fill();
+  return new THREE.CanvasTexture(cvs);
+}
+
+function _initWildlife() {
+  var fishTex = _makeFishTex();
+  _fishMat    = new THREE.SpriteMaterial({ map: fishTex, transparent: true, opacity: 0, depthWrite: false, depthTest: false });
+  _fishSprite = new THREE.Sprite(_fishMat);
+  _fishSprite.scale.set(1.6, 0.8, 1);
+  _fishSprite.renderOrder = 1.5;
+  _fishSprite.visible = false;
+  scene.add(_fishSprite);
+
+  var birdTex = _makeBirdTex();
+  _birdMat    = new THREE.SpriteMaterial({ map: birdTex, transparent: true, opacity: 0, depthWrite: false });
+  _birdSprite = new THREE.Sprite(_birdMat);
+  _birdSprite.scale.set(2.2, 0.95, 1);
+  _birdSprite.visible = false;
+  scene.add(_birdSprite);
+
+  // Stagger first appearances so they don't coincide
+  var now = Date.now();
+  _fishNextMs = now + (FISH_FREQ_MIN + Math.random() * (FISH_FREQ_MAX - FISH_FREQ_MIN)) * 1000;
+  _birdNextMs = now + 8000 + Math.random() * 20000;  // first bird sooner as a reveal
+
+  console.log('[KRR WILDLIFE] fish + bird ready');
+}
+
+var _wildlifeLastMs = 0;
+
+function _updateWildlife() {
+  if (!_fishSprite) return;
+  var now = Date.now();
+  var dt  = _wildlifeLastMs > 0 ? (now - _wildlifeLastMs) / 1000 : 0;
+  _wildlifeLastMs = now;
+  if (dt > 0.25) dt = 0.25;
+
+  var FADE_MS = 1800;
+
+  // ── FISH ──────────────────────────────────────────────
+  if (_fishState === 'idle') {
+    if (now >= _fishNextMs) {
+      _fishState   = 'in';
+      _fishStartMs = now;
+      _fishHoldMs  = 8000 + Math.random() * 6000;  // 8-14s hold
+      _fishBaseX   = player3.x + (Math.random() - 0.5) * 1.2;
+      _fishBaseZ   = (Math.random() - 0.5) * 4.0;  // ±2 wu from player
+      _fishDriftZ  = (Math.random() < 0.5 ? 1 : -1) * (0.10 + Math.random() * 0.18);
+      _fishWave    = 0;
+      _fishSprite.position.set(_fishBaseX, -0.25, _fishBaseZ);
+      _fishSprite.visible = true;
+    }
+  } else if (_fishState === 'in') {
+    var elapsed = now - _fishStartMs;
+    _fishMat.opacity = Math.min(1, elapsed / FADE_MS) * FISH_OPACITY;
+    _fishWave += dt;
+    _fishSprite.position.x = _fishBaseX + Math.sin(_fishWave * 0.65) * 0.75;
+    _fishSprite.position.z = _fishBaseZ + _fishDriftZ * (elapsed / 1000);
+    if (elapsed >= FADE_MS) { _fishState = 'hold'; _fishStartMs = now; }
+  } else if (_fishState === 'hold') {
+    _fishMat.opacity = FISH_OPACITY;
+    _fishWave += dt;
+    _fishSprite.position.x = _fishBaseX + Math.sin(_fishWave * 0.65) * 0.75;
+    _fishSprite.position.z = _fishBaseZ + _fishDriftZ * ((now - _fishStartMs) / 1000 + FADE_MS / 1000);
+    if (now - _fishStartMs >= _fishHoldMs) { _fishState = 'out'; _fishStartMs = now; }
+  } else if (_fishState === 'out') {
+    var fadeOut = now - _fishStartMs;
+    _fishMat.opacity = Math.max(0, 1 - fadeOut / FADE_MS) * FISH_OPACITY;
+    _fishWave += dt;
+    _fishSprite.position.x = _fishBaseX + Math.sin(_fishWave * 0.65) * 0.75;
+    _fishSprite.position.z = _fishBaseZ + _fishDriftZ * ((FADE_MS + _fishHoldMs + fadeOut) / 1000);
+    if (fadeOut >= FADE_MS) {
+      _fishState      = 'idle';
+      _fishSprite.visible = false;
+      _fishMat.opacity    = 0;
+      _fishNextMs = now + (FISH_FREQ_MIN + Math.random() * (FISH_FREQ_MAX - FISH_FREQ_MIN)) * 1000;
+    }
+  }
+
+  // ── BIRD ──────────────────────────────────────────────
+  if (_birdState === 'idle') {
+    if (now >= _birdNextMs) {
+      _birdVx       = (Math.random() < 0.5 ? 1 : -1) * (BIRD_SPEED + Math.random() * 1.5);
+      _birdX        = _birdVx > 0 ? -38 : 38;
+      _birdExitX    = _birdVx > 0 ?  38 : -38;
+      _birdY        = 17 + Math.random() * 5;
+      _birdZ        = -46 - Math.random() * 20;  // -46 to -66, in front of backdrop at -88
+      _birdSprite.scale.set(
+        _birdVx < 0 ? -2.2 : 2.2,  // flip sprite to face direction of travel
+        0.95, 1
+      );
+      _birdSprite.position.set(_birdX, _birdY, _birdZ);
+      _birdSprite.visible = true;
+      _birdState = 'crossing';
+    }
+  } else if (_birdState === 'crossing') {
+    _birdX += _birdVx * dt;
+    _birdSprite.position.x = _birdX;
+    // Opacity: fade in over first 8wu, fade out over last 8wu of crossing
+    var birdProgress = (_birdX - (_birdExitX < 0 ? 38 : -38)) / (_birdExitX - (_birdExitX < 0 ? 38 : -38));
+    var birdEdgeFrac = 8 / 76;  // 8wu edge / 76wu total span
+    var birdOpFrac   = Math.min(1, Math.min(birdProgress, 1 - birdProgress) / birdEdgeFrac);
+    _birdMat.opacity = birdOpFrac * BIRD_OPACITY;
+    var pastExit = _birdVx > 0 ? (_birdX >= _birdExitX) : (_birdX <= _birdExitX);
+    if (pastExit) {
+      _birdState = 'idle';
+      _birdSprite.visible = false;
+      _birdMat.opacity    = 0;
+      _birdNextMs = now + (BIRD_FREQ_MIN + Math.random() * (BIRD_FREQ_MAX - BIRD_FREQ_MIN)) * 1000;
+    }
+  }
 }
 
 // ── KAYAK HULL GEOMETRY (custom hex-prism with pointed bow/stern) ─
@@ -3003,12 +3465,12 @@ var _hatFlowerTex = null;  // poppy-hat.png: stem-stub bloom worn in hat band
       cb(t);
     });
   }
-  _pLoad('poppy-leftbank.png',               function(t) { _poppyTexL  = t; });
-  _pLoad('poppy-leftbank-picked.png?v=2',   function(t) { _poppyTexLP = t; });
-  _pLoad('poppy-leftbank-bloom.png?v=2',    function(t) { _poppyTexLB = t; });
-  _pLoad('poppy-rightbank.png',              function(t) { _poppyTexR  = t; });
-  _pLoad('poppy-rightbank-picked.png?v=2',  function(t) { _poppyTexRP = t; });
-  _pLoad('poppy-rightbank-bloom.png?v=2',   function(t) { _poppyTexRB = t; });
+  _pLoad('poppy-leftbank.png?v=3',           function(t) { _poppyTexL  = t; });
+  _pLoad('poppy-leftbank-picked.png?v=3',   function(t) { _poppyTexLP = t; });
+  _pLoad('poppy-leftbank-bloom.png?v=3',    function(t) { _poppyTexLB = t; });
+  _pLoad('poppy-rightbank.png?v=3',         function(t) { _poppyTexR  = t; });
+  _pLoad('poppy-rightbank-picked.png?v=3',  function(t) { _poppyTexRP = t; });
+  _pLoad('poppy-rightbank-bloom.png?v=3',   function(t) { _poppyTexRB = t; });
   _pLoad('poppy-glow.png',                   function(t) { _poppyGlowTex = t; });
   // Hat flower uses LinearFilter for smooth scaling (not pixel art)
   new THREE.TextureLoader().load('poppy-hat.png', function(t) {
@@ -3204,8 +3666,8 @@ var _shieldBurstSt = 0;    // Date.now() when burst started; 0 = idle
 var _shardPool = []; // [{mesh, active, vx,vy,vz, sx,sy,sz, startT}]
 (function() {
   var _geo = new THREE.BufferGeometry();
-  // Small irregular triangle: reads as a glass chip/shard
-  var _v = new Float32Array([0, 0.08, 0,  -0.065, -0.05, 0,  0.075, -0.04, 0]);
+  // Elongated shard: tall sliver so it reads as a glass chip even when edge-on
+  var _v = new Float32Array([0, 0.40, 0,  -0.16, -0.25, 0,  0.19, -0.20, 0]);
   _geo.setAttribute('position', new THREE.BufferAttribute(_v, 3));
   _geo.computeVertexNormals();
   for (var _si = 0; _si < 12; _si++) {
@@ -3240,17 +3702,18 @@ function _launchShieldShards() {
     _sd.sz = (Math.random() - 0.5) * 0.35;
     _sd.startT = Date.now();
     _sd.mesh.position.set(
-      _swp.x + Math.cos(_ang) * 0.55,
-      _swp.y + (Math.random() - 0.5) * 0.40,
-      _swp.z + Math.sin(_ang) * 0.55
+      _swp.x + Math.cos(_ang) * 0.72,
+      _swp.y + (Math.random() - 0.5) * 0.50,
+      _swp.z + Math.sin(_ang) * 0.72
     );
     _sd.mesh.rotation.set(
       Math.random() * Math.PI * 2, Math.random() * Math.PI * 2, Math.random() * Math.PI * 2
     );
-    _sd.mesh.material.color.setHSL((_bHue + _j * 0.09) % 1.0, 0.90, 0.70);
-    _sd.mesh.material.opacity = 0.80;
+    _sd.mesh.material.color.setHSL((_bHue + _j * 0.09) % 1.0, 0.90, 0.75);
+    _sd.mesh.material.opacity = 1.0;
     _sd.mesh.visible = true; _sd.active = true;
   }
+  console.log('[KRR] shield shards launched, n=' + _n + ', pos=' + _swp.x.toFixed(2) + ',' + _swp.y.toFixed(2) + ',' + _swp.z.toFixed(2));
 }
 
 // ── STERN BASKET ─────────────────────────────────────────────────
@@ -3311,38 +3774,49 @@ function _buildBasket3() {
   _rim.position.y = 0.11;
   _bg.add(_rim);
 
-  // Orange sphere pool: 15 pre-positioned meshes in a stacking pattern.
-  // Layer 0 (6): bottom hex ring.  Layer 1 (4): middle offset ring.
-  // Layer 2 (3): upper triangle at rim.  Layer 3 (2): top pair just over rim.
-  // Y values jittered ±0.005 so the heap reads as loose fruit, not a molded lump.
+  // Orange pile: 24 camera-facing sprites — wide oval base, narrowing upward.
+  // Wider in x than z so it reads as a generous catch, not a tall narrow stack.
+  // Layer 0 (11): wide oval perimeter (10, 36° steps, xr=0.17 zr=0.08) + center fill.
+  // Layer 1 (9):  mid oval (8, 45° steps, xr=0.115 zr=0.055) + center fill.
+  // Layer 2 (3):  upper trio (120° apart, xr=0.065 zr=0.030).
+  // Layer 3 (1):  top single.
   var _sp = [
-    [ 0.120, -0.058,  0.000], [ 0.060, -0.052,  0.104], [-0.060, -0.056,  0.104],
-    [-0.120, -0.053,  0.000], [-0.060, -0.059, -0.104], [ 0.060, -0.055, -0.104],
-    [ 0.057,  0.042,  0.057], [-0.057,  0.038,  0.057],
-    [-0.057,  0.044, -0.057], [ 0.057,  0.039, -0.057],
-    [ 0.055,  0.108,  0.032], [-0.055,  0.112,  0.032], [ 0.000,  0.110, -0.060],
-    [ 0.028,  0.168,  0.010], [-0.028,  0.163, -0.010],
+    // Layer 0 — wide oval base (10) + center fill (1) = 11
+    [ 0.170, -0.056,  0.000], [ 0.137, -0.058,  0.047], [ 0.053, -0.055,  0.076],
+    [-0.053, -0.059,  0.076], [-0.137, -0.056,  0.047], [-0.170, -0.054,  0.000],
+    [-0.137, -0.058, -0.047], [-0.053, -0.055, -0.076], [ 0.053, -0.059, -0.076],
+    [ 0.137, -0.056, -0.047],
+    [ 0.000, -0.056,  0.000],
+    // Layer 1 — mid oval (8) + center fill (1) = 9
+    [ 0.115,  0.040,  0.000], [ 0.081,  0.038,  0.039], [ 0.000,  0.042,  0.055],
+    [-0.081,  0.040,  0.039], [-0.115,  0.038,  0.000], [-0.081,  0.042, -0.039],
+    [ 0.000,  0.040, -0.055], [ 0.081,  0.039, -0.039],
+    [ 0.000,  0.042,  0.000],
+    // Layer 2 — upper trio (3)
+    [ 0.065,  0.110,  0.000], [-0.033,  0.112,  0.026], [-0.033,  0.110, -0.026],
+    // Layer 3 — top single (1)
+    [ 0.000,  0.165,  0.000],
   ];
-  // Orange pile sub-group so BASKET_HEAP_Y tuner moves all oranges together
+  // Orange pile sub-group so BASKET_HEAP_Y and BASKET_SPREAD tuners work live
   var _pileGrp = new THREE.Group();
   _pileGrp.position.y = BASKET_HEAP_Y;
+  _pileGrp.scale.x = BASKET_SPREAD;
+  _pileGrp.scale.z = BASKET_SPREAD;
   _bg.add(_pileGrp);
   _orangePileGroup = _pileGrp;
-  var _oGeo   = new THREE.SphereGeometry(0.055, 8, 6);
-  var _oMat   = new THREE.MeshLambertMaterial({ color: 0xE8801C, emissive: 0x3A1E00, emissiveIntensity: 0.5 }); // emissive lift keeps shadow side orange, not mud
-  var _rimGeo = new THREE.SphereGeometry(0.059, 8, 6);              // 7% larger (was 18%); thin outline only
-  var _rimMat = new THREE.MeshBasicMaterial({ color: 0x7A3B10 });   // mid-brown outline (was near-black 0x3D1A00)
+  var _oBscale = 0.13; // sprite display size in world units (≈ old sphere diameter 0.11 + margin)
+  var _oSpriteMat = new THREE.SpriteMaterial({
+    map: orangeInBasketTex || null,
+    color: orangeInBasketTex ? 0xFFFFFF : 0xF08A1E,
+    transparent: true, alphaTest: 0.05
+  });
   for (var _oi = 0; _oi < _sp.length; _oi++) {
-    var _rm = new THREE.Mesh(_rimGeo, _rimMat); // rim behind orange
-    _rm.position.set(_sp[_oi][0], _sp[_oi][1], _sp[_oi][2]);
-    _rm.visible = false;
-    _pileGrp.add(_rm);
-    var _om = new THREE.Mesh(_oGeo, _oMat);
-    _om.position.set(_sp[_oi][0], _sp[_oi][1], _sp[_oi][2]);
-    _om.rotation.y = _oi * 0.654; // spread Y-rotations so adjacent highlight positions differ
-    _om.visible = false;
-    _pileGrp.add(_om);
-    _basketOranges.push({ mesh: _om, rim: _rm, popStartT: 0 });
+    var _oSpr = new THREE.Sprite(_oSpriteMat.clone()); // clone so pop-in can tint independently
+    _oSpr.position.set(_sp[_oi][0], _sp[_oi][1], _sp[_oi][2]);
+    _oSpr.scale.set(_oBscale, _oBscale, 1);
+    _oSpr.visible = false;
+    _pileGrp.add(_oSpr);
+    _basketOranges.push({ mesh: _oSpr, rim: null, popStartT: 0, baseScale: _oBscale });
   }
 
   playerGroup.add(_bg);
@@ -3366,13 +3840,14 @@ function _updateBasketOranges3() {
         _bo.popStartT = _now;
       }
       var _bpEl = _bo.popStartT > 0 ? (_now - _bo.popStartT) : 200;
+      var _bbs  = _bo.baseScale !== undefined ? _bo.baseScale : 1;
       if (_bpEl < 200) {
         var _bpt = _bpEl / 200;
         var _bscale = 1 - (1 - _bpt) * (1 - _bpt); // ease-out quad 0->1
-        _bo.mesh.scale.setScalar(_bscale);
+        _bo.mesh.scale.set(_bbs * _bscale, _bbs * _bscale, 1);
         if (_bo.rim) _bo.rim.scale.setScalar(_bscale);
       } else {
-        _bo.mesh.scale.setScalar(1);
+        _bo.mesh.scale.set(_bbs, _bbs, 1);
         if (_bo.rim) _bo.rim.scale.setScalar(1);
       }
     } else {
@@ -3969,6 +4444,12 @@ let camXSmooth  = 0;
 let endingSpeedMult = 1.0;
 var endingBeachStartMs   = 0;     // Date.now() when beaching phase started
 var endingCinematicFired = false; // prevents double-trigger of ending dialog
+var _forlornStartMs      = 0;     // Date.now() when forlorn state began; 0 = inactive
+var _forlornTipDone      = false;
+var _storyPanel          = 0;     // current panel index 0-6
+var _storyTurning        = false; // page-turn animation in progress — block input
+var _storyFromMenu       = false; // true when opened from menu button (not post-game)
+var _storyPreloaded      = false;
 var victoryEl3           = null;  // alias for _titleCardEl; kept so legacy cleanup sites still compile
 var _victoryCancelFn     = null;  // alias for _titleCancelFn; kept for legacy cleanup sites
 var _titleCardEl         = null;  // active title card div (stage card or ending)
@@ -4417,7 +4898,9 @@ function update3() {
     if (bt3.z > DESPAWN_Z + 2) {
       bt3.z = SPAWN_Z - Math.random() * 8;
       var v3    = Math.floor(Math.random() * 4);
-      bt3.xOff  = 1.4 + Math.floor(Math.random() * 4) * 1.8;
+      if (stageIdx === 0 || stageIdx === 2) bt3.xOff = FLAT_XOFF_MIN + FLAT_XOFF_RANGE * Math.pow(Math.random(), TREE_XOFF_BIAS);
+      else if (stageIdx === 4) bt3.xOff = S5_XOFF_MIN + S5_XOFF_RANGE * Math.pow(Math.random(), TREE_XOFF_BIAS);
+      else bt3.xOff = 1.4 + Math.floor(Math.random() * 4) * 1.8;
       bt3.sprite.position.x = bt3.side * (rwCur / 2 + SHORE_W + bt3.xOff);
       bt3.sprite.position.z = bt3.z;
       var h3 = makeBankTreeHeight(v3);
@@ -4425,6 +4908,7 @@ function update3() {
       if (treeTex[v3]) {
         bt3.sprite.material.map = treeTex[v3];
         bt3.sprite.material.needsUpdate = true;
+        bt3.sprite.center.set(0.5, _effectivePadFrac(treeTex[v3]._padFrac || 0));
       }
     }
   }
@@ -4435,6 +4919,7 @@ function update3() {
     bbd.z += spd;
     bbd.sprite.position.z = bbd.z;
     bbd.sprite.position.x = bbd.side * (rwCur / 2 + SHORE_W + bbd.xOff);
+    bbd.sprite.position.y = DECOR_SEAT_GND;
     if (bbd.z > DESPAWN_Z + 2) {
       // Choose next texture index, skipping the last used to avoid repeats
       var _nIdx = (bbd.texIdx + 1) % 3;
@@ -4447,11 +4932,18 @@ function update3() {
       if (billboardTex[_nIdx]) {
         bbd.sprite.material.map = billboardTex[_nIdx];
         bbd.sprite.material.needsUpdate = true;
+        bbd.sprite.center.set(0.5, _effectivePadFrac(billboardTex[_nIdx]._padFrac || 0));
       }
       bbd.xOff  = 2.5 + Math.random() * 2.0;
       bbd.side  = (Math.random() < 0.5) ? -1 : 1;
-      bbd.z     = SPAWN_Z - (BILLBOARD_GAP_MIN + Math.random() * BILLBOARD_GAP_RANGE);
-      bbd.sprite.position.set(bbd.side * (rwCur / 2 + SHORE_W + bbd.xOff), 0.30, bbd.z);
+      var _bbGap = BILLBOARD_GAP_MIN + Math.random() * BILLBOARD_GAP_RANGE;
+      bbd.z     = SPAWN_Z - _bbGap;
+      bbd.sprite.position.set(bbd.side * (rwCur / 2 + SHORE_W + bbd.xOff), DECOR_SEAT_GND, bbd.z);
+      var _bbNow = Date.now();
+      var _bbCadence = _lastBillboardDespawnT > 0 ? ((_bbNow - _lastBillboardDespawnT) / 1000).toFixed(1) + 's' : 'first';
+      _lastBillboardDespawnT = _bbNow;
+      var _bbNextSec = spd > 0 ? (_bbGap / (spd * 60)).toFixed(1) : '?';
+      console.log('[KRR BILLBOARD] cadence=' + _bbCadence + ' gap=' + _bbGap.toFixed(0) + 'wu spd=' + (spd * 60).toFixed(2) + 'wu/s next-this-sprite=~' + _bbNextSec + 's');
     }
   }
 
@@ -4483,8 +4975,9 @@ function update3() {
           bb3.sprite.position.y = -0.15 - Math.random() * 1.1;
         }
       } else {
-        // Stages 3-4: normal bank boulder spread
-        bbXOff = 1.0 + Math.floor(Math.random() * 4) * 1.6 + 0.3;
+        // Stages 3-4: wide spread on stage 3, narrow stepped on stage 4
+        if (stageIdx === 2) bbXOff = FLAT_XOFF_MIN + Math.random() * FLAT_XOFF_RANGE;
+        else bbXOff = 1.0 + Math.floor(Math.random() * 4) * 1.6 + 0.3;
         bbH    = 1.2 + Math.random() * 1.6;
         bbW    = bbH * (0.85 + Math.random() * 0.70);
         bb3.sprite.scale.set(bbW, bbH, 1);
@@ -4600,20 +5093,32 @@ function update3() {
     hse.sprite.position.z = hse.z;
     hse.sprite.position.x = hse.side * (rwCur / 2 + SHORE_W + hse.xOff);
     hse.sprite.position.y = DECOR_SEAT_GND;
+    if (!_diagS3HouseDone && hse.z > -5 && hse.z < 5) {
+      var _gcUnder = groundChain3.length ? groundChain3[0].mesh.position.y : 'no-chain';
+      var _s3wp = new THREE.Vector3(); hse.sprite.getWorldPosition(_s3wp);
+      console.log('[DIAG S3-HOUSE] sprite.position.y=' + hse.sprite.position.y.toFixed(4)
+        + ' worldY=' + _s3wp.y.toFixed(4)
+        + ' scale.y=' + hse.sprite.scale.y.toFixed(3)
+        + ' groundChain[0].y=' + _gcUnder
+        + ' x=' + hse.sprite.position.x.toFixed(2)
+        + ' | if house floats, visible-base = pos.y + (padFrac * scale.y)');
+      _diagS3HouseDone = true;
+    }
     if (hse.z > DESPAWN_Z + 2) {
       hse.z = SPAWN_Z - Math.random() * 12;
-      hse.xOff = 6.0 + Math.random() * 4.0;
+      hse.xOff = FLAT_XOFF_MIN + Math.random() * FLAT_XOFF_RANGE;
       hse.sprite.position.x = hse.side * (rwCur / 2 + SHORE_W + hse.xOff);
       hse.sprite.position.z = hse.z;
       var hTexIdx = Math.floor(Math.random() * lakeHouseTex.length);
       hse.texIdx = hTexIdx;
       if (lakeHouseTex[hTexIdx]) {
-        hse.sprite.material.map = lakeHouseTex[hTexIdx];
+        var _hrt = lakeHouseTex[hTexIdx];
+        hse.sprite.material.map = _hrt;
         hse.sprite.material.needsUpdate = true;
-        var hRecycleAsp = (lakeHouseTex[hTexIdx].image && lakeHouseTex[hTexIdx].image.naturalHeight > 0)
-          ? lakeHouseTex[hTexIdx].image.naturalWidth / lakeHouseTex[hTexIdx].image.naturalHeight
-          : 1.0;
+        var hRecycleAsp = (_hrt.image && _hrt.image.naturalHeight > 0)
+          ? _hrt.image.naturalWidth / _hrt.image.naturalHeight : 1.0;
         hse.sprite.scale.set(STAGE3_HOUSE_SCALE * hRecycleAsp, STAGE3_HOUSE_SCALE, 1);
+        hse.sprite.center.set(0.5, _effectivePadFrac(_hrt._padFrac || 0));
       }
     }
   }
@@ -4626,7 +5131,7 @@ function update3() {
     st5.sprite.position.y = DECOR_SEAT_GND;
     if (st5.z > DESPAWN_Z + 2) {
       st5.z = SPAWN_Z - Math.random() * 8;
-      st5.xOff = 1.2 + Math.random() * 3.0;
+      st5.xOff = S5_XOFF_MIN + Math.random() * S5_XOFF_RANGE;
       st5.sprite.position.x = st5.side * (rwCur / 2 + SHORE_W + st5.xOff);
       st5.sprite.position.z = st5.z;
       if (stumpTex5) {
@@ -4641,10 +5146,20 @@ function update3() {
     var fm5 = bankFarms5[fm5i];
     fm5.z += spd; fm5.sprite.position.z = fm5.z;
     fm5.sprite.position.x = fm5.side * (rwCur / 2 + SHORE_W + fm5.xOff);
-    fm5.sprite.position.y = DECOR_SEAT_GND - 3.21;
+    fm5.sprite.position.y = DECOR_SEAT_GND;
+    if (!_diagS5FarmDone && fm5.z > -5 && fm5.z < 5) {
+      var _s5wp = new THREE.Vector3(); fm5.sprite.getWorldPosition(_s5wp);
+      console.log('[DIAG S5-FARM] sprite.position.y=' + fm5.sprite.position.y.toFixed(4)
+        + ' worldY=' + _s5wp.y.toFixed(4)
+        + ' scale.y=' + fm5.sprite.scale.y.toFixed(3)
+        + ' offset_applied=' + (DECOR_SEAT_GND - 3.21).toFixed(4)
+        + ' groundChain[0].y=' + (groundChain3.length ? groundChain3[0].mesh.position.y : 'no-chain')
+        + ' | visible-base=pos.y+(padFrac*' + fm5.sprite.scale.y.toFixed(2) + ')');
+      _diagS5FarmDone = true;
+    }
     if (fm5.z > DESPAWN_Z + 2) {
       fm5.z = SPAWN_Z - Math.random() * 12;
-      fm5.xOff = 6.0 + Math.random() * 4.0;
+      fm5.xOff = S5_XOFF_MIN + Math.random() * S5_XOFF_RANGE;
       fm5.sprite.position.x = fm5.side * (rwCur / 2 + SHORE_W + fm5.xOff);
       fm5.sprite.position.z = fm5.z;
       var fmTexI = Math.floor(Math.random() * 2);
@@ -4655,6 +5170,7 @@ function update3() {
         var fmAsp = (fmTex5.image && fmTex5.image.naturalHeight > 0)
           ? fmTex5.image.naturalWidth / fmTex5.image.naturalHeight : 1.0;
         fm5.sprite.scale.set(S5_FARMHOUSE_SCALE * fmAsp, S5_FARMHOUSE_SCALE, 1);
+        fm5.sprite.center.set(0.5, _effectivePadFrac(fmTex5._padFrac || 0));
       }
     }
   }
@@ -4665,7 +5181,7 @@ function update3() {
     fs5.sprite.position.y = DECOR_SEAT_GND;
     if (fs5.z > DESPAWN_Z + 2) {
       fs5.z = SPAWN_Z - Math.random() * 8;
-      fs5.xOff = 1.2 + Math.random() * 3.0;
+      fs5.xOff = S5_XOFF_MIN + Math.random() * S5_XOFF_RANGE;
       fs5.sprite.position.x = fs5.side * (rwCur / 2 + SHORE_W + fs5.xOff);
       fs5.sprite.position.z = fs5.z;
       if (fishingTex5) {
@@ -4934,6 +5450,20 @@ function _ensureHatPoppy3(side) {
 
 // ── VISUAL UPDATE (every frame) ────────────────────────────────────
 function updateVisuals3() {
+  _updateCloudPatches();
+  _updateWildlife();
+
+  // ── FORLORN TIP-OVER (beached kayaker slowly falls sideways) ──────
+  if (gameState3 === 'forlorn' && _forlornStartMs > 0) {
+    var _fEl = Date.now() - _forlornStartMs;
+    var _fT  = Math.min(1, _fEl / 2500);
+    playerGroup.rotation.z = -(1 - Math.pow(1 - _fT, 3)) * 1.25; // cubic ease-out tip
+    if (_fEl >= ENDING_FORLORN_MS) {
+      _forlornStartMs = 0; // prevent re-trigger
+      _openStoryViewer(false);
+    }
+  }
+
   playerGroup.position.x = player3.x;
 
   // Flattened arc: Math.pow(..., JUMP_ARC_FLATTEN < 1) broadens the plateau so the boat
@@ -5021,9 +5551,10 @@ function updateVisuals3() {
     playerGroup.rotation.y += -_whipDir * JUMP_WHIP_YAW  * _wCurve;
     playerGroup.rotation.z  =  _whipDir * JUMP_WHIP_ROLL * _wCurve;
   } else {
-    // Not jumping: keep pitch and roll at zero (turn yaw handled above)
+    // Not jumping: keep pitch and roll at zero (turn yaw handled above).
+    // Skip rotation.z during forlorn — that state owns it for the tip-over animation.
     playerGroup.rotation.x = 0;
-    playerGroup.rotation.z = 0;
+    if (gameState3 !== 'forlorn') playerGroup.rotation.z = 0;
   }
 
   // Paddle stroke: only runs when GLB is loaded (glbPaddleGroup != null).
@@ -5170,7 +5701,7 @@ function updateVisuals3() {
     _sf.mesh.rotation.y += _sf.sy;
     _sf.mesh.rotation.z += _sf.sz;
     // Hold full opacity for first 30% of life then ease to 0
-    _sf.mesh.material.opacity = 0.80 * (_sfT < 0.30 ? 1.0 : (1 - (_sfT - 0.30) / 0.70));
+    _sf.mesh.material.opacity = 1.0 * (_sfT < 0.30 ? 1.0 : (1 - (_sfT - 0.30) / 0.70));
   }
 
   // Bank poppy pick: ms-based reach → retract → seat (POPPY_PULL_MS total)
@@ -5316,19 +5847,8 @@ function updateVisuals3() {
     riverbedTexRef.offset.y -= 0.0008;
   }
 
-  // Bank segs are now z-scrolled like trees (see bank seg loop above); no offset.y needed here.
-
-  // Stage 1 ground plane: gndPlaneTex is unique to S1; S3 uses grassBankMats3, S4 floorMats4, S5 s5GndScrollTex
-  if (stageIdx === 0 && gndPlaneTex) {
-    gndPlaneTex.offset.y -= curSpd3 / GROUND_TEX_WORLD;
-  }
-  // Scroll Stage 3 grass ground plane at the same rate as every other stage
-  for (var gbi = 0; gbi < grassBankMats3.length; gbi++) {
-    grassBankMats3[gbi].offset.y -= curSpd3 / GROUND_TEX_WORLD;
-  }
-  if (stageIdx === 4 && s5GndScrollTex) {
-    s5GndScrollTex.offset.y -= curSpd3 / GROUND_TEX_WORLD * S5_TERR_SCROLL;
-  }
+  // Far-plane UV scroll removed: all stages now use the geometric ground chain (groundChain3)
+  // which scrolls with the bank-seg clock. No offset.y animation needed on any far plane.
 
   // Stage 5 water recede: shrink waterMesh.scale.x to 0 over miles ENDING_WATER_START -> ENDING_WATER_GONE.
   // Starts at mile 161 (safely after the last sub-narrow at 160 which resets waterMesh).
@@ -5800,31 +6320,121 @@ function showTitleCard(opts) {
   requestAnimationFrame(tickStandard);
 }
 
+// ── STORY VIEWER ────────────────────────────────────────────────────
+var _STORY_FILES = [
+  'story-0-opening.jpg', 'story-1.jpg', 'story-2.jpg', 'story-3.jpg',
+  'story-4.jpg',         'story-5.jpg', 'story-6-final.jpg'
+];
+
+function _updateStoryUI() {
+  var n = _STORY_FILES.length;
+  document.getElementById('story-progress').textContent = (_storyPanel + 1) + ' / ' + n;
+  var isLast = (_storyPanel === n - 1);
+  document.getElementById('story-back').style.display   = _storyPanel === 0 ? 'none' : '';
+  document.getElementById('story-next').style.display   = isLast ? 'none' : '';
+  document.getElementById('story-done').style.display   = isLast ? ''     : 'none';
+  document.getElementById('story-replay').style.display = isLast ? ''     : 'none';
+}
+
+function _storyGoTo(idx, isNext) {
+  if (_storyTurning || idx < 0 || idx >= _STORY_FILES.length) return;
+  _storyTurning = true;
+  _storyPanel   = idx;
+  var flip = document.getElementById('story-flip');
+  var half = Math.max(80, Math.round(STORY_TURN_MS / 2));
+  var dir  = isNext ? -90 : 90;
+  // Phase 1: swing the current panel away (edge-on at 90°)
+  flip.style.transition = 'transform ' + half + 'ms ease-in';
+  flip.style.transform  = 'rotateY(' + dir + 'deg)';
+  setTimeout(function() {
+    // Panel is edge-on: swap the image, jump to mirror angle, then swing back
+    document.getElementById('story-img').src = _STORY_FILES[idx];
+    flip.style.transition = 'none';
+    flip.style.transform  = 'rotateY(' + (-dir) + 'deg)';
+    flip.getBoundingClientRect();                              // force reflow before re-enabling transition
+    flip.style.transition = 'transform ' + half + 'ms ease-out';
+    flip.style.transform  = 'rotateY(0deg)';
+    setTimeout(function() { _storyTurning = false; _updateStoryUI(); }, half);
+  }, half);
+}
+
+function _openStoryViewer(fromMenu) {
+  _storyFromMenu = fromMenu;
+  _storyPanel    = 0;
+  _storyTurning  = false;
+  // Preload all panels into browser cache so turns don't stall
+  if (!_storyPreloaded) {
+    _storyPreloaded = true;
+    for (var _si = 0; _si < _STORY_FILES.length; _si++) {
+      var _sImg = new Image(); _sImg.src = _STORY_FILES[_si];
+    }
+  }
+  var sv   = document.getElementById('story-viewer');
+  var flip = document.getElementById('story-flip');
+  flip.style.transition = 'none';
+  flip.style.transform  = 'rotateY(0deg)';
+  document.getElementById('story-img').src = _STORY_FILES[0];
+  _updateStoryUI();
+  // Make visible but transparent, then fade in
+  sv.classList.add('sv-visible');
+  sv.style.transition    = 'none';
+  sv.style.opacity       = '0';
+  sv.style.pointerEvents = 'none';
+  sv.getBoundingClientRect();                                  // force reflow
+  sv.style.transition    = 'opacity 1.2s ease-in';
+  sv.style.opacity       = '1';
+  sv.style.pointerEvents = 'auto';
+}
+
+function _closeStoryViewer() {
+  var sv = document.getElementById('story-viewer');
+  sv.style.transition    = 'opacity 0.4s ease-out';
+  sv.style.opacity       = '0';
+  sv.style.pointerEvents = 'none';
+  playerGroup.rotation.z = 0;
+  gameState3 = 'start';
+  setTimeout(function() {
+    sv.classList.remove('sv-visible');
+    showScreen3('start');
+  }, 450);
+}
+
+function _initStoryViewer() {
+  document.getElementById('story-next').addEventListener('click', function() {
+    if (!_storyTurning && _storyPanel < _STORY_FILES.length - 1) _storyGoTo(_storyPanel + 1, true);
+  });
+  document.getElementById('story-back').addEventListener('click', function() {
+    if (!_storyTurning && _storyPanel > 0) _storyGoTo(_storyPanel - 1, false);
+  });
+  document.getElementById('story-done').addEventListener('click', _closeStoryViewer);
+  document.getElementById('story-replay').addEventListener('click', function() {
+    if (!_storyTurning) _storyGoTo(0, false);
+  });
+  document.getElementById('sv-zone-right').addEventListener('click', function() {
+    if (!_storyTurning && _storyPanel < _STORY_FILES.length - 1) _storyGoTo(_storyPanel + 1, true);
+  });
+  document.getElementById('sv-zone-left').addEventListener('click', function() {
+    if (!_storyTurning && _storyPanel > 0) _storyGoTo(_storyPanel - 1, false);
+  });
+  document.getElementById('btn3-story').addEventListener('click', function() {
+    document.getElementById('overlay3').classList.add('hidden');
+    _openStoryViewer(true);
+  });
+}
+
 // ── ENDING SEQUENCE ────────────────────────────────────────────────
 function startEnding3() {
-  if (gameState3 === 'ending1' || gameState3 === 'ending2') return;
+  if (gameState3 === 'ending1' || gameState3 === 'ending2' || gameState3 === 'forlorn') return;
   if (score3 > highScore3) { highScore3 = Math.floor(score3); localStorage.setItem('krr3d_hs', highScore3); }
-  gameState3 = 'ending1';
   document.getElementById('hud3').classList.remove('visible');
-  // Fade in from fully transparent over ENDING_MSG_FADE_MS (ease-in-out); a beat of black is correct.
-  var _ov  = document.getElementById('overlay3');
-  var _scr = document.getElementById('screen3-ending1');
-  _ov.classList.remove('hidden');
-  document.querySelectorAll('.screen3').forEach(function(s) { s.classList.remove('visible'); });
-  _scr.classList.add('visible');
-  _scr.style.opacity = '0';
-  var _fMs = Date.now();
-  (function _fadeEnding1() {
-    var _t = Math.min(1, (Date.now() - _fMs) / ENDING_MSG_FADE_MS);
-    var _e = _t < 0.5 ? 2 * _t * _t : 1 - Math.pow(-2 * _t + 2, 2) / 2;
-    _scr.style.opacity = String(+_e.toFixed(4));
-    if (_t < 1) requestAnimationFrame(_fadeEnding1);
-  })();
+  _forlornStartMs = Date.now();
+  _forlornTipDone = false;
+  gameState3 = 'forlorn';
 }
 
 // ── END RUN ─────────────────────────────────────────────────────────
 function endRun3(complete) {
-  if (gameState3 === 'gameover' || gameState3 === 'ending1' || gameState3 === 'ending2' || gameState3 === 'beaching') return;
+  if (gameState3 === 'gameover' || gameState3 === 'ending1' || gameState3 === 'ending2' || gameState3 === 'beaching' || gameState3 === 'forlorn') return;
   player3.dead = true;
   // Tear down any active stage/ending title card so it doesn't sit above the game-over overlay
   if (_titleCancelFn) { _titleCancelFn(); _titleCancelFn = null; }
@@ -5871,7 +6481,7 @@ function startGame3() {
   for (var _ofR = 0; _ofR < _orangeFlights.length; _ofR++) { scene.remove(_orangeFlights[_ofR].mesh); disposeMesh(_orangeFlights[_ofR].mesh); }
   _orangeFlights = [];
   _basketPrevOranges = -1; // force basket re-sync on next frame
-  playerGroup.rotation.y = 0; playerGroup.position.y = 0;
+  playerGroup.rotation.y = 0; playerGroup.rotation.z = 0; playerGroup.position.y = 0;
   kayakTurnY3 = 0; kayakWasSpinning3 = false; splashWasJumping3 = false;
   paddleSplashPrev3 = 0; wakeChevronTimer3 = 0;
   turnHoldFrames3 = 0; turnDirSign3 = 0; kayakTurnVel3 = 0;
@@ -5959,6 +6569,20 @@ function doJump3()  {
 }
 
 window.addEventListener('keydown', e => {
+  // Story viewer keyboard nav — intercepts before any game input
+  if (document.getElementById('story-viewer').classList.contains('sv-visible')) {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!_storyTurning && _storyPanel < _STORY_FILES.length - 1) _storyGoTo(_storyPanel + 1, true);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!_storyTurning && _storyPanel > 0) _storyGoTo(_storyPanel - 1, false);
+    } else if ((e.key === 'Enter' || e.key === 'Escape') && _storyPanel === _STORY_FILES.length - 1) {
+      _closeStoryViewer();
+    }
+    return;
+  }
+
   if (gameState3 === 'playing') {
     switch (e.key) {
       case 'ArrowLeft':  case 'a': case 'A': doLeft3();  break;
@@ -6033,6 +6657,13 @@ window.addEventListener('keydown', e => {
       if (_bbm) { console.log('[KRR DECORSEAT] DECOR_SEAT_GND=' + DECOR_SEAT_GND.toFixed(3) + ' farmhouse_base=' + (DECOR_SEAT_GND - 3.21).toFixed(3)); }
     }
     // ===== END DECOR GROUND SEAT TUNER =====
+
+    // ===== DECOR_SINK_TRIM TUNER (Ctrl+, / Ctrl+.) =====
+    // Subtracts from padFrac to lift sprites that the alpha scan anchors a touch too low.
+    // Ctrl+, = trim -0.005 (lift anchors)   Ctrl+. = trim +0.005 (sink anchors)
+    if (e.ctrlKey && !e.shiftKey && e.key === ',') { e.preventDefault(); DECOR_SINK_TRIM = +(DECOR_SINK_TRIM - 0.005).toFixed(3); _applyAllDecorCenters(); console.log('[KRR SINKTRIM] DECOR_SINK_TRIM=' + DECOR_SINK_TRIM); }
+    if (e.ctrlKey && !e.shiftKey && e.key === '.') { e.preventDefault(); DECOR_SINK_TRIM = +(DECOR_SINK_TRIM + 0.005).toFixed(3); _applyAllDecorCenters(); console.log('[KRR SINKTRIM] DECOR_SINK_TRIM=' + DECOR_SINK_TRIM); }
+    // ===== END DECOR_SINK_TRIM TUNER =====
 
     // ===== ORANGE FLIGHT DURATION TUNER =====
     // < (Shift+,) = shorter -25ms   > (Shift+.) = longer +25ms
@@ -6308,6 +6939,19 @@ window.addEventListener('keydown', e => {
     if (e.key === 'F10' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_TREE_COUNT++; console.log('[KRR S5] S5_TREE_COUNT=' + S5_TREE_COUNT); }
     if (e.key === 'F11' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_POOL_BASE = Math.max(1, S5_POOL_BASE - 1); console.log('[KRR S5] S5_POOL_BASE=' + S5_POOL_BASE); }
     if (e.key === 'F12' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_POOL_BASE++; console.log('[KRR S5] S5_POOL_BASE=' + S5_POOL_BASE); }
+    // Ctrl+Shift+A/Z = S5_XOFF_MIN -/+0.5   Ctrl+Shift+P/Q = S5_XOFF_RANGE -/+2
+    if (e.key === 'a' && e.ctrlKey && e.shiftKey) { e.preventDefault(); S5_XOFF_MIN = Math.max(0, +(S5_XOFF_MIN - 0.5).toFixed(1)); console.log('[KRR S5 XOFF] MIN=' + S5_XOFF_MIN + ' RANGE=' + S5_XOFF_RANGE + ' → ' + S5_XOFF_MIN + '..' + (S5_XOFF_MIN + S5_XOFF_RANGE).toFixed(1) + 'wu'); }
+    if (e.key === 'z' && e.ctrlKey && e.shiftKey) { e.preventDefault(); S5_XOFF_MIN = +(S5_XOFF_MIN + 0.5).toFixed(1); console.log('[KRR S5 XOFF] MIN=' + S5_XOFF_MIN + ' RANGE=' + S5_XOFF_RANGE + ' → ' + S5_XOFF_MIN + '..' + (S5_XOFF_MIN + S5_XOFF_RANGE).toFixed(1) + 'wu'); }
+    if (e.key === 'p' && e.ctrlKey && e.shiftKey) { e.preventDefault(); S5_XOFF_RANGE = Math.max(1, +(S5_XOFF_RANGE - 2.0).toFixed(1)); console.log('[KRR S5 XOFF] MIN=' + S5_XOFF_MIN + ' RANGE=' + S5_XOFF_RANGE + ' → ' + S5_XOFF_MIN + '..' + (S5_XOFF_MIN + S5_XOFF_RANGE).toFixed(1) + 'wu'); }
+    if (e.key === 'q' && e.ctrlKey && e.shiftKey) { e.preventDefault(); S5_XOFF_RANGE = +(S5_XOFF_RANGE + 2.0).toFixed(1); console.log('[KRR S5 XOFF] MIN=' + S5_XOFF_MIN + ' RANGE=' + S5_XOFF_RANGE + ' → ' + S5_XOFF_MIN + '..' + (S5_XOFF_MIN + S5_XOFF_RANGE).toFixed(1) + 'wu'); }
+    // Ctrl+Shift+E/R = FLAT_XOFF_MIN -/+0.5   Ctrl+Shift+W/X = FLAT_XOFF_RANGE -/+2  (stages 1 & 3)
+    if (e.key === 'e' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FLAT_XOFF_MIN = Math.max(0, +(FLAT_XOFF_MIN - 0.5).toFixed(1)); console.log('[KRR FLAT XOFF] MIN=' + FLAT_XOFF_MIN + ' RANGE=' + FLAT_XOFF_RANGE + ' → ' + FLAT_XOFF_MIN + '..' + (FLAT_XOFF_MIN + FLAT_XOFF_RANGE).toFixed(1) + 'wu'); }
+    if (e.key === 'r' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FLAT_XOFF_MIN = +(FLAT_XOFF_MIN + 0.5).toFixed(1); console.log('[KRR FLAT XOFF] MIN=' + FLAT_XOFF_MIN + ' RANGE=' + FLAT_XOFF_RANGE + ' → ' + FLAT_XOFF_MIN + '..' + (FLAT_XOFF_MIN + FLAT_XOFF_RANGE).toFixed(1) + 'wu'); }
+    if (e.key === 'w' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FLAT_XOFF_RANGE = Math.max(1, +(FLAT_XOFF_RANGE - 2.0).toFixed(1)); console.log('[KRR FLAT XOFF] MIN=' + FLAT_XOFF_MIN + ' RANGE=' + FLAT_XOFF_RANGE + ' → ' + FLAT_XOFF_MIN + '..' + (FLAT_XOFF_MIN + FLAT_XOFF_RANGE).toFixed(1) + 'wu'); }
+    if (e.key === 'x' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FLAT_XOFF_RANGE = +(FLAT_XOFF_RANGE + 2.0).toFixed(1); console.log('[KRR FLAT XOFF] MIN=' + FLAT_XOFF_MIN + ' RANGE=' + FLAT_XOFF_RANGE + ' → ' + FLAT_XOFF_MIN + '..' + (FLAT_XOFF_MIN + FLAT_XOFF_RANGE).toFixed(1) + 'wu'); }
+    // Ctrl+Shift+B/H = TREE_XOFF_BIAS -/+0.05 (B=more outward skew, H=more uniform; live — affects recycle)
+    if (e.key === 'b' && e.ctrlKey && e.shiftKey) { e.preventDefault(); TREE_XOFF_BIAS = Math.max(0.05, +(TREE_XOFF_BIAS - 0.05).toFixed(2)); console.log('[KRR TREE BIAS] TREE_XOFF_BIAS=' + TREE_XOFF_BIAS + ' (~' + Math.round((1 - Math.pow(0.5, TREE_XOFF_BIAS)) * 100) + '% in outer half)'); }
+    if (e.key === 'h' && e.ctrlKey && e.shiftKey) { e.preventDefault(); TREE_XOFF_BIAS = Math.min(2.00, +(TREE_XOFF_BIAS + 0.05).toFixed(2)); console.log('[KRR TREE BIAS] TREE_XOFF_BIAS=' + TREE_XOFF_BIAS + ' (~' + Math.round((1 - Math.pow(0.5, TREE_XOFF_BIAS)) * 100) + '% in outer half)'); }
     // ===== END TEMP S5 DENSITY TUNER =====
 
     // ===== TEMP SHORE APRON TUNER =====
@@ -6549,7 +7193,7 @@ window.addEventListener('keydown', e => {
   // ===== END SWELL ORANGE LOSS TUNER =====
 
   // ===== BILLBOARD TUNER =====
-  // Shift+C/F = BILLBOARD_SCALE -/+0.25   Shift+Q/E = BILLBOARD_GAP_MIN -/+100
+  // Shift+C/F = BILLBOARD_SCALE -/+0.25   Shift+Q/E = BILLBOARD_GAP_MIN -/+5
   if (e.key === 'C' && e.shiftKey && !e.ctrlKey) {
     e.preventDefault(); BILLBOARD_SCALE = Math.max(0.5, +(BILLBOARD_SCALE - 0.25).toFixed(2));
     bankBillboards3.forEach(function(b) { var h=BILLBOARD_SCALE; b.sprite.scale.set(h*billboardNatAR[b.texIdx],h,1); });
@@ -6560,9 +7204,37 @@ window.addEventListener('keydown', e => {
     bankBillboards3.forEach(function(b) { var h=BILLBOARD_SCALE; b.sprite.scale.set(h*billboardNatAR[b.texIdx],h,1); });
     console.log('[KRR BILLBOARD] scale=' + BILLBOARD_SCALE + ' gap=' + BILLBOARD_GAP_MIN);
   }
-  if (e.key === 'Q' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); BILLBOARD_GAP_MIN = Math.max(100, BILLBOARD_GAP_MIN - 100); console.log('[KRR BILLBOARD] scale=' + BILLBOARD_SCALE + ' gap=' + BILLBOARD_GAP_MIN); }
-  if (e.key === 'E' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); BILLBOARD_GAP_MIN += 100; console.log('[KRR BILLBOARD] scale=' + BILLBOARD_GAP_MIN + ' gap=' + BILLBOARD_GAP_MIN); }
+  if (e.key === 'Q' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); BILLBOARD_GAP_MIN = Math.max(10, BILLBOARD_GAP_MIN - 5); console.log('[KRR BILLBOARD] scale=' + BILLBOARD_SCALE + ' gap_min=' + BILLBOARD_GAP_MIN); }
+  if (e.key === 'E' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); BILLBOARD_GAP_MIN += 5; console.log('[KRR BILLBOARD] scale=' + BILLBOARD_SCALE + ' gap_min=' + BILLBOARD_GAP_MIN); }
   // ===== END BILLBOARD TUNER =====
+
+  // ===== CLOUD SHADOW / SUN BREAK TUNER =====
+  // Ctrl+Shift+1/2 = CLOUD_SHADOW_OPACITY -/+0.01
+  // Ctrl+Shift+3/4 = CLOUD_SUN_OPACITY    -/+0.005
+  // Ctrl+Shift+5/6 = CLOUD_DRIFT_SPEED    -/+0.1  (live)
+  if (e.key === '1' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_SHADOW_OPACITY = Math.max(0, +(CLOUD_SHADOW_OPACITY - 0.01).toFixed(3)); console.log('[KRR CLOUD] shadow=' + CLOUD_SHADOW_OPACITY + ' sun=' + CLOUD_SUN_OPACITY + ' speed=' + CLOUD_DRIFT_SPEED); }
+  if (e.key === '2' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_SHADOW_OPACITY = Math.min(0.5, +(CLOUD_SHADOW_OPACITY + 0.01).toFixed(3)); console.log('[KRR CLOUD] shadow=' + CLOUD_SHADOW_OPACITY + ' sun=' + CLOUD_SUN_OPACITY + ' speed=' + CLOUD_DRIFT_SPEED); }
+  if (e.key === '3' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_SUN_OPACITY    = Math.max(0, +(CLOUD_SUN_OPACITY    - 0.005).toFixed(3)); console.log('[KRR CLOUD] shadow=' + CLOUD_SHADOW_OPACITY + ' sun=' + CLOUD_SUN_OPACITY + ' speed=' + CLOUD_DRIFT_SPEED); }
+  if (e.key === '4' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_SUN_OPACITY    = Math.min(0.3, +(CLOUD_SUN_OPACITY   + 0.005).toFixed(3)); console.log('[KRR CLOUD] shadow=' + CLOUD_SHADOW_OPACITY + ' sun=' + CLOUD_SUN_OPACITY + ' speed=' + CLOUD_DRIFT_SPEED); }
+  if (e.key === '5' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_DRIFT_SPEED    = Math.max(0, +(CLOUD_DRIFT_SPEED    - 0.10).toFixed(2)); console.log('[KRR CLOUD] shadow=' + CLOUD_SHADOW_OPACITY + ' sun=' + CLOUD_SUN_OPACITY + ' speed=' + CLOUD_DRIFT_SPEED); }
+  if (e.key === '6' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_DRIFT_SPEED    = +(CLOUD_DRIFT_SPEED                + 0.10).toFixed(2); console.log('[KRR CLOUD] shadow=' + CLOUD_SHADOW_OPACITY + ' sun=' + CLOUD_SUN_OPACITY + ' speed=' + CLOUD_DRIFT_SPEED); }
+  // Ctrl+Shift+7/8 = FISH_OPACITY -/+0.05   Ctrl+Shift+9/0 = FISH_FREQ_MIN ±5s
+  if (e.key === '7' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_OPACITY = Math.max(0, +(FISH_OPACITY - 0.05).toFixed(2)); console.log('[KRR WILDLIFE] fish_op=' + FISH_OPACITY + ' fish_freq=' + FISH_FREQ_MIN + '-' + FISH_FREQ_MAX + 's bird_freq=' + BIRD_FREQ_MIN + '-' + BIRD_FREQ_MAX + 's'); }
+  if (e.key === '8' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_OPACITY = Math.min(1, +(FISH_OPACITY + 0.05).toFixed(2)); console.log('[KRR WILDLIFE] fish_op=' + FISH_OPACITY + ' fish_freq=' + FISH_FREQ_MIN + '-' + FISH_FREQ_MAX + 's bird_freq=' + BIRD_FREQ_MIN + '-' + BIRD_FREQ_MAX + 's'); }
+  if (e.key === '9' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_FREQ_MIN = Math.max(5, FISH_FREQ_MIN - 5); FISH_FREQ_MAX = Math.max(FISH_FREQ_MIN + 10, FISH_FREQ_MAX - 5); console.log('[KRR WILDLIFE] fish_op=' + FISH_OPACITY + ' fish_freq=' + FISH_FREQ_MIN + '-' + FISH_FREQ_MAX + 's'); }
+  if (e.key === '0' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_FREQ_MIN += 5; FISH_FREQ_MAX += 5; console.log('[KRR WILDLIFE] fish_op=' + FISH_OPACITY + ' fish_freq=' + FISH_FREQ_MIN + '-' + FISH_FREQ_MAX + 's'); }
+  // Ctrl+- / Ctrl+= = BIRD_FREQ_MIN ±5s (no shift needed)
+  if (e.key === '-' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); BIRD_FREQ_MIN = Math.max(10, BIRD_FREQ_MIN - 5); BIRD_FREQ_MAX = Math.max(BIRD_FREQ_MIN + 15, BIRD_FREQ_MAX - 5); console.log('[KRR WILDLIFE] bird_freq=' + BIRD_FREQ_MIN + '-' + BIRD_FREQ_MAX + 's'); }
+  if (e.key === '=' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); BIRD_FREQ_MIN += 5; BIRD_FREQ_MAX += 5; console.log('[KRR WILDLIFE] bird_freq=' + BIRD_FREQ_MIN + '-' + BIRD_FREQ_MAX + 's'); }
+  // ===== END CLOUD SHADOW TUNER =====
+
+  // ===== STORY / ENDING TUNER =====
+  // Alt+1/2 = ENDING_FORLORN_MS -/+500ms   Alt+3/4 = STORY_TURN_MS -/+50ms
+  if (e.key === '1' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); ENDING_FORLORN_MS = Math.max(1000, ENDING_FORLORN_MS - 500); console.log('[KRR STORY] forlorn_ms=' + ENDING_FORLORN_MS + ' turn_ms=' + STORY_TURN_MS); }
+  if (e.key === '2' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); ENDING_FORLORN_MS += 500; console.log('[KRR STORY] forlorn_ms=' + ENDING_FORLORN_MS + ' turn_ms=' + STORY_TURN_MS); }
+  if (e.key === '3' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); STORY_TURN_MS = Math.max(100, STORY_TURN_MS - 50); console.log('[KRR STORY] forlorn_ms=' + ENDING_FORLORN_MS + ' turn_ms=' + STORY_TURN_MS); }
+  if (e.key === '4' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); STORY_TURN_MS = Math.min(1200, STORY_TURN_MS + 50); console.log('[KRR STORY] forlorn_ms=' + ENDING_FORLORN_MS + ' turn_ms=' + STORY_TURN_MS); }
+  // ===== END STORY / ENDING TUNER =====
 
   // ===== SCORE POPUP TUNER =====
   // Shift+F6/F7 = POPUP_FONT_PX -/+2   Shift+F8/F9 = POPUP_RISE -/+0.10
@@ -6575,7 +7247,7 @@ window.addEventListener('keydown', e => {
   // ===== BASKET POSITION / SCALE TUNER =====
   // Shift+!/@ = BASKET_Y -/+0.02   Shift+#/$ = BASKET_Z -/+0.02
   // Shift+%/^ = BASKET_SCALE -/+0.05   Shift+&/* = BASKET_X -/+0.02
-  // Shift+(/) = BASKET_MAX_VIS -/+1   { / } (Shift+[/]) = BASKET_HEAP_Y -/+0.01
+  // Shift+(/) = BASKET_MAX_VIS -/+1   { / } = BASKET_HEAP_Y -/+0.01   Ctrl+</> = BASKET_SPREAD -/+0.05
   if (e.key === '!' && e.shiftKey) { e.preventDefault(); BASKET_Y = +(BASKET_Y - 0.02).toFixed(3); if (_basketGroup) _basketGroup.position.y = BASKET_Y; console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
   if (e.key === '@' && e.shiftKey) { e.preventDefault(); BASKET_Y = +(BASKET_Y + 0.02).toFixed(3); if (_basketGroup) _basketGroup.position.y = BASKET_Y; console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
   if (e.key === '#' && e.shiftKey) { e.preventDefault(); BASKET_Z = +(BASKET_Z - 0.02).toFixed(3); if (_basketGroup) _basketGroup.position.z = BASKET_Z; console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
@@ -6584,10 +7256,12 @@ window.addEventListener('keydown', e => {
   if (e.key === '^' && e.shiftKey) { e.preventDefault(); BASKET_SCALE = +(BASKET_SCALE + 0.05).toFixed(2); if (_basketGroup) _basketGroup.scale.setScalar(BASKET_SCALE); console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
   if (e.key === '&' && e.shiftKey) { e.preventDefault(); BASKET_X = +(BASKET_X - 0.02).toFixed(3); if (_basketGroup) _basketGroup.position.x = BASKET_X; console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
   if (e.key === '*' && e.shiftKey) { e.preventDefault(); BASKET_X = +(BASKET_X + 0.02).toFixed(3); if (_basketGroup) _basketGroup.position.x = BASKET_X; console.log('[KRR BASKET] x=' + BASKET_X + ' y=' + BASKET_Y + ' z=' + BASKET_Z + ' sc=' + BASKET_SCALE); }
-  if (e.key === '(' && e.shiftKey) { e.preventDefault(); BASKET_MAX_VIS = Math.max(1, BASKET_MAX_VIS - 1); console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y); }
-  if (e.key === ')' && e.shiftKey) { e.preventDefault(); BASKET_MAX_VIS = Math.min(_basketOranges.length, BASKET_MAX_VIS + 1); console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y); }
-  if (e.key === '{') { e.preventDefault(); BASKET_HEAP_Y = +(BASKET_HEAP_Y - 0.01).toFixed(3); if (_orangePileGroup) _orangePileGroup.position.y = BASKET_HEAP_Y; console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y); }
-  if (e.key === '}') { e.preventDefault(); BASKET_HEAP_Y = +(BASKET_HEAP_Y + 0.01).toFixed(3); if (_orangePileGroup) _orangePileGroup.position.y = BASKET_HEAP_Y; console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y); }
+  if (e.key === '(' && e.shiftKey) { e.preventDefault(); BASKET_MAX_VIS = Math.max(1, BASKET_MAX_VIS - 1); console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y + ' SPREAD=' + BASKET_SPREAD); }
+  if (e.key === ')' && e.shiftKey) { e.preventDefault(); BASKET_MAX_VIS = Math.min(_basketOranges.length, BASKET_MAX_VIS + 1); console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y + ' SPREAD=' + BASKET_SPREAD); }
+  if (e.key === '{') { e.preventDefault(); BASKET_HEAP_Y = +(BASKET_HEAP_Y - 0.01).toFixed(3); if (_orangePileGroup) _orangePileGroup.position.y = BASKET_HEAP_Y; console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y + ' SPREAD=' + BASKET_SPREAD); }
+  if (e.key === '}') { e.preventDefault(); BASKET_HEAP_Y = +(BASKET_HEAP_Y + 0.01).toFixed(3); if (_orangePileGroup) _orangePileGroup.position.y = BASKET_HEAP_Y; console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y + ' SPREAD=' + BASKET_SPREAD); }
+  if (e.ctrlKey && e.key === '<') { e.preventDefault(); BASKET_SPREAD = Math.max(0.3, +(BASKET_SPREAD - 0.05).toFixed(2)); if (_orangePileGroup) { _orangePileGroup.scale.x = BASKET_SPREAD; _orangePileGroup.scale.z = BASKET_SPREAD; } console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y + ' SPREAD=' + BASKET_SPREAD); }
+  if (e.ctrlKey && e.key === '>') { e.preventDefault(); BASKET_SPREAD = +(BASKET_SPREAD + 0.05).toFixed(2); if (_orangePileGroup) { _orangePileGroup.scale.x = BASKET_SPREAD; _orangePileGroup.scale.z = BASKET_SPREAD; } console.log('[KRR BASKET] MAX_VIS=' + BASKET_MAX_VIS + ' HEAP_Y=' + BASKET_HEAP_Y + ' SPREAD=' + BASKET_SPREAD); }
   // ===== END BASKET TUNER =====
 
   // ===== SHARD TUNER =====
@@ -6692,5 +7366,8 @@ function loop3() {
 
 // ── INIT ──────────────────────────────────────────────────────────
 buildWorld();
+initCloudPatches();
+_initWildlife();
+_initStoryViewer();
 showScreen3('start');
 loop3();
