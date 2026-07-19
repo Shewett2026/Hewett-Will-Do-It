@@ -55,20 +55,42 @@ const CAM_Z_BK  = 8.5;
 const CAM_LOOK_Z = -8.0;
 const WATER_OPACITY = 0.60;   // tune here: 0=invisible 1=solid; 0.60 = clear shallow river
 var NARROW_MILES = 1.5;        // miles over which sub-narrow squeeze animates (Shift+F7/F8 to tune)
-// ── CLOUD SHADOW / SUN BREAK CONSTANTS ───────────────────────────
-var CLOUD_SHADOW_OPACITY = 0.10;  // max opacity of shadow patches (normal blend); Ctrl+Shift+1/2
-var CLOUD_SUN_OPACITY    = 0.05;  // max opacity of sun break patches (additive blend); Ctrl+Shift+3/4
-var CLOUD_DRIFT_SPEED    = 0.60;  // wu/s base speed; Ctrl+Shift+5/6 (live — scales all drift)
-var CLOUD_SHADOW_COUNT   = 3;     // shadow patch pool; set before init (page reload to change)
-var CLOUD_SUN_COUNT      = 1;     // sun break pool; set before init (page reload to change)
+// ── CLOUD SHADOW / CREPUSCULAR RAY CONSTANTS ─────────────────────
+var CLOUD_SHADOW_OPACITY     = 0.40;  // shadow blob max opacity; Ctrl+Shift+1/2 (-/+0.02)
+var CLOUD_SHADOW_SIZE        = 24;    // shadow base width wu — SUNNY stages; Alt+q/w (-/+10)
+var CLOUD_SHADOW_SIZE_STORM  = 45;    // shadow size for canyon stages 3+4; Ctrl+Alt+1/2 (-/+10)
+var CLOUD_DRIFT_SPEED        = 0.80;  // wu/s ambient drift, independent of terrain; Ctrl+Shift+5/6
+var CLOUD_SHADOW_COUNT       = 4;     // shadow blob pool count (page reload to change)
+var CLOUD_FADEIN_MS          = 3000;  // ms to fade in when spawning (was 5000)
+var CLOUD_DESPAWN_Z          = 28;    // world Z past camera where shadows recycle; Ctrl+Alt+3/4
+var CLOUD_FADEOUT_Z          = 3;     // world Z at which shadow begins fading out; Ctrl+Alt+5/6
+var RAY_SHAFT_OPACITY    = 0.25;  // sun shaft opacity; Alt+e/r (-/+0.01)
+var RAY_POOL_OPACITY     = 0.20;  // ground pool opacity; Alt+a/s (-/+0.01)
+var RAY_SHAFT_W          = 10;    // shaft sprite width wu; Alt+z/x (-/+1)
+var RAY_SHAFT_H          = 48;    // shaft sprite height wu; Alt+c/v (-/+5)
+var RAY_TILT             = 0.22;  // shaft screen-space tilt rad; Alt+d/f (-/+0.02)
+var RAY_COUNT            = 2;     // shaft+pool pair count (page reload to change)
 // ── WILDLIFE CONSTANTS ────────────────────────────────────────────
-var FISH_FREQ_MIN  = 20;   // seconds min between fish sightings; Ctrl+Shift+7/8
-var FISH_FREQ_MAX  = 48;   // seconds max
-var FISH_OPACITY   = 0.45; // sprite max opacity — water (0.60) reduces effective to ~18%; Ctrl+Shift+9/0
-var BIRD_FREQ_MIN  = 35;   // seconds min between bird crossings; Ctrl+-/=
-var BIRD_FREQ_MAX  = 80;   // seconds max
-var BIRD_SPEED     = 4.5;  // wu/s horizontal crossing speed
-var BIRD_OPACITY   = 0.80; // bird sprite opacity
+var FISH_FREQ_MIN  = 5;    // LOUD (prod: 20) — seconds min between fish sightings; Ctrl+Shift+7/8
+var FISH_FREQ_MAX  = 5;    // LOUD (prod: 48)
+var FISH_OPACITY   = 0.80; // LOUD (prod: 0.45) — kept for compat; 3D fish ignore this
+var BIRD_FREQ_MIN  = 5;    // LOUD (prod: 35) — seconds min between bird crossings; Ctrl+-/=
+var BIRD_FREQ_MAX  = 5;    // LOUD (prod: 80)
+var BIRD_SPEED     = 4.5;  // wu/s horizontal crossing speed; Ctrl+Shift+M/N
+var BIRD_SCALE     = 2.2;  // overall 3D bird scale wu; tunable
+var BIRD_FLAP_FREQ = 3.8;  // wing-flap cycles/sec; Ctrl+Shift+N/B
+var BIRD_FLAP_AMP  = 0.90; // wing rotation amplitude radians
+var BIRD_CURVE_AMP = 3.5;  // max Z-offset during curved crossing wu
+var BIRD_CURVE_RATE= 0.10; // Hz of Z arc oscillation
+var FISH_SCALE          = 1.5;   // LOUD (prod: 1.0) overall trout scale; Ctrl+Shift+G/H
+var FISH_SWIM_SPEED     = 0.50;  // Z-drift wu/s (slowed for linger); Ctrl+Shift+J/K
+var FISH_HOLD_MS        = 45000; // ms fish stay visible per sighting; Ctrl+Shift+L/;
+var FISH_UNDULATION_AMP = 1.0;   // body-wave X amplitude multiplier
+var FISH_WEAVE_AMT      = 1.0;   // S-weave X deviation multiplier; Ctrl+Shift+B/V
+var FISH_SCHOOL_SIZE    = 3;     // fish per sighting (1–3); page reload to change
+var FISH_ANIM_FPS       = 8;    // sprite swim-frame rate (cycles through 3 frames)
+var FISH_SPRITE_W       = 0.42; // sprite plane width wu (fish cross-section at scale 1)
+var FISH_SPRITE_L       = 1.2;  // sprite plane length wu (nose to tail at scale 1)
 
 // ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) =====
 const DEV_STAGE_JUMP = true;  // flip to false or delete this whole block to disable
@@ -255,6 +277,67 @@ var cloudTexNames = ['cloud-1.png', 'cloud-2.png', 'cloud-3.png'];
   }
 })();
 
+// Shadow blob + crepuscular ray textures
+(function() {
+  var ldr = new THREE.TextureLoader();
+  for (var csi = 0; csi < 3; csi++) {
+    (function(idx) {
+      ldr.load('cloud-shadow-' + idx + '.png', function(tex) {
+        tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+        tex.generateMipmaps = false; tex.needsUpdate = true;
+        _shadowTexArr[idx] = tex;
+        console.log('[KRR CREP] cloud-shadow-' + idx + '.png loaded');
+        for (var pi = 0; pi < _shadowPatches.length; pi++) {
+          if (_shadowPatches[pi].texIdx === idx && !_shadowPatches[pi].mat.map) {
+            _shadowPatches[pi].mat.map = tex; _shadowPatches[pi].mat.color.setHex(0xFFFFFF);
+            _shadowPatches[pi].mat.needsUpdate = true;
+          }
+        }
+      }, undefined, function(e) { console.error('[KRR] cloud-shadow-' + idx + '.png FAILED', e); });
+    })(csi);
+  }
+  ldr.load('sun-ray.png', function(tex) {
+    tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    _sunRayTex = tex;
+    console.log('[KRR CREP] sun-ray.png loaded');
+    for (var ri = 0; ri < _rayPairs.length; ri++) {
+      if (!_rayPairs[ri].shaftMat.map) { _rayPairs[ri].shaftMat.map = tex; _rayPairs[ri].shaftMat.needsUpdate = true; }
+    }
+  }, undefined, function(e) { console.error('[KRR] sun-ray.png FAILED', e); });
+  ldr.load('sun-pool.png', function(tex) {
+    tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    _sunPoolTex = tex;
+    console.log('[KRR CREP] sun-pool.png loaded');
+    for (var ri = 0; ri < _rayPairs.length; ri++) {
+      if (!_rayPairs[ri].poolMat.map) { _rayPairs[ri].poolMat.map = tex; _rayPairs[ri].poolMat.needsUpdate = true; }
+    }
+  }, undefined, function(e) { console.error('[KRR] sun-pool.png FAILED', e); });
+})();
+
+// Trout sprite swim frames (top-down PNG art, 3 frames: trout-0/1/2.png)
+(function() {
+  var ldr = new THREE.TextureLoader();
+  for (var fi = 0; fi < 3; fi++) {
+    (function(idx) {
+      ldr.load('trout-' + idx + '.png', function(tex) {
+        tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+        tex.generateMipmaps = false; tex.needsUpdate = true;
+        _fishSpriteTex[idx] = tex;
+        console.log('[KRR TROUT] trout-' + idx + '.png loaded');
+        // Apply frame-0 texture to any already-built school meshes
+        if (idx === 0 && _school && _school.length > 0) {
+          _school.forEach(function(sf) {
+            var pm = sf.group.userData.planeMat;
+            if (pm && !pm.map) { pm.map = tex; pm.needsUpdate = true; }
+          });
+        }
+      }, undefined, function(err) { console.error('[KRR] trout-' + idx + '.png FAILED', err); });
+    })(fi);
+  }
+})();
+
 var CLOUD_BASE_W    = 20;
 var CLOUD_BASE_H    = 12;
 var CLOUD_START_SCALE = 0.80;
@@ -307,32 +390,42 @@ let horizonGrp  = null;
 let waterMesh   = null;
 let backdropMesh = null;
 let stageBackdropMesh = null;   // Stage 5 persistent backdrop handle (framing tuner)
-var _cloudPatches   = [];      // { mesh, mat, type, vxDir, vzDir, cycleDur, onFrac, cycleOff }
-var _cloudShadowTex = null;    // shared 256x256 dark blob CanvasTexture
-var _cloudSunTex    = null;    // shared 256x256 warm blob CanvasTexture
-var _cloudInitDone  = false;   // guard — initCloudPatches() runs exactly once
-var _cloudLastMs    = 0;       // wall-clock ms at last _updateCloudPatches call
-// Fish
-var _fishSprite  = null;   // THREE.Sprite
-var _fishMat     = null;   // SpriteMaterial
-var _fishState   = 'idle'; // 'idle' | 'in' | 'hold' | 'out'
-var _fishNextMs  = 0;      // wall-clock ms when next fish appears
-var _fishStartMs = 0;      // start of current fade phase
-var _fishHoldMs  = 0;      // hold duration for current sighting
-var _fishBaseX   = 0;      // world X at spawn (snapped to player lane)
-var _fishBaseZ   = 0;      // world Z at spawn (near player)
-var _fishDriftZ  = 0;      // Z drift speed for this sighting (wu/s)
-var _fishWave    = 0;      // accumulated seconds for sine X-wander
-// Bird
-var _birdSprite  = null;   // THREE.Sprite
-var _birdMat     = null;   // SpriteMaterial
+// Crepuscular ray system (replaces old circle-gradient patches)
+var _shadowPatches  = [];   // { mesh, mat, texIdx, vxDir, vzDir, spawnMs }
+var _rayPairs       = [];   // { shaft, shaftMat, pool, poolMat, vxDir, vzDir, x, z, spawnMs }
+var _shadowTexArr   = [null, null, null];  // cloud-shadow-0/1/2.png
+var _sunRayTex      = null;   // sun-ray.png
+var _sunPoolTex     = null;   // sun-pool.png
+var _cloudInitDone  = false;  // guard — initCloudPatches() runs exactly once
+var _cloudLastMs    = 0;      // wall-clock ms at last update
+// Fish school (FISH_SCHOOL_SIZE 3D trout per sighting)
+var _fishSpriteTex = [null, null, null]; // trout-0/1/2.png swim frames (loaded async)
+var _school       = [];     // [{ group, phaseOff, dX, dZ }]
+var _troutGroup   = null;   // backward-compat: lead fish group
+var _troutBodyGeo = null;   // lead fish body geometry (compat)
+var _troutOrigPos = null;   // lead fish rest-pose (compat)
+var _troutPhase   = 0;      // undulation phase accumulator (rad)
+var _troutWeavePh = 0;      // S-weave path phase accumulator (rad)
+var _fishState    = 'idle'; // 'idle' | 'hold' | 'out'
+var _fishNextMs   = 0;
+var _fishStartMs  = 0;
+var _fishHoldMs   = 0;
+var _fishBaseX    = 0;
+var _fishBaseZ    = 0;
+var _fishDriftZ   = 0;
+// Birds (pair per crossing) — 3D procedural geometry
+var _birdGroup1  = null;   // lead bird 3D group
+var _birdGroup2  = null;   // follow bird 3D group
+var _birdFlapOff2 = 0;     // wing-phase offset for 2nd bird (keeps wings unsynchronised)
 var _birdState   = 'idle'; // 'idle' | 'crossing'
-var _birdNextMs  = 0;      // wall-clock ms when next bird starts
-var _birdX       = 0;      // current world X
-var _birdVx      = 0;      // X velocity (wu/s; negative = right-to-left)
-var _birdY       = 0;      // fixed Y for this crossing
-var _birdZ       = 0;      // fixed Z for this crossing
-var _birdExitX   = 0;      // X threshold where bird becomes hidden
+var _birdNextMs  = 0;
+var _birdX       = 0;      // current world X (lead)
+var _birdX2      = 0;      // current world X (follow)
+var _birdVx      = 0;      // X velocity (wu/s)
+var _birdY       = 0;
+var _birdY2      = 0;
+var _birdZ       = 0;
+var _birdExitX   = 0;
 var obsGlbCache = {};           // path -> null (loading) | THREE.Group (ready); populated by _preloadObsGlb
 let wfGroup     = null;
 let wfStrips    = [];
@@ -374,6 +467,8 @@ var gndPlaneMat    = null; // current ground plane material (any stage); updated
 let bankStumps5    = [];  // Stage 5 tree-stump sprite pool
 let bankFarms5     = [];  // Stage 5 farm-house sprite pool (farm-house-1 and farm-house-2)
 let bankFishing5   = [];  // Stage 5 fishing-supplies sprite pool
+let bankGrassTufts5    = []; // Stage 5 grass tuft scatter pool (far ground)
+let bankGrassTufts5Top = []; // Stage 5 grass tuft scatter pool (bank top surface)
 let sparkles3         = [];   // Part 2: water sparkle glints (rebuilt each buildWorld)
 let kayakTurnY3       = 0;    // Polish 3: lane-change tilt angle (radians)
 let kayakWasSpinning3 = false; // Polish 3: spinout-exit guard for smooth rotation handoff
@@ -691,7 +786,7 @@ var swampTerrainTex = null;
 })();
 var marshTerrainTex = null;
 (function() {
-  new THREE.TextureLoader().load('bank-stage5-marsh.png?v=16', function(tex) {
+  new THREE.TextureLoader().load('bank-stage5-marsh.png?v=18', function(tex) {
     tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
     tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearMipmapLinearFilter;
     tex.generateMipmaps = true; tex.needsUpdate = true;
@@ -733,9 +828,10 @@ var lakeHouseTexNames = ['lake-house-1.png', 'lake-house-2.png', 'lake-house-3.p
 })();
 
 // Stage 5 bank decoration textures
-var stumpTex5   = null;
-var farmTex5    = [null, null];   // index 0 = farm-house-1, index 1 = farm-house-2
-var fishingTex5 = null;
+var stumpTex5    = null;
+var farmTex5     = [null, null];   // index 0 = farm-house-1, index 1 = farm-house-2
+var fishingTex5  = null;
+var grassTuftTex5 = null;
 
 (function() {
   var ldr = new THREE.TextureLoader();
@@ -811,6 +907,28 @@ var fishingTex5 = null;
       }
     }
   }, undefined, function(e) { console.error('[KRR] fishing-supplies.png FAILED', e); });
+})();
+
+// Stage 5 grass tuft scatter decor
+(function() {
+  new THREE.TextureLoader().load('grass-stage5.png?v=18', function(tex) {
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    grassTuftTex5 = tex;
+    tex._padFrac = _computePadFrac(tex);
+    _recordPadFrac('grass-stage5.png', tex._padFrac);
+    if (tex.image && tex.image.naturalHeight > 0) {
+      var natW = tex.image.naturalWidth, natH = tex.image.naturalHeight;
+      console.log('[KRR S5DECO] grass-stage5 ' + natW + 'x' + natH + ' -> world w=' + S5_GRASS_W.toFixed(2) + ' h=' + (S5_GRASS_W * 0.621).toFixed(3) + ' (h/w=0.621)');
+      for (var i = 0; i < bankGrassTufts5.length; i++) {
+        var bgt = bankGrassTufts5[i];
+        bgt.sprite.material.map = tex; bgt.sprite.material.needsUpdate = true;
+        var gScl = bgt.scaleMult;
+        bgt.sprite.scale.set(S5_GRASS_W * gScl, S5_GRASS_W * 0.621 * gScl, 1);
+        bgt.sprite.center.set(0.5, _effectivePadFrac(tex._padFrac));
+      }
+    }
+  }, undefined, function(e) { console.error('[KRR] grass-stage5.png FAILED', e); });
 })();
 
 // Stage 5 in-water obstacle textures (shopping cart art)
@@ -1147,6 +1265,10 @@ function buildWorld() {
   bankFarms5 = [];
   bankFishing5.forEach(function(b5) { scene.remove(b5.sprite); if (b5.sprite.material) b5.sprite.material.dispose(); });
   bankFishing5 = [];
+  bankGrassTufts5.forEach(function(bg5) { scene.remove(bg5.sprite); if (bg5.sprite.material) bg5.sprite.material.dispose(); });
+  bankGrassTufts5 = [];
+  bankGrassTufts5Top.forEach(function(bt5) { scene.remove(bt5.sprite); if (bt5.sprite.material) bt5.sprite.material.dispose(); });
+  bankGrassTufts5Top = [];
   canyonWalls4.forEach(function(cw) { scene.remove(cw.sprite); if (cw.sprite.material) cw.sprite.material.dispose(); });
   canyonWalls4 = [];
   // Dispose shared canyon fill material once, then free per-segment geometries
@@ -1697,6 +1819,11 @@ var DECOR_SINK_TRIM    = 0.03;  // subtracted from padFrac to lift slightly-buri
 var S5_FARMHOUSE_SEAT_Y = -3.23; // bottom anchor Y; seats building base at GROUND_PLANE_Y (-0.02) accounting for ~27% art padding (0.27*11.9=3.21); set by DECOR_SEAT_GND - 3.21 in per-frame loop
 var BANK_BLDG_SEAT_Y   = 0.60;  // bank top Y reference (bank box height=0.60, center 0.30); reserved for decor that sits ON the bank, not the far ground
 var S5_FISHING_SCALE   = 3.50;  // 2.0 base x 2.5 x 0.7
+var S5_GRASS_W        = 0.60;  // grass tuft width wu; Alt+7/8 to tune (-/+0.05)
+var S5_GRASS_POOL     = 120;   // ground scatter pool count (2-3× original 50); Alt+5/6 to tune
+var S5_GRASS_BANK_POOL = 40;   // bank-top scatter pool count (page reload to change)
+var S5_GRASS_XBAND    = 8.0;   // scatter band width wu from bank apron edge; Alt+9/0 to tune
+var S5_BANK_SEAT_Y    = 0.62;  // Y for sprites on bank-top surface (bank segs at y=0.30 + half-h=0.30)
 var S5_CART_SEAT_Y     = -0.20;  // bottom anchor Y; sinks lower ~third of cart below water surface (y=0.15)
 var S5_LOG_SEAT_Y      = -2.70;  // bottom anchor Y; corrects ~47-50% transparent bottom padding in fallen-log art; tune with ; / ' keys
 var OBS_CUTOFF_MILE = 161.5; // no new obstacles spawn at or past this mile
@@ -1998,7 +2125,7 @@ function initBankPoppies3(rw) {
     var spr   = new THREE.Sprite(mat);
     spr.renderOrder = 5;
     spr.center.set(0.5, 0);
-    spr.scale.set(POPPY_W, 0.53 * POPPY_W, 1);
+    spr.scale.set(POPPY_W, 0.7305 * POPPY_W, 1);
     // tuftX: the real-world x of the tuft anchor (no SHORE_W -- POPPY_BANK_OFF is absolute from water edge)
     var tuftX = side * (rw / 2 + POPPY_BANK_OFF);
     var zInit = SPAWN_Z - (POPPY_GAP_MIN + Math.random() * POPPY_GAP_RANGE) * (pi + 1);
@@ -2006,7 +2133,7 @@ function initBankPoppies3(rw) {
     scene.add(spr);
     // Glow sprite: centered on the bloom, additive blending, pulses each frame
     var bloomX = tuftX + (bloomU - tuftU) * POPPY_W;
-    var bloomY = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
+    var bloomY = POPPY_SEAT_Y + 0.86 * 0.7305 * POPPY_W;
     var glowMat = new THREE.SpriteMaterial({
       map: _poppyGlowTex || null, transparent: true,
       blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.40
@@ -2320,6 +2447,47 @@ function initBankDecor5(rw) {
     bankFishing5.push({ sprite: fsspr, side: fsSide, z: fsZ, xOff: fsXOff });
   }
 
+  // Grass tufts (far ground): dense scatter across the full visible ground band on both sides
+  for (var gti = 0; gti < S5_GRASS_POOL; gti++) {
+    var gtTex  = grassTuftTex5;
+    var gtSide = Math.random() < 0.5 ? -1 : 1;
+    var gtMult = 0.85 + Math.random() * 0.30;
+    var gtMat  = gtTex
+      ? new THREE.SpriteMaterial({ map: gtTex, transparent: true, alphaTest: 0.08 })
+      : new THREE.SpriteMaterial({ color: 0x7A9A60, transparent: true, opacity: 0.90 });
+    var gtspr = new THREE.Sprite(gtMat);
+    gtspr.scale.set(S5_GRASS_W * gtMult, S5_GRASS_W * 0.621 * gtMult, 1);
+    var gtXOff = 0.5 + Math.random() * S5_GRASS_XBAND;
+    var gtX = gtSide * (rw / 2 + SHORE_W + gtXOff);
+    var gtZ = SPAWN_Z + (gti / S5_GRASS_POOL) * zSpan;
+    gtspr.position.set(gtX, DECOR_SEAT_GND, gtZ);
+    gtspr.center.set(0.5, _effectivePadFrac(gtTex && gtTex._padFrac !== undefined ? gtTex._padFrac : 0));
+    scene.add(gtspr);
+    bankGrassTufts5.push({ sprite: gtspr, side: gtSide, z: gtZ, xOff: gtXOff, scaleMult: gtMult });
+  }
+
+  // Grass tufts (bank top): small tufts seated on the raised bank surface (Y=0.62)
+  // X is within the bank width: SHORE_W to SHORE_W+3.5 wu from river edge
+  var padFracBT = grassTuftTex5 && grassTuftTex5._padFrac !== undefined ? grassTuftTex5._padFrac : 0;
+  for (var bti = 0; bti < S5_GRASS_BANK_POOL; bti++) {
+    var btTex  = grassTuftTex5;
+    var btSide = Math.random() < 0.5 ? -1 : 1;
+    var btMult = 0.70 + Math.random() * 0.25; // slightly smaller on bank top
+    var btMat  = btTex
+      ? new THREE.SpriteMaterial({ map: btTex, transparent: true, alphaTest: 0.08 })
+      : new THREE.SpriteMaterial({ color: 0x7A9A60, transparent: true, opacity: 0.90 });
+    var btspr = new THREE.Sprite(btMat);
+    btspr.scale.set(S5_GRASS_W * btMult, S5_GRASS_W * 0.621 * btMult, 1);
+    btspr.center.set(0.5, _effectivePadFrac(padFracBT));
+    // xOff: 0.1 to 3.5 wu into the bank surface (bank starts at SHORE_W from river edge)
+    var btXOff = SHORE_W + 0.15 + Math.random() * 3.2;
+    var btX    = btSide * (rw / 2 + btXOff);
+    var btZ    = SPAWN_Z + (bti / S5_GRASS_BANK_POOL) * zSpan;
+    btspr.position.set(btX, S5_BANK_SEAT_Y, btZ);
+    scene.add(btspr);
+    bankGrassTufts5Top.push({ sprite: btspr, side: btSide, z: btZ, xOff: btXOff, scaleMult: btMult });
+  }
+
 }
 
 // Stage 2 (Upper Kern) only: dense boulder shoreline using bankBoulderTex sprites.
@@ -2538,117 +2706,218 @@ function buildStageBackdrop(stg) {
   if (player3.hasShield) { _ensureHatPoppy3(_poppyPickSide); }
 }
 
-// ── CLOUD SHADOW / SUN BREAK SYSTEM ─────────────────────────────
-// Large, soft horizontal planes drifting slowly in world XZ,
-// independent of terrain scroll. renderOrder=2.5 draws them above
-// water (renderOrder 2) and below decor/boat (renderOrder 3+).
-// depthTest:false lets them appear over the river surface which has
-// no solid depth written by the water mesh (depthWrite:false).
-// Called once from the game init sequence, survives buildWorld() calls
-// because patches live directly in scene (not riverGroup).
-
-function _makeCloudTex(isLight) {
-  var SZ  = 256;
-  var cvs = document.createElement('canvas');
-  cvs.width = cvs.height = SZ;
-  var ctx = cvs.getContext('2d');
-  var cx  = SZ / 2, r = cx * 0.90;
-  var g = ctx.createRadialGradient(cx, cx, 0, cx, cx, r);
-  if (isLight) {
-    g.addColorStop(0,    'rgba(255,220,110,0.90)');
-    g.addColorStop(0.45, 'rgba(255,210, 90,0.45)');
-    g.addColorStop(0.80, 'rgba(255,200, 80,0.08)');
-    g.addColorStop(1,    'rgba(255,200, 80,0)');
-  } else {
-    g.addColorStop(0,    'rgba(15,20,40,0.90)');
-    g.addColorStop(0.45, 'rgba(15,20,40,0.45)');
-    g.addColorStop(0.80, 'rgba(15,20,40,0.08)');
-    g.addColorStop(1,    'rgba(15,20,40,0)');
-  }
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, SZ, SZ);
-  return new THREE.CanvasTexture(cvs);
-}
+// ── CREPUSCULAR RAY SYSTEM ────────────────────────────────────────
+// Shadow blobs: large irregular horizontal planes using cloud-shadow-0/1/2.png.
+//   Non-uniform scale + random yaw so no two look alike. Slow ambient drift,
+//   independent of terrain. Spawned far back (Z~-110) and faded in over
+//   CLOUD_FADEIN_MS so they drift into view without popping.
+// Crepuscular rays: angled Sprite shaft (sun-ray.png, additive) + horizontal
+//   ground pool (sun-pool.png, additive). Tilted via material.rotation to read
+//   as light slanting through a cloud gap.
 
 function initCloudPatches() {
   if (_cloudInitDone) return;
-  _cloudInitDone  = true;
-  _cloudShadowTex = _makeCloudTex(false);
-  _cloudSunTex    = _makeCloudTex(true);
+  _cloudInitDone = true;
 
-  var xSpan = 80;
-  var zLo   = SPAWN_Z + 12;
-  var zHi   = DESPAWN_Z - 6;
+  var xSpan = 45;   // half-width of spawn X zone (wu)
+  // Spawn just beyond the backdrop (Z=-88) so shadows drift IN smoothly.
+  // vzDir is high (8-16 wu/s) so they cross the terrain in 5-10 s rather than minutes.
+  var zFar  = -100;
+  var now   = Date.now();
 
-  function _spawnPatch(type, cycleOffMs) {
-    var isSun = (type === 'sun');
-    var w = isSun ? (12 + Math.random() * 18) : (28 + Math.random() * 22);
-    var h = w * (0.55 + Math.random() * 0.35);
-    var mat = new THREE.MeshBasicMaterial({
-      map:         isSun ? _cloudSunTex : _cloudShadowTex,
+  // -- Shadow blobs --
+  for (var si = 0; si < CLOUD_SHADOW_COUNT; si++) {
+    var texIdx = si % 3;
+    var tex    = _shadowTexArr[texIdx];
+    var mat    = new THREE.MeshBasicMaterial({
+      map:         tex || null,
+      color:       tex ? 0xFFFFFF : 0x101520,
       transparent: true,
       opacity:     0,
-      blending:    isSun ? THREE.AdditiveBlending : THREE.NormalBlending,
+      blending:    THREE.NormalBlending,
       depthWrite:  false,
       depthTest:   false
     });
-    var mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    // Non-uniform scale: X and Z sized independently (0.7-1.6× base)
+    var bW = CLOUD_SHADOW_SIZE * (0.7 + Math.random() * 0.9);
+    var bH = CLOUD_SHADOW_SIZE * (0.7 + Math.random() * 0.9);
+    var mesh = new THREE.Mesh(new THREE.PlaneGeometry(bW, bH), mat);
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(
-      (Math.random() - 0.5) * xSpan * 2,
-      0.05,
-      zLo + Math.random() * (zHi - zLo)
-    );
+    mesh.rotation.z = Math.random() * Math.PI * 2; // random yaw; rotation.z = world Y after x-rot
+    var staggerZ = zFar - si * 8; // tighter stagger so they arrive within seconds of each other
+    var spawnX   = (Math.random() - 0.5) * xSpan * 2;
+    mesh.position.set(spawnX, 0.08, staggerZ);
     mesh.renderOrder = 2.5;
     scene.add(mesh);
-    return {
-      mesh:     mesh,
-      mat:      mat,
-      type:     type,
-      vxDir:    (Math.random() - 0.5) * 1.8,
-      vzDir:    (Math.random() - 0.5) * 0.50,
-      cycleDur: 38000 + Math.random() * 22000,
-      onFrac:   0.42  + Math.random() * 0.16,
-      cycleOff: cycleOffMs
-    };
+    // vzDir = wu/s (before CLOUD_DRIFT_SPEED multiplier); 8-16 wu/s so terrain coverage in ~5-12 s
+    var vzD = 8 + Math.random() * 8;
+    _shadowPatches.push({
+      mesh:    mesh,
+      mat:     mat,
+      texIdx:  texIdx,
+      bW:      bW, bH: bH,
+      vxDir:   (Math.random() - 0.5) * 0.8,  // mild lateral drift
+      vzDir:   vzD,
+      spawnMs: now  // start fading in from zero
+    });
+    // NDC frustum check at shadow Y=0.08, spawnZ
+    var _sYv = (0.08 - 4.8) * 0.967 + (staggerZ - 8.5) * (-0.252);
+    var _sZn = (0.08 - 4.8) * 0.252 + (8.5 - staggerZ) * 0.967;
+    var _sYc = _sZn > 0.1 ? (1.3032 * _sYv / _sZn) : 99;
+    console.log('[CREP SHADOW ' + si + '] pos=(' + spawnX.toFixed(1) + ',' + staggerZ.toFixed(0) + ')'
+      + ' size=' + bW.toFixed(0) + 'x' + bH.toFixed(0)
+      + ' vzDir=' + vzD.toFixed(1) + 'wu/s inScene=' + (mesh.parent !== null)
+      + ' hasMap=' + (!!tex) + ' NDC_yc=' + _sYc.toFixed(3) + ' (|<1|=in frustum)');
   }
 
-  var now = Date.now();
-  for (var i = 0; i < CLOUD_SHADOW_COUNT; i++) {
-    _cloudPatches.push(_spawnPatch('shadow', now - Math.random() * 55000));
+  // -- Crepuscular ray pairs (shaft sprite + ground pool) --
+  for (var ri = 0; ri < RAY_COUNT; ri++) {
+    var tilt   = RAY_TILT * (Math.random() < 0.5 ? 1 : -1);
+    var shaftMat = new THREE.SpriteMaterial({
+      map:         _sunRayTex || null,
+      color:       _sunRayTex ? 0xFFFFFF : 0xFFEE88,
+      transparent: true,
+      opacity:     0,
+      blending:    THREE.AdditiveBlending,
+      depthWrite:  false,
+      rotation:    tilt
+    });
+    var shaft = new THREE.Sprite(shaftMat);
+    shaft.scale.set(RAY_SHAFT_W, RAY_SHAFT_H, 1);
+    shaft.renderOrder = 2.3;
+
+    var poolMat = new THREE.MeshBasicMaterial({
+      map:         _sunPoolTex || null,
+      color:       _sunPoolTex ? 0xFFFFFF : 0xFFCC44,
+      transparent: true,
+      opacity:     0,
+      blending:    THREE.AdditiveBlending,
+      depthWrite:  false,
+      depthTest:   false
+    });
+    var poolW = RAY_SHAFT_W * 2.2, poolD = RAY_SHAFT_W * 1.8;
+    var pool  = new THREE.Mesh(new THREE.PlaneGeometry(poolW, poolD), poolMat);
+    pool.rotation.x = -Math.PI / 2;
+    pool.renderOrder = 2.3;
+
+    var rx = (Math.random() - 0.5) * xSpan * 2;
+    var rz = zFar - ri * 15;
+    var shaftY = RAY_SHAFT_H * 0.28;
+    shaft.position.set(rx, shaftY, rz);
+    pool.position.set(rx + Math.sin(tilt) * RAY_SHAFT_H * 0.35, 0.12, rz + RAY_SHAFT_H * 0.15);
+    scene.add(shaft);
+    scene.add(pool);
+
+    var rzVz = 8 + Math.random() * 8;
+    _rayPairs.push({
+      shaft: shaft, shaftMat: shaftMat,
+      pool:  pool,  poolMat:  poolMat,
+      tilt:  tilt,
+      vxDir: (Math.random() - 0.5) * 0.6,
+      vzDir: rzVz,
+      x: rx, z: rz,
+      spawnMs: now
+    });
+    // NDC frustum check at shaft mid-height
+    var _rYv = (shaftY - 4.8) * 0.967 + (rz - 8.5) * (-0.252);
+    var _rZn = (shaftY - 4.8) * 0.252 + (8.5 - rz) * 0.967;
+    var _rYc = _rZn > 0.1 ? (1.3032 * _rYv / _rZn) : 99;
+    console.log('[CREP RAY ' + ri + '] pos=(' + rx.toFixed(1) + ',' + rz.toFixed(0) + ')'
+      + ' shaftY=' + shaftY.toFixed(1) + ' tilt=' + tilt.toFixed(2)
+      + ' vzDir=' + rzVz.toFixed(1) + 'wu/s inScene=' + (shaft.parent !== null)
+      + ' hasRayTex=' + (!!_sunRayTex) + ' hasPoolTex=' + (!!_sunPoolTex)
+      + ' NDC_yc=' + _rYc.toFixed(3) + ' (|<1|=in frustum)');
   }
-  for (var j = 0; j < CLOUD_SUN_COUNT; j++) {
-    _cloudPatches.push(_spawnPatch('sun',    now - 12000 - j * 20000));
-  }
-  console.log('[KRR CLOUD] init: ' + CLOUD_SHADOW_COUNT + ' shadows + ' + CLOUD_SUN_COUNT + ' sun(s)');
+
+  console.log('[KRR CREP] init done: ' + CLOUD_SHADOW_COUNT + ' shadows + ' + RAY_COUNT + ' rays | zFar=' + zFar);
 }
 
 function _updateCloudPatches() {
-  if (!_cloudInitDone || _cloudPatches.length === 0) return;
+  if (!_cloudInitDone) return;
   var now = Date.now();
   var dt  = _cloudLastMs > 0 ? (now - _cloudLastMs) / 1000 : 0;
   _cloudLastMs = now;
   if (dt > 0.25) dt = 0.25;
 
-  var xBound = 88;
-  var zLo    = SPAWN_Z + 10;
-  var zHi    = DESPAWN_Z - 5;
+  var xBound = 55;   // half-width; covers full scene width
+  var zFar   = -110;
+  var zNear  = CLOUD_DESPAWN_Z; // recycle after fully exiting camera view
 
-  for (var i = 0; i < _cloudPatches.length; i++) {
-    var cp = _cloudPatches[i];
-    cp.mesh.position.x += cp.vxDir * CLOUD_DRIFT_SPEED * dt;
-    cp.mesh.position.z += cp.vzDir * CLOUD_DRIFT_SPEED * dt;
+  // -- Shadow blobs --
+  for (var si = 0; si < _shadowPatches.length; si++) {
+    var sp = _shadowPatches[si];
+    // Drift independently — NO terrain lock, pure ambient wind
+    sp.mesh.position.x += sp.vxDir * CLOUD_DRIFT_SPEED * dt;
+    sp.mesh.position.z += sp.vzDir * CLOUD_DRIFT_SPEED * dt;
 
-    if (cp.mesh.position.x >  xBound) cp.mesh.position.x -= xBound * 2;
-    if (cp.mesh.position.x < -xBound) cp.mesh.position.x += xBound * 2;
-    if (cp.mesh.position.z > zHi + 6) cp.mesh.position.z = zLo;
-    if (cp.mesh.position.z < zLo - 6) cp.mesh.position.z = zHi;
+    // X wrap (reappear from other side)
+    if (sp.mesh.position.x >  xBound) sp.mesh.position.x = -xBound;
+    if (sp.mesh.position.x < -xBound) sp.mesh.position.x =  xBound;
 
-    var elapsed = (now - cp.cycleOff) % cp.cycleDur;
-    var phase   = elapsed / cp.cycleDur;
-    var maxOp   = (cp.type === 'sun') ? CLOUD_SUN_OPACITY : CLOUD_SHADOW_OPACITY;
-    cp.mat.opacity  = phase < cp.onFrac ? Math.sin((phase / cp.onFrac) * Math.PI) * maxOp : 0;
-    cp.mesh.visible = cp.mat.opacity > 0.003;
+    // Z recycle: reset far back; pick size based on current stage (canyon = stormier)
+    if (sp.mesh.position.z > zNear) {
+      var _newSz = (stageIdx === 2 || stageIdx === 3) ? CLOUD_SHADOW_SIZE_STORM : CLOUD_SHADOW_SIZE;
+      sp.bW = _newSz * (0.7 + Math.random() * 0.9);
+      sp.bH = _newSz * (0.7 + Math.random() * 0.9);
+      sp.mesh.geometry.dispose();
+      sp.mesh.geometry = new THREE.PlaneGeometry(sp.bW, sp.bH);
+      sp.mesh.rotation.z = Math.random() * Math.PI * 2;
+      sp.mesh.position.z = zFar - Math.random() * 20;
+      sp.mesh.position.x = (Math.random() - 0.5) * xBound * 2;
+      sp.spawnMs = now;
+      sp.mat.opacity = 0;
+    }
+
+    // Opacity: fade-in from spawn × fade-out as shadow approaches camera
+    var elapsed  = now - sp.spawnMs;
+    var fadeIn   = Math.min(1, elapsed / CLOUD_FADEIN_MS);
+    var _zPast   = sp.mesh.position.z - CLOUD_FADEOUT_Z; // positive = past fade-out start
+    var fadeOut  = _zPast > 0 ? Math.max(0, 1 - _zPast / 8) : 1;
+    sp.mat.opacity = CLOUD_SHADOW_OPACITY * fadeIn * fadeOut;
+
+    // Late-patch texture if it loaded after init
+    if (_shadowTexArr[sp.texIdx] && !sp.mat.map) {
+      sp.mat.map = _shadowTexArr[sp.texIdx];
+      sp.mat.color.setHex(0xFFFFFF);
+      sp.mat.needsUpdate = true;
+    }
+    if (_ambientTick % 120 === 0) {
+      var _lp = sp.mesh.position;
+      console.log('[CREP LIVE] shadow[' + si + '] pos=(' + _lp.x.toFixed(1) + ',' + _lp.z.toFixed(1) + ') op=' + sp.mat.opacity.toFixed(2) + ' hasMap=' + (sp.mat.map !== null));
+    }
+  }
+
+  // -- Crepuscular rays --
+  for (var ri = 0; ri < _rayPairs.length; ri++) {
+    var rp = _rayPairs[ri];
+    rp.x += rp.vxDir * CLOUD_DRIFT_SPEED * dt;
+    rp.z += rp.vzDir * CLOUD_DRIFT_SPEED * dt;
+
+    // Recycle
+    if (rp.z > zNear || rp.x > xBound || rp.x < -xBound) {
+      rp.x = (Math.random() - 0.5) * xBound * 2;
+      rp.z = zFar - Math.random() * 20;
+      rp.spawnMs = now;
+      rp.shaftMat.opacity = rp.poolMat.opacity = 0;
+    }
+
+    // Update positions (shaft center in sky, pool on ground offset by tilt)
+    var tiltOffset = Math.sin(rp.tilt) * RAY_SHAFT_H * 0.35;
+    rp.shaft.position.set(rp.x, RAY_SHAFT_H * 0.28, rp.z);
+    rp.pool.position.set(rp.x + tiltOffset, 0.12, rp.z + RAY_SHAFT_H * 0.15);
+
+    // Fade in from spawn
+    var rElapsed = now - rp.spawnMs;
+    var fadeT    = Math.min(1, rElapsed / CLOUD_FADEIN_MS);
+    rp.shaftMat.opacity = RAY_SHAFT_OPACITY * fadeT;
+    rp.poolMat.opacity  = RAY_POOL_OPACITY  * fadeT;
+
+    // Live-tilt update (from tuner)
+    rp.shaftMat.rotation = rp.tilt;
+
+    // Late-patch textures
+    if (_sunRayTex  && !rp.shaftMat.map) { rp.shaftMat.map = _sunRayTex;  rp.shaftMat.needsUpdate = true; }
+    if (_sunPoolTex && !rp.poolMat.map)  { rp.poolMat.map  = _sunPoolTex; rp.poolMat.needsUpdate  = true; }
   }
 }
 
@@ -2660,148 +2929,291 @@ function _updateCloudPatches() {
 //   Positioned in front of the backdrop (Z=-88) in 3D space; no special
 //   renderOrder needed — perspective depth handles layering.
 
-function _makeFishTex() {
-  var cvs = document.createElement('canvas');
-  cvs.width = 64; cvs.height = 32;
-  var ctx = cvs.getContext('2d');
-  ctx.fillStyle = 'rgba(8,12,30,0.96)';
-  // Body ellipse (wider than tall, left-of-center to leave room for tail)
-  ctx.beginPath(); ctx.ellipse(24, 16, 18, 9, 0, 0, Math.PI * 2); ctx.fill();
-  // Forked tail: two wedge triangles
-  ctx.beginPath(); ctx.moveTo(40, 16); ctx.lineTo(60, 5);  ctx.lineTo(53, 14); ctx.closePath(); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(40, 16); ctx.lineTo(60, 27); ctx.lineTo(53, 18); ctx.closePath(); ctx.fill();
-  // Dorsal fin
-  ctx.beginPath(); ctx.moveTo(18, 8); ctx.lineTo(22, 1); ctx.lineTo(32, 8); ctx.closePath(); ctx.fill();
-  return new THREE.CanvasTexture(cvs);
+// Sprite-plane trout: flat PlaneGeometry facing up, textured from trout-0/1/2.png.
+// Keeps the full group-rotation motion system (weave, heading, banking) intact.
+// rotation.x = PI/2 on the plane maps local +Y → world +Z so nose follows group.rotation.y.
+function _buildTroutMesh() {
+  var group = new THREE.Group();
+
+  var mat = new THREE.MeshBasicMaterial({
+    map:         _fishSpriteTex[0] || null,
+    color:       0xFFFFFF,
+    transparent: true,
+    alphaTest:   0.06,
+    side:        THREE.DoubleSide,
+    depthWrite:  false
+  });
+  var plane = new THREE.Mesh(
+    new THREE.PlaneGeometry(FISH_SPRITE_W, FISH_SPRITE_L),
+    mat
+  );
+  plane.rotation.x = Math.PI / 2; // lie flat in XZ plane, face up
+  plane.renderOrder = 1.5;
+  group.add(plane);
+
+  // userData contract expected by the update loop
+  group.userData.planeMat  = mat;
+  group.userData.planeMesh = plane;
+  group.userData.bodyGeo   = null; // signals sprite mode — undulation loop is no-op
+  group.userData.origPos   = null;
+  group.userData.N         = 0;
+  group.userData.S         = 0;
+
+  console.log('[TROUT SPRITE] built — tex0=' + (!!_fishSpriteTex[0]) + ' w=' + FISH_SPRITE_W + ' l=' + FISH_SPRITE_L);
+  return group;
 }
 
-function _makeBirdTex() {
-  var W = 64, H = 28;
-  var cvs = document.createElement('canvas');
-  cvs.width = W; cvs.height = H;
-  var ctx = cvs.getContext('2d');
-  ctx.fillStyle = 'rgba(12,12,22,0.96)';
-  // Small body
-  ctx.beginPath(); ctx.ellipse(W/2, H/2, 3, 4, 0, 0, Math.PI*2); ctx.fill();
-  // Left wing: bezier curve outward then back
-  ctx.beginPath();
-  ctx.moveTo(W/2 - 3, H/2 - 1);
-  ctx.bezierCurveTo(W*0.35, H*0.18, W*0.14, H*0.32, W*0.02, H*0.52);
-  ctx.bezierCurveTo(W*0.12, H*0.68, W*0.28, H*0.56, W/2 - 3, H/2 + 1);
-  ctx.closePath(); ctx.fill();
-  // Right wing: mirror
-  ctx.beginPath();
-  ctx.moveTo(W/2 + 3, H/2 - 1);
-  ctx.bezierCurveTo(W*0.65, H*0.18, W*0.86, H*0.32, W*0.98, H*0.52);
-  ctx.bezierCurveTo(W*0.88, H*0.68, W*0.72, H*0.56, W/2 + 3, H/2 + 1);
-  ctx.closePath(); ctx.fill();
-  return new THREE.CanvasTexture(cvs);
+// Builds a 3-piece procedural bird:
+//   body (elongated box along local +Z / flight axis)
+//   left & right wing groups (hinge at body edge; rotate.z to flap)
+//   tail delta
+// All parts MeshBasicMaterial dark silhouette — reads as bird even at altitude.
+function _buildBirdMesh() {
+  var g   = new THREE.Group();
+  var mat = new THREE.MeshBasicMaterial({ color: 0x0D0D1E, side: THREE.DoubleSide });
+
+  // Body: local +Z = forward (heading direction)
+  var body = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.09, 0.46), mat);
+  body.renderOrder = 10;
+  g.add(body);
+
+  // Wing factory: side = -1 (left) or +1 (right)
+  function _makeWing(side) {
+    var hinge = new THREE.Group();
+    hinge.position.set(side * 0.055, 0, 0); // hinge at body edge
+    var s = side;
+    // Swept-back quad: root near body, tip angled behind
+    var wGeo = new THREE.BufferGeometry();
+    wGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+       0,       0,  0.13,   // root-front
+       0,       0, -0.15,   // root-back
+      s * 0.60, 0,  0.04,   // tip-front
+      s * 0.54, 0, -0.24,   // tip-back (swept rearward)
+    ]), 3));
+    // Double-sided winding so the wing reads from above and below
+    wGeo.setIndex([0,1,2, 1,3,2, 0,2,1, 1,2,3]);
+    wGeo.computeVertexNormals();
+    var wm = new THREE.Mesh(wGeo, mat);
+    wm.renderOrder = 10;
+    hinge.add(wm);
+    g.add(hinge);
+    return hinge;
+  }
+  g.userData.leftWing  = _makeWing(-1);
+  g.userData.rightWing = _makeWing(1);
+
+  // Tail: small delta behind body
+  var tGeo = new THREE.BufferGeometry();
+  tGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+     0,    0, -0.23,
+    -0.13, 0, -0.41,
+     0.13, 0, -0.41,
+  ]), 3));
+  tGeo.setIndex([0,1,2, 0,2,1]);
+  tGeo.computeVertexNormals();
+  var tail = new THREE.Mesh(tGeo, mat);
+  tail.renderOrder = 10;
+  g.add(tail);
+
+  return g;
 }
 
 function _initWildlife() {
-  var fishTex = _makeFishTex();
-  _fishMat    = new THREE.SpriteMaterial({ map: fishTex, transparent: true, opacity: 0, depthWrite: false, depthTest: false });
-  _fishSprite = new THREE.Sprite(_fishMat);
-  _fishSprite.scale.set(1.6, 0.8, 1);
-  _fishSprite.renderOrder = 1.5;
-  _fishSprite.visible = false;
-  scene.add(_fishSprite);
+  // Build fish school (FISH_SCHOOL_SIZE separate 3D trout meshes)
+  _school = [];
+  for (var fsi = 0; fsi < FISH_SCHOOL_SIZE; fsi++) {
+    var fg = _buildTroutMesh();
+    fg.renderOrder = 1.5;
+    fg.visible = false;
+    fg.scale.setScalar(FISH_SCALE);
+    scene.add(fg);
+    _school.push({ group: fg, phaseOff: fsi * 0.80, dX: 0, dZ: 0 });
+  }
+  // Backward-compat handles pointing to lead fish
+  _troutGroup   = _school[0].group;
+  _troutBodyGeo = _troutGroup.userData.bodyGeo;
+  _troutOrigPos = _troutGroup.userData.origPos;
+  console.log('[TROUT] school=' + FISH_SCHOOL_SIZE + ' fish, lead rings=' + _troutGroup.userData.N);
 
-  var birdTex = _makeBirdTex();
-  _birdMat    = new THREE.SpriteMaterial({ map: birdTex, transparent: true, opacity: 0, depthWrite: false });
-  _birdSprite = new THREE.Sprite(_birdMat);
-  _birdSprite.scale.set(2.2, 0.95, 1);
-  _birdSprite.visible = false;
-  scene.add(_birdSprite);
+  // Birds: pair of 3D procedural groups (body + flapping wings + tail)
+  _birdGroup1 = _buildBirdMesh();
+  _birdGroup1.scale.setScalar(BIRD_SCALE);
+  _birdGroup1.visible = false;
+  _birdGroup1.renderOrder = 10;
+  scene.add(_birdGroup1);
 
-  // Stagger first appearances so they don't coincide
+  _birdGroup2 = _buildBirdMesh();
+  _birdGroup2.scale.setScalar(BIRD_SCALE * 0.85);
+  _birdGroup2.visible = false;
+  _birdGroup2.renderOrder = 10;
+  scene.add(_birdGroup2);
+
+  _birdFlapOff2 = Math.PI * (0.4 + Math.random() * 0.6);
+
+  console.log('[BIRD INIT] 3D group1 inScene=' + (_birdGroup1.parent !== null)
+    + ' group2 inScene=' + (_birdGroup2.parent !== null) + ' scale=' + BIRD_SCALE);
+
   var now = Date.now();
   _fishNextMs = now + (FISH_FREQ_MIN + Math.random() * (FISH_FREQ_MAX - FISH_FREQ_MIN)) * 1000;
-  _birdNextMs = now + 8000 + Math.random() * 20000;  // first bird sooner as a reveal
-
-  console.log('[KRR WILDLIFE] fish + bird ready');
+  _birdNextMs = now + BIRD_FREQ_MIN * 1000;
+  console.log('[KRR WILDLIFE] school=' + FISH_SCHOOL_SIZE + ' fish + bird pair ready');
 }
 
 var _wildlifeLastMs = 0;
 
 function _updateWildlife() {
-  if (!_fishSprite) return;
+  if (!_troutGroup) return;
   var now = Date.now();
   var dt  = _wildlifeLastMs > 0 ? (now - _wildlifeLastMs) / 1000 : 0;
   _wildlifeLastMs = now;
   if (dt > 0.25) dt = 0.25;
 
-  var FADE_MS = 1800;
-
-  // ── FISH ──────────────────────────────────────────────
+  // ── 3D RAINBOW TROUT SCHOOL ──────────────────────────────────────
   if (_fishState === 'idle') {
     if (now >= _fishNextMs) {
-      _fishState   = 'in';
-      _fishStartMs = now;
-      _fishHoldMs  = 8000 + Math.random() * 6000;  // 8-14s hold
-      _fishBaseX   = player3.x + (Math.random() - 0.5) * 1.2;
-      _fishBaseZ   = (Math.random() - 0.5) * 4.0;  // ±2 wu from player
-      _fishDriftZ  = (Math.random() < 0.5 ? 1 : -1) * (0.10 + Math.random() * 0.18);
-      _fishWave    = 0;
-      _fishSprite.position.set(_fishBaseX, -0.25, _fishBaseZ);
-      _fishSprite.visible = true;
+      _fishState    = 'hold';
+      _fishStartMs  = now;
+      _fishHoldMs   = FISH_HOLD_MS;
+      _fishBaseX    = (Math.random() - 0.5) * 1.6;
+      _fishBaseZ    = -10;
+      _fishDriftZ   = (Math.random() < 0.5 ? 1 : -1) * FISH_SWIM_SPEED;
+      _troutPhase   = 0;
+      _troutWeavePh = 0;
+      // Set per-fish offsets and scales; lead fish (index 0) stays at center
+      for (var _sfi = 0; _sfi < _school.length; _sfi++) {
+        var _sf = _school[_sfi];
+        _sf.dX = (_sfi === 0) ? 0 : (Math.random() - 0.5) * 2.0;
+        _sf.dZ = (_sfi === 0) ? 0 : (Math.random() - 0.5) * 3.0;
+        _sf.group.scale.setScalar(FISH_SCALE * (0.85 + Math.random() * 0.25));
+        _sf.group.position.set(_fishBaseX + _sf.dX, -0.18, _fishBaseZ + _sf.dZ);
+        _sf.group.visible = true;
+      }
+      console.log('[AMBIENT TROUT] school spawn x=' + _fishBaseX.toFixed(2) + ' y=-0.18 z=' + _fishBaseZ
+        + ' vz=' + _fishDriftZ.toFixed(2) + ' count=' + _school.length
+        + ' inScene=' + (_troutGroup.parent !== null));
     }
-  } else if (_fishState === 'in') {
-    var elapsed = now - _fishStartMs;
-    _fishMat.opacity = Math.min(1, elapsed / FADE_MS) * FISH_OPACITY;
-    _fishWave += dt;
-    _fishSprite.position.x = _fishBaseX + Math.sin(_fishWave * 0.65) * 0.75;
-    _fishSprite.position.z = _fishBaseZ + _fishDriftZ * (elapsed / 1000);
-    if (elapsed >= FADE_MS) { _fishState = 'hold'; _fishStartMs = now; }
   } else if (_fishState === 'hold') {
-    _fishMat.opacity = FISH_OPACITY;
-    _fishWave += dt;
-    _fishSprite.position.x = _fishBaseX + Math.sin(_fishWave * 0.65) * 0.75;
-    _fishSprite.position.z = _fishBaseZ + _fishDriftZ * ((now - _fishStartMs) / 1000 + FADE_MS / 1000);
-    if (now - _fishStartMs >= _fishHoldMs) { _fishState = 'out'; _fishStartMs = now; }
-  } else if (_fishState === 'out') {
-    var fadeOut = now - _fishStartMs;
-    _fishMat.opacity = Math.max(0, 1 - fadeOut / FADE_MS) * FISH_OPACITY;
-    _fishWave += dt;
-    _fishSprite.position.x = _fishBaseX + Math.sin(_fishWave * 0.65) * 0.75;
-    _fishSprite.position.z = _fishBaseZ + _fishDriftZ * ((FADE_MS + _fishHoldMs + fadeOut) / 1000);
-    if (fadeOut >= FADE_MS) {
-      _fishState      = 'idle';
-      _fishSprite.visible = false;
-      _fishMat.opacity    = 0;
-      _fishNextMs = now + (FISH_FREQ_MIN + Math.random() * (FISH_FREQ_MAX - FISH_FREQ_MIN)) * 1000;
+    _troutPhase   += dt * FISH_SWIM_SPEED * 2.5;
+    _troutWeavePh += dt * 0.70;
+
+    var _wAmp = 1.2 * FISH_WEAVE_AMT;
+    var _wX   = _fishBaseX + Math.sin(_troutWeavePh) * _wAmp;
+    var _wDX  = Math.cos(_troutWeavePh) * _wAmp * 0.70;
+    var _tEl  = (now - _fishStartMs) / 1000;
+    var _tZ   = _fishBaseZ + _fishDriftZ * _tEl;
+
+    // Animate each school member
+    for (var _sfi = 0; _sfi < _school.length; _sfi++) {
+      var _sf  = _school[_sfi];
+      var _sfg = _sf.group;
+      _sfg.position.set(_wX + _sf.dX, -0.18, _tZ + _sf.dZ);
+      _sfg.rotation.y = Math.atan2(_wDX, _fishDriftZ);
+      _sfg.rotation.z = -Math.atan2(_wDX, Math.abs(_fishDriftZ) + 0.5) * 0.55;
+
+      var _sfPhase = _troutPhase + _sf.phaseOff;
+      var _sfPg    = _sfg.userData;
+
+      // Sprite mode: cycle swim frames; skip mesh undulation (bodyGeo is null)
+      if (_sfPg.planeMat) {
+        var _frame = Math.floor(Math.abs(_sfPhase) * FISH_ANIM_FPS) % 3;
+        var _ftex  = _fishSpriteTex[_frame];
+        if (_ftex && _sfPg.planeMat.map !== _ftex) {
+          _sfPg.planeMat.map = _ftex;
+          _sfPg.planeMat.needsUpdate = true;
+        }
+      }
+
+      // 3D mesh mode (bodyGeo present): apply vertex undulation
+      if (_sfPg.bodyGeo && _sfPg.bodyGeo.attributes && _sfPg.bodyGeo.attributes.position) {
+        var _sfArr = _sfPg.bodyGeo.attributes.position.array;
+        var _sfOri = _sfPg.origPos;
+        var _sfN   = _sfPg.N, _sfS = _sfPg.S;
+        for (var _pi = 0; _pi < _sfN; _pi++) {
+          var _pt  = _pi / (_sfN - 1);
+          var _pa  = Math.pow(_pt, 1.8) * 0.18 * FISH_UNDULATION_AMP;
+          var _pxO = Math.sin(_pt * 3.0 * Math.PI - _sfPhase) * _pa;
+          for (var _pj = 0; _pj < _sfS; _pj++) {
+            var _pvi = (_pi * _sfS + _pj) * 3;
+            _sfArr[_pvi]     = _sfOri[_pvi]     + _pxO;
+            _sfArr[_pvi + 1] = _sfOri[_pvi + 1];
+            _sfArr[_pvi + 2] = _sfOri[_pvi + 2];
+          }
+        }
+        _sfPg.bodyGeo.attributes.position.needsUpdate = true;
+      }
     }
+
+    var _tExit = (_fishDriftZ > 0 && _tZ > DESPAWN_Z - 2)
+              || (_fishDriftZ < 0 && _tZ < SPAWN_Z + 10)
+              || ((now - _fishStartMs) >= _fishHoldMs);
+    if (_tExit) { _fishState = 'out'; }
+  } else if (_fishState === 'out') {
+    _fishState = 'idle';
+    for (var _sfi = 0; _sfi < _school.length; _sfi++) { _school[_sfi].group.visible = false; }
+    _fishNextMs = now + FISH_FREQ_MIN * 1000;
   }
 
-  // ── BIRD ──────────────────────────────────────────────
+  // ── BIRDS (pair crossing) — 3D flapping geometry ──────────────────
+  // Frustum: camera (0,4.8,8.5), Y=8-13, Z=-40 to -55 → NDC yc ≈ 0.35-0.60 ✓
   if (_birdState === 'idle') {
-    if (now >= _birdNextMs) {
-      _birdVx       = (Math.random() < 0.5 ? 1 : -1) * (BIRD_SPEED + Math.random() * 1.5);
-      _birdX        = _birdVx > 0 ? -38 : 38;
-      _birdExitX    = _birdVx > 0 ?  38 : -38;
-      _birdY        = 17 + Math.random() * 5;
-      _birdZ        = -46 - Math.random() * 20;  // -46 to -66, in front of backdrop at -88
-      _birdSprite.scale.set(
-        _birdVx < 0 ? -2.2 : 2.2,  // flip sprite to face direction of travel
-        0.95, 1
-      );
-      _birdSprite.position.set(_birdX, _birdY, _birdZ);
-      _birdSprite.visible = true;
+    if (now >= _birdNextMs && _birdGroup1) {
+      _birdVx    = (Math.random() < 0.5 ? 1 : -1) * (BIRD_SPEED + Math.random() * 1.5);
+      _birdX     = _birdVx > 0 ? -28 : 28;
+      _birdExitX = _birdVx > 0 ?  28 : -28;
+      _birdY     = 8 + Math.random() * 5;
+      _birdZ     = -40 - Math.random() * 15;
+      _birdX2    = _birdX + (Math.random() - 0.5) * 4;
+      _birdY2    = _birdY + (Math.random() - 0.5) * 2.0;
+      _birdFlapOff2 = Math.PI * (0.4 + Math.random() * 0.6); // unsynchronised wings
+
+      _birdGroup1.position.set(_birdX, _birdY, _birdZ);
+      _birdGroup2.position.set(_birdX2, _birdY2, _birdZ + (Math.random() - 0.5) * 6);
+      _birdGroup1.visible = _birdGroup2.visible = true;
       _birdState = 'crossing';
+
+      // Frustum diagnostic
+      var _bYv = (_birdY - 4.8) * 0.967 + (_birdZ - 8.5) * (-0.252);
+      var _bZn = (_birdY - 4.8) * 0.252 + (8.5 - _birdZ) * 0.967;
+      var _bYc = _bZn > 0.1 ? (1.3032 * _bYv / _bZn) : 99;
+      console.log('[BIRD SPAWN 3D] x=' + _birdX.toFixed(1) + ' y=' + _birdY.toFixed(1) + ' z=' + _birdZ.toFixed(1)
+        + ' vx=' + _birdVx.toFixed(1)
+        + ' | g1 inScene=' + (_birdGroup1.parent !== null) + ' visible=' + _birdGroup1.visible
+        + ' | NDC yc=' + _bYc.toFixed(3) + ' (|yc|<1=in frustum)');
     }
   } else if (_birdState === 'crossing') {
-    _birdX += _birdVx * dt;
-    _birdSprite.position.x = _birdX;
-    // Opacity: fade in over first 8wu, fade out over last 8wu of crossing
-    var birdProgress = (_birdX - (_birdExitX < 0 ? 38 : -38)) / (_birdExitX - (_birdExitX < 0 ? 38 : -38));
-    var birdEdgeFrac = 8 / 76;  // 8wu edge / 76wu total span
-    var birdOpFrac   = Math.min(1, Math.min(birdProgress, 1 - birdProgress) / birdEdgeFrac);
-    _birdMat.opacity = birdOpFrac * BIRD_OPACITY;
+    if (!_birdGroup1) { _birdState = 'idle'; return; }
+    _birdX  += _birdVx * dt;
+    _birdX2 += _birdVx * dt;
+
+    // Curved path: gentle Z arc on a slow sine so they don't fly in a ruler-straight line
+    var _bCurveZ = Math.sin(now * 0.001 * BIRD_CURVE_RATE * Math.PI * 2) * BIRD_CURVE_AMP;
+    var _bCurveDZ = Math.cos(now * 0.001 * BIRD_CURVE_RATE * Math.PI * 2) * BIRD_CURVE_AMP
+                    * (BIRD_CURVE_RATE * Math.PI * 2);  // dZ/dt for banking
+
+    _birdGroup1.position.set(_birdX,  _birdY,  _birdZ  + _bCurveZ);
+    _birdGroup2.position.set(_birdX2, _birdY2, _birdZ  + _bCurveZ + (_birdX2 - _birdX) * 0.08);
+
+    // Wing flap: rotate.z in local hinge space → tips go up/down
+    var _flapT = now * 0.001 * BIRD_FLAP_FREQ * Math.PI * 2;
+    var _flap1 = Math.sin(_flapT) * BIRD_FLAP_AMP;
+    var _flap2 = Math.sin(_flapT + _birdFlapOff2) * BIRD_FLAP_AMP;
+
+    [[_birdGroup1, _flap1], [_birdGroup2, _flap2]].forEach(function(pair) {
+      var bg = pair[0], fv = pair[1];
+      if (!bg || !bg.userData) return;
+      // Left wing up, right wing mirrors — classic flap
+      if (bg.userData.leftWing)  bg.userData.leftWing.rotation.z  =  fv;
+      if (bg.userData.rightWing) bg.userData.rightWing.rotation.z = -fv;
+      // Face heading direction: local +Z = forward → yaw so local Z aligns with velocity
+      bg.rotation.y = _birdVx > 0 ? Math.PI * 0.5 : -Math.PI * 0.5;
+      // Bank into the Z-curve: roll toward inside of arc
+      bg.rotation.z = (_birdVx > 0 ? 1 : -1) * _bCurveDZ * 0.04;
+    });
+
     var pastExit = _birdVx > 0 ? (_birdX >= _birdExitX) : (_birdX <= _birdExitX);
     if (pastExit) {
+      _birdGroup1.visible = _birdGroup2.visible = false;
       _birdState = 'idle';
-      _birdSprite.visible = false;
-      _birdMat.opacity    = 0;
       _birdNextMs = now + (BIRD_FREQ_MIN + Math.random() * (BIRD_FREQ_MAX - BIRD_FREQ_MIN)) * 1000;
     }
   }
@@ -3465,15 +3877,15 @@ var _hatFlowerTex = null;  // poppy-hat.png: stem-stub bloom worn in hat band
       cb(t);
     });
   }
-  _pLoad('poppy-leftbank.png?v=3',           function(t) { _poppyTexL  = t; });
-  _pLoad('poppy-leftbank-picked.png?v=3',   function(t) { _poppyTexLP = t; });
-  _pLoad('poppy-leftbank-bloom.png?v=3',    function(t) { _poppyTexLB = t; });
-  _pLoad('poppy-rightbank.png?v=3',         function(t) { _poppyTexR  = t; });
-  _pLoad('poppy-rightbank-picked.png?v=3',  function(t) { _poppyTexRP = t; });
-  _pLoad('poppy-rightbank-bloom.png?v=3',   function(t) { _poppyTexRB = t; });
+  _pLoad('poppy-leftbank.png?v=17',          function(t) { _poppyTexL  = t; });
+  _pLoad('poppy-leftbank-picked.png?v=17',  function(t) { _poppyTexLP = t; });
+  _pLoad('poppy-leftbank-bloom.png?v=17',   function(t) { _poppyTexLB = t; });
+  _pLoad('poppy-rightbank.png?v=17',        function(t) { _poppyTexR  = t; });
+  _pLoad('poppy-rightbank-picked.png?v=17', function(t) { _poppyTexRP = t; });
+  _pLoad('poppy-rightbank-bloom.png?v=17',  function(t) { _poppyTexRB = t; });
   _pLoad('poppy-glow.png',                   function(t) { _poppyGlowTex = t; });
   // Hat flower uses LinearFilter for smooth scaling (not pixel art)
-  new THREE.TextureLoader().load('poppy-hat.png', function(t) {
+  new THREE.TextureLoader().load('poppy-hat.png?v=17', function(t) {
     t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
     t.generateMipmaps = true; t.needsUpdate = true;
     _hatFlowerTex = t;
@@ -5008,7 +5420,7 @@ function update3() {
       pp3.z      = SPAWN_Z - (POPPY_GAP_MIN + Math.random() * POPPY_GAP_RANGE);
       pp3.sprite.renderOrder = 5;
       pp3.sprite.center.set(0.5, 0);
-      pp3.sprite.scale.set(POPPY_W, 0.53 * POPPY_W, 1);
+      pp3.sprite.scale.set(POPPY_W, 0.7305 * POPPY_W, 1);
       pp3.sprite.material.rotation = 0;
       var ppRestTex = pp3.side === -1 ? _poppyTexL : _poppyTexR;
       if (ppRestTex) { pp3.sprite.material.map = ppRestTex; pp3.sprite.material.needsUpdate = true; }
@@ -5039,7 +5451,7 @@ function update3() {
       } else if (!pp3.picked) {
         var _ppBX = _ppTX + (pp3.bloomU - pp3.tuftU) * POPPY_W;
         // Bloom bobs slightly out of phase with stem sway (as if weight on end)
-        var _ppBY = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W
+        var _ppBY = POPPY_SEAT_Y + 0.86 * 0.7305 * POPPY_W
                   + Math.sin(frameN * POPPY_SWAY_SPD * 1.3 + pp3.swayPhase + 0.7) * 0.05;
         pp3.glow.position.set(_ppBX, _ppBY, pp3.z);
         pp3.glow.scale.setScalar(POPPY_GLOW_SCALE * POPPY_W);
@@ -5192,6 +5604,45 @@ function update3() {
       }
     }
   }
+  for (var gt5i = 0; gt5i < bankGrassTufts5.length; gt5i++) {
+    var gt5 = bankGrassTufts5[gt5i];
+    gt5.z += spd; gt5.sprite.position.z = gt5.z;
+    gt5.sprite.position.x = gt5.side * (rwCur / 2 + SHORE_W + gt5.xOff);
+    gt5.sprite.position.y = DECOR_SEAT_GND;
+    if (gt5.z > DESPAWN_Z + 2) {
+      gt5.z = SPAWN_Z - Math.random() * 8;
+      gt5.side = Math.random() < 0.5 ? -1 : 1;
+      gt5.xOff = 0.5 + Math.random() * S5_GRASS_XBAND;
+      gt5.scaleMult = 0.85 + Math.random() * 0.30;
+      gt5.sprite.position.x = gt5.side * (rwCur / 2 + SHORE_W + gt5.xOff);
+      gt5.sprite.position.z = gt5.z;
+      if (grassTuftTex5) {
+        gt5.sprite.material.map = grassTuftTex5; gt5.sprite.material.needsUpdate = true;
+        gt5.sprite.scale.set(S5_GRASS_W * gt5.scaleMult, S5_GRASS_W * 0.621 * gt5.scaleMult, 1);
+        gt5.sprite.center.set(0.5, _effectivePadFrac(grassTuftTex5._padFrac || 0));
+      }
+    }
+  }
+  // Stage 5 bank-top grass: same pool pattern but seated on raised bank surface
+  for (var bt5i = 0; bt5i < bankGrassTufts5Top.length; bt5i++) {
+    var bt5 = bankGrassTufts5Top[bt5i];
+    bt5.z += spd; bt5.sprite.position.z = bt5.z;
+    bt5.sprite.position.x = bt5.side * (rwCur / 2 + bt5.xOff);
+    bt5.sprite.position.y = S5_BANK_SEAT_Y;
+    if (bt5.z > DESPAWN_Z + 2) {
+      bt5.z = SPAWN_Z - Math.random() * 8;
+      bt5.side = Math.random() < 0.5 ? -1 : 1;
+      bt5.xOff = SHORE_W + 0.15 + Math.random() * 3.2;
+      bt5.scaleMult = 0.70 + Math.random() * 0.25;
+      bt5.sprite.position.x = bt5.side * (rwCur / 2 + bt5.xOff);
+      bt5.sprite.position.z = bt5.z;
+      if (grassTuftTex5) {
+        bt5.sprite.material.map = grassTuftTex5; bt5.sprite.material.needsUpdate = true;
+        bt5.sprite.scale.set(S5_GRASS_W * bt5.scaleMult, S5_GRASS_W * 0.621 * bt5.scaleMult, 1);
+        bt5.sprite.center.set(0.5, _effectivePadFrac(grassTuftTex5._padFrac || 0));
+      }
+    }
+  }
   // Transition flash
   if (transMsg3) {
     transMsg3.life--;
@@ -5337,7 +5788,7 @@ function checkBankPoppies3() {
       // Capture bloom world position for travelling sprite
       var _bTX = _ppA.side * (rwCur / 2 + POPPY_BANK_OFF);
       var _bxC = _bTX + (_ppA.bloomU - _ppA.tuftU) * POPPY_W;
-      var _byC = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
+      var _byC = POPPY_SEAT_Y + 0.86 * 0.7305 * POPPY_W;
       _poppyBloomCPos.x = _bxC;
       _poppyBloomCPos.y = _byC;
       _poppyBloomCPos.z = _ppA.z;
@@ -5449,9 +5900,18 @@ function _ensureHatPoppy3(side) {
 }
 
 // ── VISUAL UPDATE (every frame) ────────────────────────────────────
+var _ambientTick = 0;
 function updateVisuals3() {
-  _updateCloudPatches();
-  _updateWildlife();
+  // Cloud shadow patches drift independently (wall-clock) — freeze during forlorn so
+  // nothing slides across the ground while the kayaker lies still.
+  if (gameState3 !== 'forlorn') _updateCloudPatches();
+  // Fish and birds also wall-clock driven — freeze position during forlorn.
+  if (gameState3 !== 'forlorn') _updateWildlife();
+  _ambientTick++;
+  if (_ambientTick % 120 === 0) {
+    var _cv = _shadowPatches.filter(function(c) { return c.mesh.visible; }).length;
+    console.log('[AMBIENT] tick=' + _ambientTick + ' shadow_vis=' + _cv + '/' + _shadowPatches.length + ' rays=' + _rayPairs.length + ' fish=' + _fishState + ' bird=' + _birdState);
+  }
 
   // ── FORLORN TIP-OVER (beached kayaker slowly falls sideways) ──────
   if (gameState3 === 'forlorn' && _forlornStartMs > 0) {
@@ -5820,7 +6280,8 @@ function updateVisuals3() {
   // Wave sin(t - localY * k) travels in +localY = +worldZ = downstream direction.
   // wt multiplier 0.013 is roughly 1/3 of the original 0.038 for calm, gently flowing look.
   // Third wave adds a cross-current ripple at a different spatial angle for organic depth.
-  if (waterMesh && waterMesh.geometry) {
+  // Frozen during forlorn/beaching: still water is the emotional beat.
+  if (waterMesh && waterMesh.geometry && gameState3 === 'playing') {
     var wPos = waterMesh.geometry.attributes.position;
     // Slowed to 0.008 base rate (was 0.013) for calmer motion
     var wt   = frameN * 0.008;
@@ -5837,14 +6298,15 @@ function updateVisuals3() {
     wPos.needsUpdate = true;
   }
 
-  // Scroll water texture downstream -- slowed to 0.0008 (was 0.0022) for subtle flow
-  if (waterMesh && waterMesh.material && waterMesh.material.map) {
-    waterMesh.material.map.offset.y -= 0.0008;
-  }
-
-  // Scroll riverbed texture at the same rate so it visually matches the water
-  if (riverbedTexRef) {
-    riverbedTexRef.offset.y -= 0.0008;
+  // Scroll water + riverbed textures only while playing — stop during beaching/forlorn so the
+  // world is completely still when the kayaker lies beached. Stillness is the moment.
+  if (gameState3 === 'playing') {
+    if (waterMesh && waterMesh.material && waterMesh.material.map) {
+      waterMesh.material.map.offset.y -= 0.0008;
+    }
+    if (riverbedTexRef) {
+      riverbedTexRef.offset.y -= 0.0008;
+    }
   }
 
   // Far-plane UV scroll removed: all stages now use the geometric ground chain (groundChain3)
@@ -5873,7 +6335,7 @@ function updateVisuals3() {
 
   // Scroll Stage 4 pebble floor textures toward player, tied to curSpd3 so they match world movement.
   // With repeat.y = gndZ / GROUND_TEX_WORLD on a gndZ-deep plane, 1 world unit = 1/GROUND_TEX_WORLD UV.
-  if (floorMats4.length > 0) {
+  if (floorMats4.length > 0 && gameState3 === 'playing') {
     var floorDelta = curSpd3 / GROUND_TEX_WORLD * WALL4_FLOOR_SCROLL_MULT;
     for (var f4i = 0; f4i < floorMats4.length; f4i++) {
       floorMats4[f4i].offset.y -= floorDelta;
@@ -5882,9 +6344,9 @@ function updateVisuals3() {
 
   // Stage 4 rock wall: z-scrolled via canyonFillSegs4 pool above; no UV animation here.
 
-  // Drift clouds slowly downstream; loop back to the far end when they pass the threshold.
+  // Drift backdrop clouds only while playing — freeze during beaching/forlorn for stillness.
   // Scale grows from CLOUD_START_SCALE to CLOUD_END_SCALE as z travels -96 -> -38.
-  for (var ci = 0; ci < clouds3.length; ci++) {
+  if (gameState3 === 'playing') for (var ci = 0; ci < clouds3.length; ci++) {
     clouds3[ci].position.z += clouds3[ci].userData.spd;
     if (clouds3[ci].position.z > -38) clouds3[ci].position.z = -96;
     var ct = (clouds3[ci].position.z + 96) / 58;
@@ -5895,7 +6357,7 @@ function updateVisuals3() {
   }
 
   // Scroll waterfall strips downward; each strip loops to the top when it exits the base.
-  if (wfStrips.length > 0) {
+  if (wfStrips.length > 0 && gameState3 === 'playing') {
     var wfBd = STAGES3[stageIdx].backdrop;
     if (wfBd && wfBd.wf) {
       var wfCfg     = wfBd.wf;
@@ -6427,6 +6889,10 @@ function startEnding3() {
   if (gameState3 === 'ending1' || gameState3 === 'ending2' || gameState3 === 'forlorn') return;
   if (score3 > highScore3) { highScore3 = Math.floor(score3); localStorage.setItem('krr3d_hs', highScore3); }
   document.getElementById('hud3').classList.remove('visible');
+  // Hard-zero speed so all scroll code that reads curSpd3 stops immediately,
+  // regardless of which path (decel-beach or direct mile-165) landed here.
+  curSpd3 = 0;
+  endingSpeedMult = 0;
   _forlornStartMs = Date.now();
   _forlornTipDone = false;
   gameState3 = 'forlorn';
@@ -6890,10 +7356,10 @@ window.addEventListener('keydown', e => {
           var _pptTX = _ppt.side * (_ppRw / 2 + POPPY_BANK_OFF);
           _ppt.sprite.position.x = _pptTX + (0.5 - _ppt.tuftU) * POPPY_W;
           _ppt.sprite.position.y = POPPY_SEAT_Y;
-          _ppt.sprite.scale.set(POPPY_W, 0.53 * POPPY_W, 1);
+          _ppt.sprite.scale.set(POPPY_W, 0.7305 * POPPY_W, 1);
           if (_ppt.glow && !_ppt.picked) {
             var _pptBX = _pptTX + (_ppt.bloomU - _ppt.tuftU) * POPPY_W;
-            var _pptBY = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
+            var _pptBY = POPPY_SEAT_Y + 0.86 * 0.7305 * POPPY_W;
             _ppt.glow.position.set(_pptBX, _pptBY, _ppt.z);
             _ppt.glow.scale.setScalar(POPPY_GLOW_SCALE * POPPY_W);
           }
@@ -6910,7 +7376,7 @@ window.addEventListener('keydown', e => {
       POPPY_SEAT_Y = Math.max(0, +(POPPY_SEAT_Y - 0.05).toFixed(2));
       for (var _syti = 0; _syti < bankPoppies3.length; _syti++) {
         bankPoppies3[_syti].sprite.position.y = POPPY_SEAT_Y;
-        if (bankPoppies3[_syti].glow && !bankPoppies3[_syti].picked) bankPoppies3[_syti].glow.position.y = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
+        if (bankPoppies3[_syti].glow && !bankPoppies3[_syti].picked) bankPoppies3[_syti].glow.position.y = POPPY_SEAT_Y + 0.86 * 0.7305 * POPPY_W;
       }
       console.log('[KRR POPPY] seatY=' + POPPY_SEAT_Y.toFixed(2));
     }
@@ -6919,7 +7385,7 @@ window.addEventListener('keydown', e => {
       POPPY_SEAT_Y = +(POPPY_SEAT_Y + 0.05).toFixed(2);
       for (var _syti2 = 0; _syti2 < bankPoppies3.length; _syti2++) {
         bankPoppies3[_syti2].sprite.position.y = POPPY_SEAT_Y;
-        if (bankPoppies3[_syti2].glow && !bankPoppies3[_syti2].picked) bankPoppies3[_syti2].glow.position.y = POPPY_SEAT_Y + 0.86 * 0.53 * POPPY_W;
+        if (bankPoppies3[_syti2].glow && !bankPoppies3[_syti2].picked) bankPoppies3[_syti2].glow.position.y = POPPY_SEAT_Y + 0.86 * 0.7305 * POPPY_W;
       }
       console.log('[KRR POPPY] seatY=' + POPPY_SEAT_Y.toFixed(2));
     }
@@ -7208,16 +7674,19 @@ window.addEventListener('keydown', e => {
   if (e.key === 'E' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); BILLBOARD_GAP_MIN += 5; console.log('[KRR BILLBOARD] scale=' + BILLBOARD_SCALE + ' gap_min=' + BILLBOARD_GAP_MIN); }
   // ===== END BILLBOARD TUNER =====
 
-  // ===== CLOUD SHADOW / SUN BREAK TUNER =====
-  // Ctrl+Shift+1/2 = CLOUD_SHADOW_OPACITY -/+0.01
-  // Ctrl+Shift+3/4 = CLOUD_SUN_OPACITY    -/+0.005
-  // Ctrl+Shift+5/6 = CLOUD_DRIFT_SPEED    -/+0.1  (live)
-  if (e.key === '1' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_SHADOW_OPACITY = Math.max(0, +(CLOUD_SHADOW_OPACITY - 0.01).toFixed(3)); console.log('[KRR CLOUD] shadow=' + CLOUD_SHADOW_OPACITY + ' sun=' + CLOUD_SUN_OPACITY + ' speed=' + CLOUD_DRIFT_SPEED); }
-  if (e.key === '2' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_SHADOW_OPACITY = Math.min(0.5, +(CLOUD_SHADOW_OPACITY + 0.01).toFixed(3)); console.log('[KRR CLOUD] shadow=' + CLOUD_SHADOW_OPACITY + ' sun=' + CLOUD_SUN_OPACITY + ' speed=' + CLOUD_DRIFT_SPEED); }
-  if (e.key === '3' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_SUN_OPACITY    = Math.max(0, +(CLOUD_SUN_OPACITY    - 0.005).toFixed(3)); console.log('[KRR CLOUD] shadow=' + CLOUD_SHADOW_OPACITY + ' sun=' + CLOUD_SUN_OPACITY + ' speed=' + CLOUD_DRIFT_SPEED); }
-  if (e.key === '4' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_SUN_OPACITY    = Math.min(0.3, +(CLOUD_SUN_OPACITY   + 0.005).toFixed(3)); console.log('[KRR CLOUD] shadow=' + CLOUD_SHADOW_OPACITY + ' sun=' + CLOUD_SUN_OPACITY + ' speed=' + CLOUD_DRIFT_SPEED); }
-  if (e.key === '5' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_DRIFT_SPEED    = Math.max(0, +(CLOUD_DRIFT_SPEED    - 0.10).toFixed(2)); console.log('[KRR CLOUD] shadow=' + CLOUD_SHADOW_OPACITY + ' sun=' + CLOUD_SUN_OPACITY + ' speed=' + CLOUD_DRIFT_SPEED); }
-  if (e.key === '6' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_DRIFT_SPEED    = +(CLOUD_DRIFT_SPEED                + 0.10).toFixed(2); console.log('[KRR CLOUD] shadow=' + CLOUD_SHADOW_OPACITY + ' sun=' + CLOUD_SUN_OPACITY + ' speed=' + CLOUD_DRIFT_SPEED); }
+  // ===== CREPUSCULAR RAY / CLOUD SHADOW TUNER =====
+  // Ctrl+Shift+1/2 = CLOUD_SHADOW_OPACITY -/+0.02
+  // Ctrl+Shift+3/4 = CLOUD_SHADOW_SIZE    -/+10 wu  (takes effect on next buildWorld/reload)
+  // Ctrl+Shift+5/6 = CLOUD_DRIFT_SPEED    -/+0.05 wu/s (live)
+  // Alt+q/w = CLOUD_SHADOW_SIZE -10/+10   Alt+e/r = RAY_SHAFT_OPACITY -0.01/+0.01
+  // Alt+a/s = RAY_POOL_OPACITY -0.01/+0.01   Alt+d/f = RAY_TILT -0.02/+0.02 (live on next drift tick)
+  // Alt+z/x = RAY_SHAFT_W -1/+1   Alt+c/v = RAY_SHAFT_H -5/+5
+  if (e.key === '1' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_SHADOW_OPACITY = Math.max(0, +(CLOUD_SHADOW_OPACITY - 0.02).toFixed(3)); console.log('[KRR CREP] shadowOp=' + CLOUD_SHADOW_OPACITY + ' size=' + CLOUD_SHADOW_SIZE + ' drift=' + CLOUD_DRIFT_SPEED); }
+  if (e.key === '2' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_SHADOW_OPACITY = Math.min(0.9, +(CLOUD_SHADOW_OPACITY + 0.02).toFixed(3)); console.log('[KRR CREP] shadowOp=' + CLOUD_SHADOW_OPACITY + ' size=' + CLOUD_SHADOW_SIZE + ' drift=' + CLOUD_DRIFT_SPEED); }
+  if (e.key === '3' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_SHADOW_SIZE = Math.max(10, CLOUD_SHADOW_SIZE - 10); console.log('[KRR CREP] shadowOp=' + CLOUD_SHADOW_OPACITY + ' size=' + CLOUD_SHADOW_SIZE + ' drift=' + CLOUD_DRIFT_SPEED); }
+  if (e.key === '4' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_SHADOW_SIZE += 10; console.log('[KRR CREP] shadowOp=' + CLOUD_SHADOW_OPACITY + ' size=' + CLOUD_SHADOW_SIZE + ' drift=' + CLOUD_DRIFT_SPEED); }
+  if (e.key === '5' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_DRIFT_SPEED = Math.max(0, +(CLOUD_DRIFT_SPEED - 0.05).toFixed(2)); console.log('[KRR CREP] shadowOp=' + CLOUD_SHADOW_OPACITY + ' size=' + CLOUD_SHADOW_SIZE + ' drift=' + CLOUD_DRIFT_SPEED); }
+  if (e.key === '6' && e.ctrlKey && e.shiftKey) { e.preventDefault(); CLOUD_DRIFT_SPEED = +(CLOUD_DRIFT_SPEED + 0.05).toFixed(2); console.log('[KRR CREP] shadowOp=' + CLOUD_SHADOW_OPACITY + ' size=' + CLOUD_SHADOW_SIZE + ' drift=' + CLOUD_DRIFT_SPEED); }
   // Ctrl+Shift+7/8 = FISH_OPACITY -/+0.05   Ctrl+Shift+9/0 = FISH_FREQ_MIN ±5s
   if (e.key === '7' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_OPACITY = Math.max(0, +(FISH_OPACITY - 0.05).toFixed(2)); console.log('[KRR WILDLIFE] fish_op=' + FISH_OPACITY + ' fish_freq=' + FISH_FREQ_MIN + '-' + FISH_FREQ_MAX + 's bird_freq=' + BIRD_FREQ_MIN + '-' + BIRD_FREQ_MAX + 's'); }
   if (e.key === '8' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_OPACITY = Math.min(1, +(FISH_OPACITY + 0.05).toFixed(2)); console.log('[KRR WILDLIFE] fish_op=' + FISH_OPACITY + ' fish_freq=' + FISH_FREQ_MIN + '-' + FISH_FREQ_MAX + 's bird_freq=' + BIRD_FREQ_MIN + '-' + BIRD_FREQ_MAX + 's'); }
@@ -7226,6 +7695,19 @@ window.addEventListener('keydown', e => {
   // Ctrl+- / Ctrl+= = BIRD_FREQ_MIN ±5s (no shift needed)
   if (e.key === '-' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); BIRD_FREQ_MIN = Math.max(10, BIRD_FREQ_MIN - 5); BIRD_FREQ_MAX = Math.max(BIRD_FREQ_MIN + 15, BIRD_FREQ_MAX - 5); console.log('[KRR WILDLIFE] bird_freq=' + BIRD_FREQ_MIN + '-' + BIRD_FREQ_MAX + 's'); }
   if (e.key === '=' && e.ctrlKey && !e.shiftKey) { e.preventDefault(); BIRD_FREQ_MIN += 5; BIRD_FREQ_MAX += 5; console.log('[KRR WILDLIFE] bird_freq=' + BIRD_FREQ_MIN + '-' + BIRD_FREQ_MAX + 's'); }
+  // Ctrl+Shift+M/N = BIRD_OPACITY -/+0.05
+  if (e.key === 'M' && e.ctrlKey && e.shiftKey) { e.preventDefault(); BIRD_OPACITY = Math.max(0, +(BIRD_OPACITY - 0.05).toFixed(2)); console.log('[KRR WILDLIFE] bird_op=' + BIRD_OPACITY); }
+  if (e.key === 'N' && e.ctrlKey && e.shiftKey) { e.preventDefault(); BIRD_OPACITY = Math.min(1, +(BIRD_OPACITY + 0.05).toFixed(2)); console.log('[KRR WILDLIFE] bird_op=' + BIRD_OPACITY); }
+  // Ctrl+Shift+G/H = FISH_SCALE -/+0.1   Ctrl+Shift+J/K = FISH_SWIM_SPEED -/+0.25
+  if (e.key === 'G' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_SCALE = Math.max(0.1, +(FISH_SCALE - 0.10).toFixed(2)); if (_troutGroup) _troutGroup.scale.setScalar(FISH_SCALE); console.log('[KRR TROUT] scale=' + FISH_SCALE + ' speed=' + FISH_SWIM_SPEED + ' undulation=' + FISH_UNDULATION_AMP + ' weave=' + FISH_WEAVE_AMT); }
+  if (e.key === 'H' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_SCALE = +(FISH_SCALE + 0.10).toFixed(2);                if (_troutGroup) _troutGroup.scale.setScalar(FISH_SCALE); console.log('[KRR TROUT] scale=' + FISH_SCALE + ' speed=' + FISH_SWIM_SPEED + ' undulation=' + FISH_UNDULATION_AMP + ' weave=' + FISH_WEAVE_AMT); }
+  if (e.key === 'J' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_SWIM_SPEED = Math.max(0.25, +(FISH_SWIM_SPEED - 0.25).toFixed(2)); console.log('[KRR TROUT] scale=' + FISH_SCALE + ' speed=' + FISH_SWIM_SPEED + ' undulation=' + FISH_UNDULATION_AMP + ' weave=' + FISH_WEAVE_AMT); }
+  if (e.key === 'K' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_SWIM_SPEED = +(FISH_SWIM_SPEED + 0.25).toFixed(2);           console.log('[KRR TROUT] scale=' + FISH_SCALE + ' speed=' + FISH_SWIM_SPEED + ' undulation=' + FISH_UNDULATION_AMP + ' weave=' + FISH_WEAVE_AMT); }
+  // Ctrl+Shift+L/; = FISH_UNDULATION_AMP -/+0.1   Ctrl+Shift+B/V = FISH_WEAVE_AMT -/+0.1
+  if (e.key === 'L' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_UNDULATION_AMP = Math.max(0, +(FISH_UNDULATION_AMP - 0.10).toFixed(2)); console.log('[KRR TROUT] scale=' + FISH_SCALE + ' speed=' + FISH_SWIM_SPEED + ' undulation=' + FISH_UNDULATION_AMP + ' weave=' + FISH_WEAVE_AMT); }
+  if ((e.key === ';' || e.key === ':') && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_UNDULATION_AMP = +(FISH_UNDULATION_AMP + 0.10).toFixed(2); console.log('[KRR TROUT] scale=' + FISH_SCALE + ' speed=' + FISH_SWIM_SPEED + ' undulation=' + FISH_UNDULATION_AMP + ' weave=' + FISH_WEAVE_AMT); }
+  if (e.key === 'B' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_WEAVE_AMT = Math.max(0, +(FISH_WEAVE_AMT - 0.10).toFixed(2)); console.log('[KRR TROUT] scale=' + FISH_SCALE + ' speed=' + FISH_SWIM_SPEED + ' undulation=' + FISH_UNDULATION_AMP + ' weave=' + FISH_WEAVE_AMT); }
+  if (e.key === 'V' && e.ctrlKey && e.shiftKey) { e.preventDefault(); FISH_WEAVE_AMT = +(FISH_WEAVE_AMT + 0.10).toFixed(2);           console.log('[KRR TROUT] scale=' + FISH_SCALE + ' speed=' + FISH_SWIM_SPEED + ' undulation=' + FISH_UNDULATION_AMP + ' weave=' + FISH_WEAVE_AMT); }
   // ===== END CLOUD SHADOW TUNER =====
 
   // ===== STORY / ENDING TUNER =====
@@ -7235,6 +7717,43 @@ window.addEventListener('keydown', e => {
   if (e.key === '3' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); STORY_TURN_MS = Math.max(100, STORY_TURN_MS - 50); console.log('[KRR STORY] forlorn_ms=' + ENDING_FORLORN_MS + ' turn_ms=' + STORY_TURN_MS); }
   if (e.key === '4' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); STORY_TURN_MS = Math.min(1200, STORY_TURN_MS + 50); console.log('[KRR STORY] forlorn_ms=' + ENDING_FORLORN_MS + ' turn_ms=' + STORY_TURN_MS); }
   // ===== END STORY / ENDING TUNER =====
+
+  // ===== CREPUSCULAR RAY DETAIL TUNER (Alt+letter) =====
+  // Alt+q/w = CLOUD_SHADOW_SIZE -10/+10   Alt+e/r = RAY_SHAFT_OPACITY -/+0.01
+  // Alt+a/s = RAY_POOL_OPACITY  -/+0.01   Alt+d/f = RAY_TILT -/+0.02 (live)
+  // Alt+z/x = RAY_SHAFT_W -/+1            Alt+c/v = RAY_SHAFT_H -/+5
+  if (e.key === 'q' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); CLOUD_SHADOW_SIZE = Math.max(10, CLOUD_SHADOW_SIZE - 10); console.log('[KRR CREP] size=' + CLOUD_SHADOW_SIZE); }
+  if (e.key === 'w' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); CLOUD_SHADOW_SIZE += 10; console.log('[KRR CREP] size=' + CLOUD_SHADOW_SIZE); }
+  if (e.key === 'e' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); RAY_SHAFT_OPACITY = Math.max(0, +(RAY_SHAFT_OPACITY - 0.01).toFixed(3)); console.log('[KRR CREP] shaftOp=' + RAY_SHAFT_OPACITY + ' poolOp=' + RAY_POOL_OPACITY + ' tilt=' + RAY_TILT.toFixed(2) + ' w=' + RAY_SHAFT_W + ' h=' + RAY_SHAFT_H); }
+  if (e.key === 'r' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); RAY_SHAFT_OPACITY = Math.min(1, +(RAY_SHAFT_OPACITY + 0.01).toFixed(3)); console.log('[KRR CREP] shaftOp=' + RAY_SHAFT_OPACITY + ' poolOp=' + RAY_POOL_OPACITY + ' tilt=' + RAY_TILT.toFixed(2) + ' w=' + RAY_SHAFT_W + ' h=' + RAY_SHAFT_H); }
+  if (e.key === 'a' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); RAY_POOL_OPACITY = Math.max(0, +(RAY_POOL_OPACITY - 0.01).toFixed(3)); console.log('[KRR CREP] shaftOp=' + RAY_SHAFT_OPACITY + ' poolOp=' + RAY_POOL_OPACITY + ' tilt=' + RAY_TILT.toFixed(2) + ' w=' + RAY_SHAFT_W + ' h=' + RAY_SHAFT_H); }
+  if (e.key === 's' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); RAY_POOL_OPACITY = Math.min(1, +(RAY_POOL_OPACITY + 0.01).toFixed(3)); console.log('[KRR CREP] shaftOp=' + RAY_SHAFT_OPACITY + ' poolOp=' + RAY_POOL_OPACITY + ' tilt=' + RAY_TILT.toFixed(2) + ' w=' + RAY_SHAFT_W + ' h=' + RAY_SHAFT_H); }
+  if (e.key === 'd' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); RAY_TILT = Math.max(0, +(RAY_TILT - 0.02).toFixed(3)); for (var _rt = 0; _rt < _rayPairs.length; _rt++) { _rayPairs[_rt].tilt = RAY_TILT * Math.sign(_rayPairs[_rt].tilt || 1); } console.log('[KRR CREP] tilt=' + RAY_TILT.toFixed(3)); }
+  if (e.key === 'f' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); RAY_TILT = +(RAY_TILT + 0.02).toFixed(3); for (var _rt = 0; _rt < _rayPairs.length; _rt++) { _rayPairs[_rt].tilt = RAY_TILT * Math.sign(_rayPairs[_rt].tilt || 1); } console.log('[KRR CREP] tilt=' + RAY_TILT.toFixed(3)); }
+  if (e.key === 'z' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); RAY_SHAFT_W = Math.max(1, RAY_SHAFT_W - 1); for (var _rw = 0; _rw < _rayPairs.length; _rw++) { _rayPairs[_rw].shaft.scale.x = RAY_SHAFT_W; } console.log('[KRR CREP] w=' + RAY_SHAFT_W + ' h=' + RAY_SHAFT_H); }
+  if (e.key === 'x' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); RAY_SHAFT_W++; for (var _rw = 0; _rw < _rayPairs.length; _rw++) { _rayPairs[_rw].shaft.scale.x = RAY_SHAFT_W; } console.log('[KRR CREP] w=' + RAY_SHAFT_W + ' h=' + RAY_SHAFT_H); }
+  if (e.key === 'c' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); RAY_SHAFT_H = Math.max(5, RAY_SHAFT_H - 5); for (var _rh = 0; _rh < _rayPairs.length; _rh++) { _rayPairs[_rh].shaft.scale.y = RAY_SHAFT_H; } console.log('[KRR CREP] w=' + RAY_SHAFT_W + ' h=' + RAY_SHAFT_H); }
+  if (e.key === 'v' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); RAY_SHAFT_H += 5; for (var _rh = 0; _rh < _rayPairs.length; _rh++) { _rayPairs[_rh].shaft.scale.y = RAY_SHAFT_H; } console.log('[KRR CREP] w=' + RAY_SHAFT_W + ' h=' + RAY_SHAFT_H); }
+  // Ctrl+Alt+1/2 = CLOUD_SHADOW_SIZE_STORM -/+10   Ctrl+Alt+3/4 = CLOUD_DESPAWN_Z -/+2
+  // Ctrl+Alt+5/6 = CLOUD_FADEOUT_Z -/+1   (storm size applies to stageIdx 2+3 on shadow recycle)
+  if (e.key === '1' && e.ctrlKey && e.altKey && !e.shiftKey) { e.preventDefault(); CLOUD_SHADOW_SIZE_STORM = Math.max(10, CLOUD_SHADOW_SIZE_STORM - 10); console.log('[KRR CREP STORM] storm_sz=' + CLOUD_SHADOW_SIZE_STORM + ' despawn_z=' + CLOUD_DESPAWN_Z + ' fadeout_z=' + CLOUD_FADEOUT_Z); }
+  if (e.key === '2' && e.ctrlKey && e.altKey && !e.shiftKey) { e.preventDefault(); CLOUD_SHADOW_SIZE_STORM += 10; console.log('[KRR CREP STORM] storm_sz=' + CLOUD_SHADOW_SIZE_STORM + ' despawn_z=' + CLOUD_DESPAWN_Z + ' fadeout_z=' + CLOUD_FADEOUT_Z); }
+  if (e.key === '3' && e.ctrlKey && e.altKey && !e.shiftKey) { e.preventDefault(); CLOUD_DESPAWN_Z = Math.max(10, CLOUD_DESPAWN_Z - 2); console.log('[KRR CREP STORM] storm_sz=' + CLOUD_SHADOW_SIZE_STORM + ' despawn_z=' + CLOUD_DESPAWN_Z + ' fadeout_z=' + CLOUD_FADEOUT_Z); }
+  if (e.key === '4' && e.ctrlKey && e.altKey && !e.shiftKey) { e.preventDefault(); CLOUD_DESPAWN_Z += 2; console.log('[KRR CREP STORM] storm_sz=' + CLOUD_SHADOW_SIZE_STORM + ' despawn_z=' + CLOUD_DESPAWN_Z + ' fadeout_z=' + CLOUD_FADEOUT_Z); }
+  if (e.key === '5' && e.ctrlKey && e.altKey && !e.shiftKey) { e.preventDefault(); CLOUD_FADEOUT_Z = Math.max(-10, CLOUD_FADEOUT_Z - 1); console.log('[KRR CREP STORM] storm_sz=' + CLOUD_SHADOW_SIZE_STORM + ' despawn_z=' + CLOUD_DESPAWN_Z + ' fadeout_z=' + CLOUD_FADEOUT_Z); }
+  if (e.key === '6' && e.ctrlKey && e.altKey && !e.shiftKey) { e.preventDefault(); CLOUD_FADEOUT_Z += 1; console.log('[KRR CREP STORM] storm_sz=' + CLOUD_SHADOW_SIZE_STORM + ' despawn_z=' + CLOUD_DESPAWN_Z + ' fadeout_z=' + CLOUD_FADEOUT_Z); }
+  // ===== END CREPUSCULAR RAY DETAIL TUNER =====
+
+  // ===== TEMP GRASS TUFT TUNER (Stage 5) =====
+  // Alt+5/6 = S5_GRASS_POOL -1/+1   Alt+7/8 = S5_GRASS_W -/+0.05   Alt+9/0 = S5_GRASS_XBAND -/+0.5
+  // Pool count change takes effect on next buildWorld() (stage enter or DEV jump)
+  if (e.key === '5' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_GRASS_POOL = Math.max(1, S5_GRASS_POOL - 1); console.log('[KRR GRASS5] pool=' + S5_GRASS_POOL + ' w=' + S5_GRASS_W.toFixed(2) + ' xband=' + S5_GRASS_XBAND.toFixed(1)); }
+  if (e.key === '6' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_GRASS_POOL++; console.log('[KRR GRASS5] pool=' + S5_GRASS_POOL + ' w=' + S5_GRASS_W.toFixed(2) + ' xband=' + S5_GRASS_XBAND.toFixed(1)); }
+  if (e.key === '7' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_GRASS_W = Math.max(0.10, +(S5_GRASS_W - 0.05).toFixed(2)); console.log('[KRR GRASS5] pool=' + S5_GRASS_POOL + ' w=' + S5_GRASS_W.toFixed(2) + ' xband=' + S5_GRASS_XBAND.toFixed(1)); }
+  if (e.key === '8' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_GRASS_W = +(S5_GRASS_W + 0.05).toFixed(2); console.log('[KRR GRASS5] pool=' + S5_GRASS_POOL + ' w=' + S5_GRASS_W.toFixed(2) + ' xband=' + S5_GRASS_XBAND.toFixed(1)); }
+  if (e.key === '9' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_GRASS_XBAND = Math.max(0.5, +(S5_GRASS_XBAND - 0.5).toFixed(1)); console.log('[KRR GRASS5] pool=' + S5_GRASS_POOL + ' w=' + S5_GRASS_W.toFixed(2) + ' xband=' + S5_GRASS_XBAND.toFixed(1)); }
+  if (e.key === '0' && e.altKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); S5_GRASS_XBAND = +(S5_GRASS_XBAND + 0.5).toFixed(1); console.log('[KRR GRASS5] pool=' + S5_GRASS_POOL + ' w=' + S5_GRASS_W.toFixed(2) + ' xband=' + S5_GRASS_XBAND.toFixed(1)); }
+  // ===== END GRASS TUFT TUNER =====
 
   // ===== SCORE POPUP TUNER =====
   // Shift+F6/F7 = POPUP_FONT_PX -/+2   Shift+F8/F9 = POPUP_RISE -/+0.10

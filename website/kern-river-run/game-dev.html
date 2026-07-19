@@ -21,7 +21,7 @@
     /* ── HUD ── */
     #hud3 {
       position: fixed; top: 0; left: 50%; transform: translateX(-50%);
-      width: min(430px, 100vw); height: 62px;
+      width: min(430px, 100vw); height: 72px;
       background: rgba(11,31,58,0.88);
       font-family: 'Press Start 2P', monospace;
       color: #F5F0E8;
@@ -38,9 +38,9 @@
     .hud3-spc { display: block; }
 
     /* Row 1 left: mile + stage# stacked */
-    #hud3-left { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
-    #hud3-mile     { font-size: 7px; }
-    #hud3-stageNum { font-size: 7px; }
+    #hud3-left { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+    #hud3-mile     { font-size: 11px; }
+    #hud3-stageNum { font-size: 9px; }
 
     /* Row 1 center: stage name, abs-centered within its row */
     #hud3-stage {
@@ -69,9 +69,9 @@
     .hud3-micro { font-size: 5px; color: #C9883A; opacity: 0.65; }
     #hud3-score { color: #C9883A; font-size: 12px; }
     #hud3-best  { color: #C9883A; font-size: 8px; }
-    #hud3-oranges { display: flex; align-items: center; gap: 3px; }
-    #hud3-orange-icon  { width: 14px; height: 14px; image-rendering: pixelated; object-fit: contain; }
-    #hud3-orange-count { color: #F97316; font-size: 10px; }
+    #hud3-oranges { display: flex; align-items: center; gap: 4px; }
+    #hud3-orange-icon  { width: 18px; height: 18px; image-rendering: pixelated; object-fit: contain; }
+    #hud3-orange-count { color: #F97316; font-size: 14px; }
 
     /* ── STAGE TRANSITION FLASH ── */
     #transitionMsg3 {
@@ -320,16 +320,19 @@
 
   <!-- HUD (shown while playing) -->
   <div id="hud3">
-    <!-- Row 1: left=mile+stage# stacked | center=stage name (abs) | right=empty spc -->
+    <!-- Row 1: left=mile+stage# stacked | center=stage name (abs) | right=orange count -->
     <div class="hud3-row">
       <div id="hud3-left">
         <span id="hud3-mile">MILE 0 / 165</span>
         <span id="hud3-stageNum">STAGE 1/5</span>
       </div>
       <span id="hud3-stage">HEADWATERS</span>
-      <div class="hud3-spc"></div>
+      <div id="hud3-oranges">
+        <img id="hud3-orange-icon" src="orange.png?v=13" alt="">
+        <span id="hud3-orange-count">0</span>
+      </div>
     </div>
-    <!-- Row 2: left=empty spc | center=pause (abs) | right=score+best+orange -->
+    <!-- Row 2: left=empty spc | center=pause (abs) | right=score+best -->
     <div class="hud3-row">
       <div class="hud3-spc"></div>
       <button id="btn3-pause">&#10074;&#10074; PAUSE</button>
@@ -343,10 +346,6 @@
             <span class="hud3-micro">BEST</span>
             <span id="hud3-best">0</span>
           </div>
-        </div>
-        <div id="hud3-oranges">
-          <img id="hud3-orange-icon" src="orange.png?v=13" alt="">
-          <span id="hud3-orange-count">0</span>
         </div>
       </div>
     </div>
@@ -486,7 +485,7 @@
         <!-- 3. Poppy + dashed shield ring overlay -->
         <div class="cb-row">
           <div class="cb-icon">
-            <img src="poppy-icon.png?v=13" alt="Poppy" style="width:44px;height:44px;object-fit:contain;">
+            <img src="poppy-icon.png?v=17" alt="Poppy" style="width:44px;height:44px;object-fit:contain;">
             <svg viewBox="0 0 100 110" width="52" height="57" fill="none"
                  style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none;">
               <path d="M50 6 L88 20 V52 C88 80 68 98 50 106 C32 98 12 80 12 52 V20 Z"
