@@ -64,8 +64,8 @@ var CLOUD_SHADOW_COUNT       = 4;     // shadow blob pool count (page reload to 
 var CLOUD_FADEIN_MS          = 3000;  // ms to fade in when spawning (was 5000)
 var CLOUD_DESPAWN_Z          = 28;    // world Z past camera where shadows recycle; Ctrl+Alt+3/4
 var CLOUD_FADEOUT_Z          = 3;     // world Z at which shadow begins fading out; Ctrl+Alt+5/6
-var RAY_SHAFT_OPACITY    = 0.25;  // sun shaft opacity; Alt+e/r (-/+0.01)
-var RAY_POOL_OPACITY     = 0.20;  // ground pool opacity; Alt+a/s (-/+0.01)
+var RAY_SHAFT_OPACITY    = 0.12;  // sun shaft opacity; Alt+e/r (-/+0.01)
+var RAY_POOL_OPACITY     = 0.10;  // ground pool opacity; Alt+a/s (-/+0.01)
 var RAY_SHAFT_W          = 10;    // shaft sprite width wu; Alt+z/x (-/+1)
 var RAY_SHAFT_H          = 48;    // shaft sprite height wu; Alt+c/v (-/+5)
 var RAY_TILT             = 0.22;  // shaft screen-space tilt rad; Alt+d/f (-/+0.02)
@@ -74,8 +74,8 @@ var RAY_COUNT            = 2;     // shaft+pool pair count (page reload to chang
 var FISH_FREQ_MIN  = 5;    // LOUD (prod: 20) — seconds min between fish sightings; Ctrl+Shift+7/8
 var FISH_FREQ_MAX  = 5;    // LOUD (prod: 48)
 var FISH_OPACITY   = 0.80; // LOUD (prod: 0.45) — kept for compat; 3D fish ignore this
-var BIRD_FREQ_MIN  = 5;    // LOUD (prod: 35) — seconds min between bird crossings; Ctrl+-/=
-var BIRD_FREQ_MAX  = 5;    // LOUD (prod: 80)
+var BIRD_FREQ_MIN  = 10;   // LOUD (prod: 35) — seconds min between bird crossings; Ctrl+-/=
+var BIRD_FREQ_MAX  = 10;   // LOUD (prod: 80)
 var BIRD_SPEED     = 4.5;  // wu/s horizontal crossing speed; Ctrl+Shift+M/N
 var BIRD_SCALE     = 2.2;  // overall 3D bird scale wu; tunable
 var BIRD_FLAP_FREQ = 3.8;  // wing-flap cycles/sec; Ctrl+Shift+N/B
@@ -282,7 +282,7 @@ var cloudTexNames = ['cloud-1.png', 'cloud-2.png', 'cloud-3.png'];
   var ldr = new THREE.TextureLoader();
   for (var csi = 0; csi < 3; csi++) {
     (function(idx) {
-      ldr.load('cloud-shadow-' + idx + '.png', function(tex) {
+      ldr.load('cloud-shadow-' + idx + '.png?v=2', function(tex) {
         tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
         tex.generateMipmaps = false; tex.needsUpdate = true;
         _shadowTexArr[idx] = tex;
@@ -296,7 +296,7 @@ var cloudTexNames = ['cloud-1.png', 'cloud-2.png', 'cloud-3.png'];
       }, undefined, function(e) { console.error('[KRR] cloud-shadow-' + idx + '.png FAILED', e); });
     })(csi);
   }
-  ldr.load('sun-ray.png', function(tex) {
+  ldr.load('sun-ray.png?v=2', function(tex) {
     tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
     tex.generateMipmaps = false; tex.needsUpdate = true;
     _sunRayTex = tex;
@@ -314,6 +314,29 @@ var cloudTexNames = ['cloud-1.png', 'cloud-2.png', 'cloud-3.png'];
       if (!_rayPairs[ri].poolMat.map) { _rayPairs[ri].poolMat.map = tex; _rayPairs[ri].poolMat.needsUpdate = true; }
     }
   }, undefined, function(e) { console.error('[KRR] sun-pool.png FAILED', e); });
+})();
+
+// Water FX textures: ripple ring, bubble cluster, current streak
+var fxRippleTex  = null;
+var fxBubbleTex  = null;
+var fxCurrentTex = null;
+(function() {
+  var ldr = new THREE.TextureLoader();
+  ldr.load('fx-ripple.png', function(tex) {
+    tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    fxRippleTex = tex;
+  }, undefined, function(e) { console.warn('[KRR WFX] fx-ripple.png failed', e); });
+  ldr.load('fx-bubble.png', function(tex) {
+    tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    fxBubbleTex = tex;
+  }, undefined, function(e) { console.warn('[KRR WFX] fx-bubble.png failed', e); });
+  ldr.load('fx-current.png', function(tex) {
+    tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    fxCurrentTex = tex;
+  }, undefined, function(e) { console.warn('[KRR WFX] fx-current.png failed', e); });
 })();
 
 // Trout sprite swim frames (top-down PNG art, 3 frames: trout-0/1/2.png)
@@ -467,8 +490,16 @@ var gndPlaneMat    = null; // current ground plane material (any stage); updated
 let bankStumps5    = [];  // Stage 5 tree-stump sprite pool
 let bankFarms5     = [];  // Stage 5 farm-house sprite pool (farm-house-1 and farm-house-2)
 let bankFishing5   = [];  // Stage 5 fishing-supplies sprite pool
+let bankGrassTufts1    = []; // Stage 1 grass tuft scatter pool (far ground)
+let bankGrassTufts1Top = []; // Stage 1 grass tuft scatter pool (bank top surface)
+let bankGrassTufts3    = []; // Stage 3 grass tuft scatter pool (far ground)
+let bankGrassTufts3Top = []; // Stage 3 grass tuft scatter pool (bank top surface)
 let bankGrassTufts5    = []; // Stage 5 grass tuft scatter pool (far ground)
 let bankGrassTufts5Top = []; // Stage 5 grass tuft scatter pool (bank top surface)
+let wfxPool = [];             // Water FX sprite pool (ripple/bubble/current, all stages)
+var _wfxRippleTimer  = 0;    // frames until next ripple spawn
+var _wfxBubbleTimer  = 0;    // frames until next bubble spawn
+var _wfxCurrentTimer = 0;    // frames until next current-line spawn
 let sparkles3         = [];   // Part 2: water sparkle glints (rebuilt each buildWorld)
 let kayakTurnY3       = 0;    // Polish 3: lane-change tilt angle (radians)
 let kayakWasSpinning3 = false; // Polish 3: spinout-exit guard for smooth rotation handoff
@@ -762,7 +793,7 @@ var billboardNatAR = [512/303, 512/351, 512/345];
 // Stage 3 grass texture for bank ground and bank-box surfaces
 var grassStage3Tex = null;
 (function preloadGrass3Tex() {
-  new THREE.TextureLoader().load('grass-stage3.png', function(tex) {
+  new THREE.TextureLoader().load('grass-stage3.png?v=2', function(tex) {
     tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
     tex.generateMipmaps = false; tex.needsUpdate = true;
@@ -831,7 +862,10 @@ var lakeHouseTexNames = ['lake-house-1.png', 'lake-house-2.png', 'lake-house-3.p
 var stumpTex5    = null;
 var farmTex5     = [null, null];   // index 0 = farm-house-1, index 1 = farm-house-2
 var fishingTex5  = null;
+var grassTuftTex1 = null;
+var grassTuftTex3 = null;
 var grassTuftTex5 = null;
+var GRASS_TEX_BY_STAGE = { 1: null, 3: null, 5: null };
 
 (function() {
   var ldr = new THREE.TextureLoader();
@@ -915,6 +949,7 @@ var grassTuftTex5 = null;
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
     tex.generateMipmaps = false; tex.needsUpdate = true;
     grassTuftTex5 = tex;
+    GRASS_TEX_BY_STAGE[5] = tex;
     tex._padFrac = _computePadFrac(tex);
     _recordPadFrac('grass-stage5.png', tex._padFrac);
     if (tex.image && tex.image.naturalHeight > 0) {
@@ -929,6 +964,62 @@ var grassTuftTex5 = null;
       }
     }
   }, undefined, function(e) { console.error('[KRR] grass-stage5.png FAILED', e); });
+})();
+
+// Stage 1 grass tuft scatter texture (Headwaters bank)
+(function() {
+  new THREE.TextureLoader().load('grass-stage1.png?v=2', function(tex) {
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    grassTuftTex1 = tex;
+    GRASS_TEX_BY_STAGE[1] = tex;
+    tex._padFrac = _computePadFrac(tex);
+    _recordPadFrac('grass-stage1.png', tex._padFrac);
+    if (tex.image && tex.image.naturalHeight > 0) {
+      var natW1 = tex.image.naturalWidth, natH1 = tex.image.naturalHeight;
+      var natAR1 = natH1 / natW1;
+      console.log('[KRR S1DECO] grass-stage1 ' + natW1 + 'x' + natH1 + ' ar=' + natAR1.toFixed(3));
+      var _s1Pools = [bankGrassTufts1, bankGrassTufts1Top];
+      for (var _pi = 0; _pi < _s1Pools.length; _pi++) {
+        var _pool1 = _s1Pools[_pi];
+        for (var i = 0; i < _pool1.length; i++) {
+          var bgt1 = _pool1[i];
+          bgt1.ar = natAR1;
+          bgt1.sprite.material.map = tex; bgt1.sprite.material.needsUpdate = true;
+          bgt1.sprite.scale.set(S5_GRASS_W * bgt1.scaleMult, S5_GRASS_W * natAR1 * bgt1.scaleMult, 1);
+          bgt1.sprite.center.set(0.5, _effectivePadFrac(tex._padFrac));
+        }
+      }
+    }
+  }, undefined, function(e) { console.error('[KRR] grass-stage1.png FAILED', e); });
+})();
+
+// Stage 3 grass tuft scatter texture (Lake Isabella bank)
+(function() {
+  new THREE.TextureLoader().load('grass-stage3-tuft.png', function(tex) {
+    tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false; tex.needsUpdate = true;
+    grassTuftTex3 = tex;
+    GRASS_TEX_BY_STAGE[3] = tex;
+    tex._padFrac = _computePadFrac(tex);
+    _recordPadFrac('grass-stage3-tuft.png', tex._padFrac);
+    if (tex.image && tex.image.naturalHeight > 0) {
+      var natW3 = tex.image.naturalWidth, natH3 = tex.image.naturalHeight;
+      var natAR3 = natH3 / natW3;
+      console.log('[KRR S3DECO] grass-stage3-tuft ' + natW3 + 'x' + natH3 + ' ar=' + natAR3.toFixed(3));
+      var _s3Pools = [bankGrassTufts3, bankGrassTufts3Top];
+      for (var _pi3 = 0; _pi3 < _s3Pools.length; _pi3++) {
+        var _pool3 = _s3Pools[_pi3];
+        for (var i3 = 0; i3 < _pool3.length; i3++) {
+          var bgt3 = _pool3[i3];
+          bgt3.ar = natAR3;
+          bgt3.sprite.material.map = tex; bgt3.sprite.material.needsUpdate = true;
+          bgt3.sprite.scale.set(S5_GRASS_W * bgt3.scaleMult, S5_GRASS_W * natAR3 * bgt3.scaleMult, 1);
+          bgt3.sprite.center.set(0.5, _effectivePadFrac(tex._padFrac));
+        }
+      }
+    }
+  }, undefined, function(e) { console.error('[KRR] grass-stage3-tuft.png FAILED', e); });
 })();
 
 // Stage 5 in-water obstacle textures (shopping cart art)
@@ -1265,6 +1356,14 @@ function buildWorld() {
   bankFarms5 = [];
   bankFishing5.forEach(function(b5) { scene.remove(b5.sprite); if (b5.sprite.material) b5.sprite.material.dispose(); });
   bankFishing5 = [];
+  bankGrassTufts1.forEach(function(bg1) { scene.remove(bg1.sprite); if (bg1.sprite.material) bg1.sprite.material.dispose(); });
+  bankGrassTufts1 = [];
+  bankGrassTufts1Top.forEach(function(bt1) { scene.remove(bt1.sprite); if (bt1.sprite.material) bt1.sprite.material.dispose(); });
+  bankGrassTufts1Top = [];
+  bankGrassTufts3.forEach(function(bg3) { scene.remove(bg3.sprite); if (bg3.sprite.material) bg3.sprite.material.dispose(); });
+  bankGrassTufts3 = [];
+  bankGrassTufts3Top.forEach(function(bt3) { scene.remove(bt3.sprite); if (bt3.sprite.material) bt3.sprite.material.dispose(); });
+  bankGrassTufts3Top = [];
   bankGrassTufts5.forEach(function(bg5) { scene.remove(bg5.sprite); if (bg5.sprite.material) bg5.sprite.material.dispose(); });
   bankGrassTufts5 = [];
   bankGrassTufts5Top.forEach(function(bt5) { scene.remove(bt5.sprite); if (bt5.sprite.material) bt5.sprite.material.dispose(); });
@@ -1294,6 +1393,7 @@ function buildWorld() {
   // Stage 5 backdrop persists through sub-narrow rebuilds; only tear down on actual stage change
   if (backdropMesh && !(stageIdx === 4 && stageBackdropMesh !== null)) { scene.remove(backdropMesh); backdropMesh.geometry.dispose(); backdropMesh = null; stageBackdropMesh = null; }
   if (wfGroup)      { scene.remove(wfGroup); wfGroup = null; wfStrips = []; }
+  teardownWaterFX();
 
   const stg = STAGES3[stageIdx];
   // Per-stage sky: Stage 5 gets a dusty haze tone; all others restore the standard sky blue
@@ -1675,8 +1775,23 @@ function buildWorld() {
   if (stg.backdrop && stg.num === 5) { initBankTrees3(rw, stg.backdrop, S5_TREE_COUNT); initBankBoulders3(rw, S5_BOULDER_COUNT); }
   if (stg.backdrop && stg.num === 3) { initBankTrees3(rw, stg.backdrop, STAGE3_TREE_COUNT); }
   if (stg.num === 2) { initStage2RockyShores(rw); }
-  else if (stg.num === 3) { initBankBoulders3(rw, STAGE3_BOULDER_COUNT); initBankHouses3(rw); }
+  else if (stg.num === 3) {
+    initBankBoulders3(rw, STAGE3_BOULDER_COUNT); initBankHouses3(rw);
+    _initFarGroundGrass(rw, grassTuftTex3, bankGrassTufts3, S1_GRASS_POOL);
+    _initBankTopGrass(rw, grassTuftTex3, bankGrassTufts3Top, S1_GRASS_BANK_POOL);
+  }
   if (stg.num === 5) { initBankDecor5(rw); }
+  if (stg.num === 1) {
+    initBankBoulders3(rw, STAGE1_BOULDER_COUNT);
+    _initFarGroundGrass(rw, grassTuftTex1, bankGrassTufts1, S1_GRASS_POOL);
+    _initBankTopGrass(rw, grassTuftTex1, bankGrassTufts1Top, S1_GRASS_BANK_POOL);
+    var _s1gl = bankGrassTufts1.filter(function(g) { return g.side === -1; }).length;
+    var _s1gr = bankGrassTufts1.length - _s1gl;
+    var _s1bl = bankGrassTufts1Top.filter(function(g) { return g.side === -1; }).length;
+    var _s1br = bankGrassTufts1Top.length - _s1bl;
+    console.log('[KRR S1GRASS] far-ground=' + bankGrassTufts1.length + ' (L=' + _s1gl + ' R=' + _s1gr + ')' +
+      '  bank-top=' + bankGrassTufts1Top.length + ' (L=' + _s1bl + ' R=' + _s1br + ')');
+  }
   else if (stg.num === 4) {
     initCanyonWalls4(rw);
     initCanyonFillPool4(riverGroup, rw);
@@ -1686,6 +1801,7 @@ function buildWorld() {
   if (stageIdx !== 1 && stageIdx !== 3) { initBankPoppies3(rw); }
   if (BILLBOARD_STAGES.indexOf(STAGES3[stageIdx].num) !== -1) { initBankBillboards3(rw); }
   applyRiverWidth();
+  initWaterFX();
 
   // Part 1: Current flow streaks -- z-aligned lines above the water surface (y=0.16).
   // Each streak is a short segment at a random x position with a slight downstream drift,
@@ -1820,8 +1936,10 @@ var S5_FARMHOUSE_SEAT_Y = -3.23; // bottom anchor Y; seats building base at GROU
 var BANK_BLDG_SEAT_Y   = 0.60;  // bank top Y reference (bank box height=0.60, center 0.30); reserved for decor that sits ON the bank, not the far ground
 var S5_FISHING_SCALE   = 3.50;  // 2.0 base x 2.5 x 0.7
 var S5_GRASS_W        = 0.60;  // grass tuft width wu; Alt+7/8 to tune (-/+0.05)
-var S5_GRASS_POOL     = 120;   // ground scatter pool count (2-3× original 50); Alt+5/6 to tune
-var S5_GRASS_BANK_POOL = 40;   // bank-top scatter pool count (page reload to change)
+var S5_GRASS_POOL     = 180;   // ground scatter pool count (+50% from 120); Alt+5/6 to tune
+var S5_GRASS_BANK_POOL = 60;   // bank-top scatter pool count (+50% from 40; page reload to change)
+var S1_GRASS_POOL      = 130;  // stage 1 far-ground scatter (slightly sparser than stage 5)
+var S1_GRASS_BANK_POOL = 16;   // stage 1 bank-top: sparse tufts, not a carpet
 var S5_GRASS_XBAND    = 8.0;   // scatter band width wu from bank apron edge; Alt+9/0 to tune
 var S5_BANK_SEAT_Y    = 0.62;  // Y for sprites on bank-top surface (bank segs at y=0.30 + half-h=0.30)
 var S5_CART_SEAT_Y     = -0.20;  // bottom anchor Y; sinks lower ~third of cart below water surface (y=0.15)
@@ -2019,6 +2137,7 @@ function makeBankTreeSprite(variety, h) {
 }
 
 var STAGE1_TREE_COUNT    = 64;   // bank tree pool for stage 1; requires stage reload to apply
+var STAGE1_BOULDER_COUNT = 12;   // bank boulder pool for stage 1; low-moderate scatter
 var STAGE3_TREE_COUNT    = 42;   // tune to thin or thicken Stage 3 bank trees; requires stage reload
 var TREE_XOFF_BIAS       = 0.50; // exponent for tree xOff: 0.5=strongly outward, 1.0=uniform; Ctrl+Shift+B/H
 var STAGE3_BOULDER_COUNT = 11;   // sparser than trees by design; tune separately
@@ -2370,6 +2489,164 @@ function initBankHouses3(rw) {
   }
 }
 
+// Shared far-ground grass scatter — used by any stage in GRASS_TEX_BY_STAGE.
+// Stores natural aspect ratio (ar = h/w) in each pool entry so the recycle
+// loop can restore correct proportions per stage.
+function _initFarGroundGrass(rw, stageTex, pool, count) {
+  var zSpan = Math.abs(SPAWN_Z) + DESPAWN_Z; // -65 to +9: full visible range, none past despawn
+  var natAR = (stageTex && stageTex.image && stageTex.image.naturalHeight > 0)
+    ? stageTex.image.naturalHeight / stageTex.image.naturalWidth
+    : 0.621; // fallback (stage-5 ratio) until texture loads
+  for (var gti = 0; gti < count; gti++) {
+    var gtSide = Math.random() < 0.5 ? -1 : 1;
+    var gtMult = 0.85 + Math.random() * 0.30;
+    var gtMat  = stageTex
+      ? new THREE.SpriteMaterial({ map: stageTex, transparent: true, alphaTest: 0.08 })
+      : new THREE.SpriteMaterial({ color: 0x7A9A60, transparent: true, opacity: 0.90 });
+    var gtspr  = new THREE.Sprite(gtMat);
+    gtspr.scale.set(S5_GRASS_W * gtMult, S5_GRASS_W * natAR * gtMult, 1);
+    var gtXOff = 0.5 + Math.random() * S5_GRASS_XBAND;
+    var gtX    = gtSide * (rw / 2 + SHORE_W + gtXOff);
+    var gtZ    = SPAWN_Z + ((gti + Math.random()) / count) * zSpan;
+    gtspr.position.set(gtX, DECOR_SEAT_GND, gtZ);
+    gtspr.center.set(0.5, _effectivePadFrac(stageTex && stageTex._padFrac !== undefined ? stageTex._padFrac : 0));
+    scene.add(gtspr);
+    pool.push({ sprite: gtspr, side: gtSide, z: gtZ, xOff: gtXOff, scaleMult: gtMult, ar: natAR });
+  }
+}
+
+// Shared bank-top grass scatter — narrow strip right beside the water.
+// X is within the bank width: SHORE_W to SHORE_W+3.5 wu from river edge, Y = S5_BANK_SEAT_Y.
+function _initBankTopGrass(rw, stageTex, pool, count) {
+  var zSpan  = Math.abs(SPAWN_Z) + DESPAWN_Z; // -65 to +9: covers full visible range at start
+  var padFrac = stageTex && stageTex._padFrac !== undefined ? stageTex._padFrac : 0;
+  var natAR   = (stageTex && stageTex.image && stageTex.image.naturalHeight > 0)
+    ? stageTex.image.naturalHeight / stageTex.image.naturalWidth
+    : 0.621;
+  for (var bti = 0; bti < count; bti++) {
+    var btSide = Math.random() < 0.5 ? -1 : 1;
+    var btMult = 0.70 + Math.random() * 0.25;
+    var btMat  = stageTex
+      ? new THREE.SpriteMaterial({ map: stageTex, transparent: true, alphaTest: 0.08 })
+      : new THREE.SpriteMaterial({ color: 0x7A9A60, transparent: true, opacity: 0.90 });
+    var btspr  = new THREE.Sprite(btMat);
+    btspr.scale.set(S5_GRASS_W * btMult, S5_GRASS_W * natAR * btMult, 1);
+    btspr.center.set(0.5, _effectivePadFrac(padFrac));
+    var btXOff = SHORE_W + 0.15 + Math.random() * 3.2;
+    var btX    = btSide * (rw / 2 + btXOff);
+    var btZ    = SPAWN_Z + ((bti + Math.random()) / count) * zSpan;
+    btspr.position.set(btX, S5_BANK_SEAT_Y, btZ);
+    scene.add(btspr);
+    pool.push({ sprite: btspr, side: btSide, z: btZ, xOff: btXOff, scaleMult: btMult, ar: natAR });
+  }
+}
+
+// ── WATER FX SYSTEM ──────────────────────────────────────────────────────────
+// Pooled ambient water-surface effects (ripple, bubble, current streak).
+// Active on all stages; sprites sit at y=0.16 (just above water surface at y=0.15).
+// renderOrder 2.2 floats above water (2) without z-fighting.
+
+function teardownWaterFX() {
+  for (var _wi = 0; _wi < wfxPool.length; _wi++) {
+    var _wf = wfxPool[_wi];
+    if (_wf.sprite.parent) scene.remove(_wf.sprite);
+    _wf.mat.dispose();
+  }
+  wfxPool = [];
+  _wfxRippleTimer = 0; _wfxBubbleTimer = 0; _wfxCurrentTimer = 0;
+}
+
+function initWaterFX() {
+  teardownWaterFX();
+  var _types = [
+    { type: 'ripple',  tex: fxRippleTex,  n: 8 },
+    { type: 'bubble',  tex: fxBubbleTex,  n: 8 },
+    { type: 'current', tex: fxCurrentTex, n: 8 },
+  ];
+  for (var _ti = 0; _ti < _types.length; _ti++) {
+    var _td = _types[_ti];
+    for (var _si = 0; _si < _td.n; _si++) {
+      var _wmat = new THREE.SpriteMaterial({
+        map: _td.tex || null, transparent: true, depthWrite: false, opacity: 0,
+      });
+      var _wspr = new THREE.Sprite(_wmat);
+      _wspr.renderOrder = 2.2;
+      _wspr.visible = false;
+      _wspr.position.set(0, 0.16, -100);
+      scene.add(_wspr);
+      wfxPool.push({ sprite: _wspr, mat: _wmat, type: _td.type, active: false, age: 0, life: 1, z: -100, extraSpd: 0 });
+    }
+  }
+  _wfxRippleTimer  = 10 + Math.floor(Math.random() * 40);
+  _wfxBubbleTimer  = 20 + Math.floor(Math.random() * 60);
+  _wfxCurrentTimer = 30 + Math.floor(Math.random() * 80);
+}
+
+function _activateWFX(type) {
+  for (var _ai = 0; _ai < wfxPool.length; _ai++) {
+    var _af = wfxPool[_ai];
+    if (_af.type !== type || _af.active) continue;
+    var _ax = (Math.random() - 0.5) * (rwCur - 0.6);
+    var _az = -30 + Math.random() * 33;
+    _af.z = _az;
+    _af.sprite.position.set(_ax, 0.16, _az);
+    _af.age = 0; _af.active = true; _af.sprite.visible = true;
+    if (type === 'ripple') {
+      _af.life = 96; _af.extraSpd = 0;
+      _af.mat.opacity = 0.35; _af.sprite.scale.set(0.3, 0.3, 1);
+    } else if (type === 'bubble') {
+      _af.life = 60; _af.extraSpd = 0.012;
+      _af.mat.opacity = 0.5; _af.sprite.scale.set(0.3, 0.3, 1);
+    } else {
+      _af.life = 132; _af.extraSpd = 0;
+      _af.mat.opacity = 0; _af.sprite.scale.set(1.6, 0.25, 1);
+    }
+    return;
+  }
+}
+
+function updateWaterFX(spd) {
+  if (!wfxPool.length) return;
+  _wfxRippleTimer--;
+  if (_wfxRippleTimer <= 0) {
+    _activateWFX('ripple');
+    _wfxRippleTimer = 42 + Math.floor(Math.random() * 42);
+  }
+  _wfxBubbleTimer--;
+  if (_wfxBubbleTimer <= 0) {
+    _activateWFX('bubble');
+    if (Math.random() < 0.3) _activateWFX('bubble');
+    _wfxBubbleTimer = 72 + Math.floor(Math.random() * 78);
+  }
+  _wfxCurrentTimer--;
+  if (_wfxCurrentTimer <= 0) {
+    _activateWFX('current');
+    _wfxCurrentTimer = 90 + Math.floor(Math.random() * 90);
+  }
+  for (var _ui = 0; _ui < wfxPool.length; _ui++) {
+    var _uf = wfxPool[_ui];
+    if (!_uf.active) continue;
+    _uf.age++;
+    var _ut = _uf.age / _uf.life;
+    _uf.z += spd + _uf.extraSpd;
+    _uf.sprite.position.z = _uf.z;
+    if (_uf.type === 'ripple') {
+      var _usc = 0.3 + _ut * 1.1;
+      _uf.sprite.scale.set(_usc, _usc, 1);
+      _uf.mat.opacity = 0.35 * (1 - _ut);
+    } else if (_uf.type === 'bubble') {
+      var _bsc = 0.3 + Math.sin(_uf.age * 0.4) * 0.04;
+      _uf.sprite.scale.set(_bsc, _bsc, 1);
+      _uf.mat.opacity = 0.5 * (1 - _ut);
+    } else {
+      _uf.mat.opacity = _ut < 0.5 ? _ut / 0.5 * 0.3 : (1 - _ut) / 0.5 * 0.3;
+    }
+    if (_uf.age >= _uf.life || _uf.z > DESPAWN_Z) {
+      _uf.active = false; _uf.sprite.visible = false; _uf.mat.opacity = 0;
+    }
+  }
+}
+
 // Stage 5 bank decoration: tree stumps, farm houses, fishing supplies.
 // All bottom-anchored (center.y=0), aspect-correct from naturalWidth/naturalHeight,
 // scattered on the banks (either side, outside the play channel), scrolling as a pool.
@@ -2447,46 +2724,11 @@ function initBankDecor5(rw) {
     bankFishing5.push({ sprite: fsspr, side: fsSide, z: fsZ, xOff: fsXOff });
   }
 
-  // Grass tufts (far ground): dense scatter across the full visible ground band on both sides
-  for (var gti = 0; gti < S5_GRASS_POOL; gti++) {
-    var gtTex  = grassTuftTex5;
-    var gtSide = Math.random() < 0.5 ? -1 : 1;
-    var gtMult = 0.85 + Math.random() * 0.30;
-    var gtMat  = gtTex
-      ? new THREE.SpriteMaterial({ map: gtTex, transparent: true, alphaTest: 0.08 })
-      : new THREE.SpriteMaterial({ color: 0x7A9A60, transparent: true, opacity: 0.90 });
-    var gtspr = new THREE.Sprite(gtMat);
-    gtspr.scale.set(S5_GRASS_W * gtMult, S5_GRASS_W * 0.621 * gtMult, 1);
-    var gtXOff = 0.5 + Math.random() * S5_GRASS_XBAND;
-    var gtX = gtSide * (rw / 2 + SHORE_W + gtXOff);
-    var gtZ = SPAWN_Z + (gti / S5_GRASS_POOL) * zSpan;
-    gtspr.position.set(gtX, DECOR_SEAT_GND, gtZ);
-    gtspr.center.set(0.5, _effectivePadFrac(gtTex && gtTex._padFrac !== undefined ? gtTex._padFrac : 0));
-    scene.add(gtspr);
-    bankGrassTufts5.push({ sprite: gtspr, side: gtSide, z: gtZ, xOff: gtXOff, scaleMult: gtMult });
-  }
+  // Grass tufts (far ground): shared helper handles scatter for both stage 1 and stage 5
+  _initFarGroundGrass(rw, grassTuftTex5, bankGrassTufts5, S5_GRASS_POOL);
 
-  // Grass tufts (bank top): small tufts seated on the raised bank surface (Y=0.62)
-  // X is within the bank width: SHORE_W to SHORE_W+3.5 wu from river edge
-  var padFracBT = grassTuftTex5 && grassTuftTex5._padFrac !== undefined ? grassTuftTex5._padFrac : 0;
-  for (var bti = 0; bti < S5_GRASS_BANK_POOL; bti++) {
-    var btTex  = grassTuftTex5;
-    var btSide = Math.random() < 0.5 ? -1 : 1;
-    var btMult = 0.70 + Math.random() * 0.25; // slightly smaller on bank top
-    var btMat  = btTex
-      ? new THREE.SpriteMaterial({ map: btTex, transparent: true, alphaTest: 0.08 })
-      : new THREE.SpriteMaterial({ color: 0x7A9A60, transparent: true, opacity: 0.90 });
-    var btspr = new THREE.Sprite(btMat);
-    btspr.scale.set(S5_GRASS_W * btMult, S5_GRASS_W * 0.621 * btMult, 1);
-    btspr.center.set(0.5, _effectivePadFrac(padFracBT));
-    // xOff: 0.1 to 3.5 wu into the bank surface (bank starts at SHORE_W from river edge)
-    var btXOff = SHORE_W + 0.15 + Math.random() * 3.2;
-    var btX    = btSide * (rw / 2 + btXOff);
-    var btZ    = SPAWN_Z + (bti / S5_GRASS_BANK_POOL) * zSpan;
-    btspr.position.set(btX, S5_BANK_SEAT_Y, btZ);
-    scene.add(btspr);
-    bankGrassTufts5Top.push({ sprite: btspr, side: btSide, z: btZ, xOff: btXOff, scaleMult: btMult });
-  }
+  // Grass tufts (bank top): shared helper, stage 5 texture
+  _initBankTopGrass(rw, grassTuftTex5, bankGrassTufts5Top, S5_GRASS_BANK_POOL);
 
 }
 
@@ -5610,7 +5852,7 @@ function update3() {
     gt5.sprite.position.x = gt5.side * (rwCur / 2 + SHORE_W + gt5.xOff);
     gt5.sprite.position.y = DECOR_SEAT_GND;
     if (gt5.z > DESPAWN_Z + 2) {
-      gt5.z = SPAWN_Z - Math.random() * 8;
+      gt5.z = SPAWN_Z - Math.random() * (74 / bankGrassTufts5.length);
       gt5.side = Math.random() < 0.5 ? -1 : 1;
       gt5.xOff = 0.5 + Math.random() * S5_GRASS_XBAND;
       gt5.scaleMult = 0.85 + Math.random() * 0.30;
@@ -5623,6 +5865,98 @@ function update3() {
       }
     }
   }
+  // Stage 1 far-ground grass: same scroll/recycle pattern as stage 5
+  for (var gt1i = 0; gt1i < bankGrassTufts1.length; gt1i++) {
+    var gt1 = bankGrassTufts1[gt1i];
+    gt1.z += spd; gt1.sprite.position.z = gt1.z;
+    gt1.sprite.position.x = gt1.side * (rwCur / 2 + SHORE_W + gt1.xOff);
+    gt1.sprite.position.y = DECOR_SEAT_GND;
+    if (gt1.z > DESPAWN_Z + 2) {
+      gt1.z = SPAWN_Z - Math.random() * (74 / bankGrassTufts1.length);
+      gt1.side = Math.random() < 0.5 ? -1 : 1;
+      gt1.xOff = 0.5 + Math.random() * S5_GRASS_XBAND;
+      gt1.scaleMult = 0.85 + Math.random() * 0.30;
+      gt1.sprite.position.x = gt1.side * (rwCur / 2 + SHORE_W + gt1.xOff);
+      gt1.sprite.position.z = gt1.z;
+      if (grassTuftTex1) {
+        gt1.ar = grassTuftTex1._padFrac !== undefined
+          ? grassTuftTex1.image.naturalHeight / grassTuftTex1.image.naturalWidth
+          : gt1.ar;
+        gt1.sprite.material.map = grassTuftTex1; gt1.sprite.material.needsUpdate = true;
+        gt1.sprite.scale.set(S5_GRASS_W * gt1.scaleMult, S5_GRASS_W * (gt1.ar || 0.621) * gt1.scaleMult, 1);
+        gt1.sprite.center.set(0.5, _effectivePadFrac(grassTuftTex1._padFrac || 0));
+      }
+    }
+  }
+  // Stage 1 bank-top grass: tufts seated on raised bank surface (headwaters)
+  for (var bt1i = 0; bt1i < bankGrassTufts1Top.length; bt1i++) {
+    var bt1 = bankGrassTufts1Top[bt1i];
+    bt1.z += spd; bt1.sprite.position.z = bt1.z;
+    bt1.sprite.position.x = bt1.side * (rwCur / 2 + bt1.xOff);
+    bt1.sprite.position.y = S5_BANK_SEAT_Y;
+    if (bt1.z > DESPAWN_Z + 2) {
+      bt1.z = SPAWN_Z - Math.random() * (74 / bankGrassTufts1Top.length);
+      bt1.side = Math.random() < 0.5 ? -1 : 1;
+      bt1.xOff = SHORE_W + 0.15 + Math.random() * 3.2;
+      bt1.scaleMult = 0.70 + Math.random() * 0.25;
+      bt1.sprite.position.x = bt1.side * (rwCur / 2 + bt1.xOff);
+      bt1.sprite.position.z = bt1.z;
+      if (grassTuftTex1) {
+        bt1.ar = grassTuftTex1._padFrac !== undefined
+          ? grassTuftTex1.image.naturalHeight / grassTuftTex1.image.naturalWidth
+          : bt1.ar;
+        bt1.sprite.material.map = grassTuftTex1; bt1.sprite.material.needsUpdate = true;
+        bt1.sprite.scale.set(S5_GRASS_W * bt1.scaleMult, S5_GRASS_W * (bt1.ar || 0.644) * bt1.scaleMult, 1);
+        bt1.sprite.center.set(0.5, _effectivePadFrac(grassTuftTex1._padFrac || 0));
+      }
+    }
+  }
+  // Stage 3 far-ground grass
+  for (var gt3i = 0; gt3i < bankGrassTufts3.length; gt3i++) {
+    var gt3 = bankGrassTufts3[gt3i];
+    gt3.z += spd; gt3.sprite.position.z = gt3.z;
+    gt3.sprite.position.x = gt3.side * (rwCur / 2 + SHORE_W + gt3.xOff);
+    gt3.sprite.position.y = DECOR_SEAT_GND;
+    if (gt3.z > DESPAWN_Z + 2) {
+      gt3.z = SPAWN_Z - Math.random() * (74 / bankGrassTufts3.length);
+      gt3.side = Math.random() < 0.5 ? -1 : 1;
+      gt3.xOff = 0.5 + Math.random() * S5_GRASS_XBAND;
+      gt3.scaleMult = 0.85 + Math.random() * 0.30;
+      gt3.sprite.position.x = gt3.side * (rwCur / 2 + SHORE_W + gt3.xOff);
+      gt3.sprite.position.z = gt3.z;
+      if (grassTuftTex3) {
+        gt3.ar = grassTuftTex3._padFrac !== undefined
+          ? grassTuftTex3.image.naturalHeight / grassTuftTex3.image.naturalWidth
+          : gt3.ar;
+        gt3.sprite.material.map = grassTuftTex3; gt3.sprite.material.needsUpdate = true;
+        gt3.sprite.scale.set(S5_GRASS_W * gt3.scaleMult, S5_GRASS_W * (gt3.ar || 0.644) * gt3.scaleMult, 1);
+        gt3.sprite.center.set(0.5, _effectivePadFrac(grassTuftTex3._padFrac || 0));
+      }
+    }
+  }
+  // Stage 3 bank-top grass
+  for (var bt3i = 0; bt3i < bankGrassTufts3Top.length; bt3i++) {
+    var bt3 = bankGrassTufts3Top[bt3i];
+    bt3.z += spd; bt3.sprite.position.z = bt3.z;
+    bt3.sprite.position.x = bt3.side * (rwCur / 2 + bt3.xOff);
+    bt3.sprite.position.y = S5_BANK_SEAT_Y;
+    if (bt3.z > DESPAWN_Z + 2) {
+      bt3.z = SPAWN_Z - Math.random() * (74 / bankGrassTufts3Top.length);
+      bt3.side = Math.random() < 0.5 ? -1 : 1;
+      bt3.xOff = SHORE_W + 0.15 + Math.random() * 3.2;
+      bt3.scaleMult = 0.70 + Math.random() * 0.25;
+      bt3.sprite.position.x = bt3.side * (rwCur / 2 + bt3.xOff);
+      bt3.sprite.position.z = bt3.z;
+      if (grassTuftTex3) {
+        bt3.ar = grassTuftTex3._padFrac !== undefined
+          ? grassTuftTex3.image.naturalHeight / grassTuftTex3.image.naturalWidth
+          : bt3.ar;
+        bt3.sprite.material.map = grassTuftTex3; bt3.sprite.material.needsUpdate = true;
+        bt3.sprite.scale.set(S5_GRASS_W * bt3.scaleMult, S5_GRASS_W * (bt3.ar || 0.644) * bt3.scaleMult, 1);
+        bt3.sprite.center.set(0.5, _effectivePadFrac(grassTuftTex3._padFrac || 0));
+      }
+    }
+  }
   // Stage 5 bank-top grass: same pool pattern but seated on raised bank surface
   for (var bt5i = 0; bt5i < bankGrassTufts5Top.length; bt5i++) {
     var bt5 = bankGrassTufts5Top[bt5i];
@@ -5630,7 +5964,7 @@ function update3() {
     bt5.sprite.position.x = bt5.side * (rwCur / 2 + bt5.xOff);
     bt5.sprite.position.y = S5_BANK_SEAT_Y;
     if (bt5.z > DESPAWN_Z + 2) {
-      bt5.z = SPAWN_Z - Math.random() * 8;
+      bt5.z = SPAWN_Z - Math.random() * (74 / bankGrassTufts5Top.length);
       bt5.side = Math.random() < 0.5 ? -1 : 1;
       bt5.xOff = SHORE_W + 0.15 + Math.random() * 3.2;
       bt5.scaleMult = 0.70 + Math.random() * 0.25;
@@ -5659,6 +5993,7 @@ function update3() {
     }
   }
 
+  updateWaterFX(spd);
   checkCollisions3();
   checkCollectibles3();
   checkBankPoppies3();
@@ -6784,8 +7119,8 @@ function showTitleCard(opts) {
 
 // ── STORY VIEWER ────────────────────────────────────────────────────
 var _STORY_FILES = [
-  'story-0-opening.jpg', 'story-1.jpg', 'story-2.jpg', 'story-3.jpg',
-  'story-4.jpg',         'story-5.jpg', 'story-6-final.jpg'
+  'story-0-opening.jpg', 'story-1.jpg?v=2', 'story-2.jpg?v=2', 'story-3.jpg?v=2',
+  'story-4.jpg?v=2',     'story-5.jpg?v=2', 'story-6-final.jpg'
 ];
 
 function _updateStoryUI() {
@@ -7843,10 +8178,28 @@ canvas3d.addEventListener('touchend', e => {
   else if (dy < -28)                                doJump3();
 }, { passive: false });
 
+// ── CONTROLS3 SCREEN HELPERS ──────────────────────────────────────
+function _controls3KeyHandler() {
+  _hideControls3();
+  document.getElementById('notice3').classList.add('visible');
+}
+function _showControls3() {
+  document.getElementById('controls3').classList.add('visible');
+  document.addEventListener('keydown', _controls3KeyHandler);
+}
+function _hideControls3() {
+  document.getElementById('controls3').classList.remove('visible');
+  document.removeEventListener('keydown', _controls3KeyHandler);
+}
+document.getElementById('controls3').addEventListener('click', function() {
+  _hideControls3();
+  document.getElementById('notice3').classList.add('visible');
+});
+
 // ── BUTTON WIRING ─────────────────────────────────────────────────
 document.getElementById('btn3-start').addEventListener('click', function() {
   document.getElementById('overlay3').classList.add('hidden');
-  document.getElementById('notice3').classList.add('visible');
+  _showControls3();
 });
 document.getElementById('btn3-ready').addEventListener('click', function() {
   document.getElementById('notice3').classList.remove('visible');

@@ -21,57 +21,76 @@
     /* ── HUD ── */
     #hud3 {
       position: fixed; top: 0; left: 50%; transform: translateX(-50%);
-      width: min(430px, 100vw); height: 72px;
-      background: rgba(11,31,58,0.88);
+      width: min(430px, 100vw); height: 78px;
+      background: rgba(11,31,58,0.92);
+      border-bottom: 2px solid rgba(201,136,58,.55);
+      box-shadow: 0 2px 12px rgba(0,0,0,.55);
       font-family: 'Press Start 2P', monospace;
-      color: #F5F0E8;
-      display: none;
-      align-items: center; justify-content: space-between;
-      padding: 0 10px; font-size: 7px;
-      z-index: 10;
-      flex-wrap: wrap; gap: 2px;
+      color: #F5F0E8; font-size: 7px;
+      display: none; padding: 0 12px; z-index: 10;
     }
-    #hud3.visible { display: flex; }
+    #hud3.visible {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center; gap: 6px;
+    }
 
-    /* HUD rows: flex with absolute-centered middle element (same pattern for both rows) */
-    .hud3-row { display: flex; justify-content: space-between; align-items: center; width: 100%; position: relative; }
-    .hud3-spc { display: block; }
+    /* Left zone: mile, stage#, progress bar */
+    #hud3-left  { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+    #hud3-mile     { font-size: 13px; color: #F5F0E8; letter-spacing: 0.04em; }
+    #hud3-stageNum { font-size: 11px; color: #C9883A; }
+    #hud3-progress-track {
+      width: 100px; height: 4px;
+      background: rgba(255,255,255,.14); border-radius: 2px; overflow: hidden;
+    }
+    #hud3-progress-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #C9883A, #F1B24A);
+      border-radius: 2px; transition: width 0.5s ease;
+    }
 
-    /* Row 1 left: mile + stage# stacked */
-    #hud3-left { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-    #hud3-mile     { font-size: 11px; }
-    #hud3-stageNum { font-size: 9px; }
-
-    /* Row 1 center: stage name, abs-centered within its row */
+    /* Center zone: stage-name hero + pause */
+    #hud3-center { display: flex; flex-direction: column; align-items: center; gap: 5px; }
     #hud3-stage {
-      position: absolute; left: 50%; top: 50%;
-      transform: translate(-50%, -50%);
-      color: #C9883A; font-size: 9px; white-space: nowrap;
+      font-size: 15px; color: #F1B24A;
+      letter-spacing: 1.5px; white-space: nowrap;
+      text-shadow: 0 0 7px rgba(241,178,74,.55), 0 2px 0 rgba(0,0,0,.6);
+      animation: stage-glow 2.5s ease-in-out infinite;
     }
-
-    /* Row 2 center: pause button, abs-centered (same pattern as stage name) */
+    /* Flanking CSS diamonds — no font-character dependency */
+    #hud3-stage::before, #hud3-stage::after {
+      content: '';
+      display: inline-block;
+      width: 5px; height: 5px;
+      background: #F1B24A; border-radius: 1px;
+      transform: rotate(45deg); vertical-align: middle; opacity: 0.72;
+    }
+    #hud3-stage::before { margin-right: 8px; }
+    #hud3-stage::after  { margin-left:  8px; }
+    @keyframes stage-glow {
+      0%, 100% { text-shadow: 0 0 7px rgba(241,178,74,.55), 0 2px 0 rgba(0,0,0,.6); }
+      50%       { text-shadow: 0 0 18px rgba(241,178,74,.92), 0 0 32px rgba(241,178,74,.28), 0 2px 0 rgba(0,0,0,.6); }
+    }
     #btn3-pause {
-      position: absolute; left: 50%; top: 50%;
-      transform: translate(-50%, -50%);
       font-family: 'Press Start 2P', monospace;
-      font-size: 7px; color: #F5F0E8;
-      background: rgba(30,58,95,0.70);
-      border: 1px solid rgba(245,240,232,0.35);
-      padding: 4px 8px; cursor: pointer;
-      pointer-events: auto; white-space: nowrap;
+      font-size: 7px; color: rgba(245,240,232,0.78);
+      background: rgba(30,58,95,0.65);
+      border: 1px solid rgba(245,240,232,0.22);
+      padding: 3px 8px; cursor: pointer; white-space: nowrap;
+      transition: background 150ms;
     }
-    #btn3-pause:hover { background: rgba(45,106,79,0.80); }
+    #btn3-pause:hover { background: rgba(45,106,79,0.80); color: #F5F0E8; }
 
-    /* Row 2 right: score-wrap (score+best side-by-side) + orange block */
-    #hud3-right { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
-    #hud3-score-wrap { display: flex; align-items: flex-end; gap: 5px; }
-    #hud3-score-block, #hud3-best-block { display: flex; flex-direction: column; align-items: flex-end; gap: 0px; }
+    /* Right zone: oranges top, score/best bottom */
+    #hud3-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+    #hud3-oranges { display: flex; align-items: center; gap: 5px; }
+    #hud3-orange-icon  { width: 24px; height: 24px; image-rendering: pixelated; object-fit: contain; }
+    #hud3-orange-count { color: #F97316; font-size: 16px; text-shadow: 0 0 8px rgba(249,115,22,.50); }
+    #hud3-score-wrap   { display: flex; align-items: flex-end; gap: 6px; }
+    #hud3-score-block, #hud3-best-block { display: flex; flex-direction: column; align-items: flex-end; gap: 0; }
     .hud3-micro { font-size: 5px; color: #C9883A; opacity: 0.65; }
-    #hud3-score { color: #C9883A; font-size: 12px; }
-    #hud3-best  { color: #C9883A; font-size: 8px; }
-    #hud3-oranges { display: flex; align-items: center; gap: 4px; }
-    #hud3-orange-icon  { width: 18px; height: 18px; image-rendering: pixelated; object-fit: contain; }
-    #hud3-orange-count { color: #F97316; font-size: 14px; }
+    #hud3-score { color: #C9883A; font-size: 13px; }
+    #hud3-best  { color: #C9883A; font-size: 10px; opacity: 0.8; }
 
     /* ── STAGE TRANSITION FLASH ── */
     #transitionMsg3 {
@@ -136,15 +155,137 @@
       background: #C9883A; border-radius: 1px;
     }
 
-    /* ── RIVER RULES NOTICE (clipboard) ── */
+    /* ── FULL-SCREEN IMAGE MENUS ── */
+
+    /* Main menu start screen: let the image drive the size */
+    #screen3-start { width: auto; max-width: 100vw; padding: 0; gap: 0; }
+
+    /* Game-over screen: same image-driven override */
+    #screen3-gameover { width: auto; max-width: 100vw; padding: 0; gap: 0; }
+    /* Title is baked into artwork — keep element in DOM but hide it */
+    #screen3-gameover .go-title3 { display: none; }
+
+
+    /* Stats overlay: compact centered block over the image's bottom strip */
+    .go-stats-wrap {
+      position: absolute;
+      left: 16%; right: 16%; top: 82%;
+      pointer-events: none;
+      display: flex; flex-direction: column; align-items: center;
+      gap: 3px;
+      background: rgba(0,0,0,0.52);
+      border-radius: 6px;
+      padding: 7px 14px 10px;
+    }
+    .go-stats-wrap p {
+      margin: 0; padding: 0; text-align: center;
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(5px, 1.5vw, 7px);
+      color: #D1C9BA; line-height: 1.75;
+    }
+    .go-stats-wrap .go-score3 { color: #C9883A; }
+    .go-stats-wrap .go-best3  { color: #93C5FD; }
+
+    /* Image wrapper: shrinks exactly to the rendered image box */
+    .menu-img-wrap {
+      position: relative; display: inline-block; line-height: 0;
+    }
+    .menu-img-wrap img {
+      display: block; max-width: 100vw; max-height: 100vh; object-fit: contain;
+    }
+
+    /* Hit-area: transparent abs-positioned button, percent-coordinates track image */
+    .hit-area {
+      position: absolute; border: none; cursor: pointer; padding: 0;
+      background: transparent;
+      transition: box-shadow 150ms ease, backdrop-filter 150ms ease;
+    }
+    .hit-area:hover {
+      box-shadow: 0 0 28px 10px rgba(255,214,120,.48), inset 0 0 20px rgba(255,214,120,.20);
+      backdrop-filter: brightness(1.08);
+    }
+
+    /* ── LOGO SHEEN (main menu) ── */
+    /* Hover zone sized to logo band — pointer-events:auto, but buttons (later in DOM) sit on top */
+    .logo-hover-zone {
+      position: absolute;
+      left: 16%; top: 16%; width: 68%; height: 32%;
+      cursor: default;
+    }
+    /* Sheen container: full-wrapper, masked to logo silhouette, blends with screen mode */
+    .logo-sheen {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none;
+      overflow: hidden;
+      mix-blend-mode: screen;
+      -webkit-mask-image: url(logo-mask.png?v=1);
+              mask-image: url(logo-mask.png?v=1);
+      -webkit-mask-size: 100% 100%;
+              mask-size: 100% 100%;
+      mask-repeat: no-repeat;
+      -webkit-mask-repeat: no-repeat;
+      transition: filter 200ms ease;
+    }
+    /* Diagonal sweep glint band */
+    .logo-sheen::before {
+      content: '';
+      position: absolute;
+      top: -20%; left: 0;
+      width: 28%; height: 140%;
+      background: linear-gradient(to right,
+        transparent 0%, rgba(255,255,255,.52) 50%, transparent 100%);
+      transform: translateX(-120%) skewX(-18deg);
+      animation: logo-sweep 5.5s cubic-bezier(0.4,0,0.6,1) infinite;
+    }
+    /* Warm glow overlay — fades in on hover */
+    .logo-sheen::after {
+      content: '';
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at 50% 45%,
+        rgba(255,214,120,.30) 0%, transparent 65%);
+      opacity: 0;
+      transition: opacity 300ms ease;
+    }
+    @keyframes logo-sweep {
+      0%   { transform: translateX(-120%) skewX(-18deg); opacity: 0; }
+      6%   { opacity: 1; }
+      38%  { transform: translateX(500%)  skewX(-18deg); opacity: 1; }
+      46%  { transform: translateX(500%)  skewX(-18deg); opacity: 0; }
+      100% { transform: translateX(-120%) skewX(-18deg); opacity: 0; }
+    }
+    /* On logo hover: brighter sweep + warm glow */
+    .logo-hover-zone:hover ~ .logo-sheen { filter: brightness(1.9); }
+    .logo-hover-zone:hover ~ .logo-sheen::after { opacity: 1; }
+
+    /* Controls screen (new) */
+    #controls3 {
+      position: fixed; inset: 0; z-index: 21;
+      display: none;
+      align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.85);
+    }
+    #controls3.visible { display: flex; }
+
+    /* "CLICK TO CONTINUE" hint — subtle pulse */
+    .controls3-hint {
+      position: absolute; bottom: 5%; left: 50%; transform: translateX(-50%);
+      font-family: 'Press Start 2P', monospace; font-size: 7px;
+      color: rgba(245,240,232,0.85); white-space: nowrap;
+      pointer-events: none;
+      animation: hint-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes hint-pulse {
+      0%, 100% { opacity: 0.3; }
+      50%       { opacity: 1; }
+    }
+
+    /* ── RIVER RULES NOTICE (image) ── */
     #notice3 {
       position: fixed; inset: 0; z-index: 21;
       display: none;
-      flex-direction: column; align-items: center; justify-content: flex-start;
-      padding-top: 14px;
-      overflow-y: auto;
-      /* River landscape backdrop -- stage-1 palette */
-      background: linear-gradient(180deg, #0c2d40 0%, #0f4560 30%, #145e75 60%, #0c3a52 100%);
+      flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.85);
     }
     #notice3.visible { display: flex; }
 
@@ -301,51 +442,41 @@
     }
     .story-controls .btn3 { max-width: 170px; font-size: 8px; padding: 10px 14px; }
 
-    /* ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) ===== */
-    #dev-stage-label {
-      position: fixed; bottom: 8px; left: 50%;
-      transform: translateX(-50%);
-      font-family: 'Press Start 2P', monospace;
-      font-size: 5px; color: #F97316;
-      background: rgba(11,31,58,0.85);
-      padding: 4px 10px; border: 1px solid #F97316;
-      pointer-events: none; z-index: 25;
-      white-space: nowrap;
-    }
-    /* ===== END TEMP DEV STAGE JUMP ===== */
+    #dev-stage-label { display: none; }
   </style>
 </head>
 <body>
   <canvas id="gameCanvas"></canvas>
 
-  <!-- HUD (shown while playing) -->
+  <!-- HUD (shown while playing) — single-row three-zone grid -->
   <div id="hud3">
-    <!-- Row 1: left=mile+stage# stacked | center=stage name (abs) | right=orange count -->
-    <div class="hud3-row">
-      <div id="hud3-left">
-        <span id="hud3-mile">MILE 0 / 165</span>
-        <span id="hud3-stageNum">STAGE 1/5</span>
+    <!-- LEFT: mile · stage# · progress bar -->
+    <div id="hud3-left">
+      <span id="hud3-mile">MILE 0 / 165</span>
+      <span id="hud3-stageNum">STAGE 1/5</span>
+      <div id="hud3-progress-track">
+        <div id="hud3-progress-fill"></div>
       </div>
+    </div>
+    <!-- CENTER: stage name hero · pause -->
+    <div id="hud3-center">
       <span id="hud3-stage">HEADWATERS</span>
+      <button id="btn3-pause">&#10074;&#10074; PAUSE</button>
+    </div>
+    <!-- RIGHT: orange count · score/best -->
+    <div id="hud3-right">
       <div id="hud3-oranges">
         <img id="hud3-orange-icon" src="orange.png?v=13" alt="">
         <span id="hud3-orange-count">0</span>
       </div>
-    </div>
-    <!-- Row 2: left=empty spc | center=pause (abs) | right=score+best -->
-    <div class="hud3-row">
-      <div class="hud3-spc"></div>
-      <button id="btn3-pause">&#10074;&#10074; PAUSE</button>
-      <div id="hud3-right">
-        <div id="hud3-score-wrap">
-          <div id="hud3-score-block">
-            <span class="hud3-micro">SCORE</span>
-            <span id="hud3-score">0</span>
-          </div>
-          <div id="hud3-best-block">
-            <span class="hud3-micro">BEST</span>
-            <span id="hud3-best">0</span>
-          </div>
+      <div id="hud3-score-wrap">
+        <div id="hud3-score-block">
+          <span class="hud3-micro">SCORE</span>
+          <span id="hud3-score">0</span>
+        </div>
+        <div id="hud3-best-block">
+          <span class="hud3-micro">BEST</span>
+          <span id="hud3-best">0</span>
         </div>
       </div>
     </div>
@@ -357,33 +488,39 @@
   <!-- All screens inside one overlay -->
   <div id="overlay3">
 
-    <!-- START SCREEN -->
+    <!-- START SCREEN (main menu image) -->
     <div id="screen3-start" class="screen3 visible">
-      <div class="exp-badge">3D EXPERIMENT</div>
-      <h1>KERN RIVER RUN</h1>
-      <p>Three.js chase camera<br>+ low-poly kayaker</p>
-      <p class="sub">
-        Arrow keys / WASD · Space to jump<br>
-        Swipe + tap on mobile<br>
-        P / Esc to pause
-      </p>
-      <button class="btn3" id="btn3-start">START RUN</button>
-      <button class="btn3 secondary" id="btn3-story">WHERE IS OUR WATER?</button>
-      <p class="sub" style="font-size:5px;color:#4B5563;margin-top:4px">
-        Standalone experiment — original game-2d-backup.html untouched
-      </p>
+      <div class="menu-img-wrap">
+        <img src="main-menu.png?v=2" alt="Main Menu">
+        <!-- Logo sheen: hover zone first (buttons later in DOM sit on top), then sheen layer -->
+        <div class="logo-hover-zone" aria-hidden="true"></div>
+        <div class="logo-sheen" aria-hidden="true"></div>
+        <button class="hit-area" id="btn3-start"
+          style="left:29%;top:47%;width:42%;height:7%"></button>
+        <button class="hit-area" id="btn3-story"
+          style="left:29%;top:54.5%;width:42%;height:6.5%"></button>
+      </div>
     </div>
 
-    <!-- GAME OVER SCREEN -->
+    <!-- GAME OVER SCREEN (run-ended.png artwork) -->
     <div id="screen3-gameover" class="screen3">
-      <h1 class="go-title3">RUN ENDED</h1>
-      <p class="go-stage3">Stage: HEADWATERS</p>
-      <p class="go-mile3">Mile 0 / 165</p>
-      <div class="divider-line"></div>
-      <p class="go-score3 score-line">SCORE 0</p>
-      <p class="go-best3 best-line">BEST 0</p>
-      <button class="btn3" id="btn3-retry">TRY AGAIN</button>
-      <button class="btn3 secondary" id="btn3-menu">MAIN MENU</button>
+      <div class="menu-img-wrap">
+        <img src="run-ended.png?v=1" alt="Run Ended">
+        <!-- Title kept in DOM (showScreen3 sets its text); visual is baked into artwork -->
+        <h1 class="go-title3"></h1>
+        <!-- Hit-area buttons — IDs/handlers unchanged -->
+        <button class="hit-area" id="btn3-retry"
+          style="left:16%;top:64.5%;width:68%;height:8%"></button>
+        <button class="hit-area" id="btn3-menu"
+          style="left:16%;top:72.5%;width:68%;height:8%"></button>
+        <!-- Dynamic stats below the buttons -->
+        <div class="go-stats-wrap">
+          <p class="go-stage3"></p>
+          <p class="go-mile3"></p>
+          <p class="go-score3"></p>
+          <p class="go-best3"></p>
+        </div>
+      </div>
     </div>
 
     <!-- PAUSED SCREEN -->
@@ -453,71 +590,22 @@
     </div>
   </div>
 
-  <!-- RIVER RULES clipboard notice (shown between START RUN and actual game start) -->
+  <!-- RIVER RULES (intro-menu image) -->
   <div id="notice3">
-    <div class="cb-body">
-      <div class="cb-clip"></div>
-      <div class="cb-paper">
-        <div class="cb-header">RIVER RULES</div>
+    <div class="menu-img-wrap">
+      <img src="intro-menu.png?v=1" alt="River Rules">
+      <button class="hit-area" id="btn3-ready"
+        style="left:27%;top:77.5%;width:46%;height:10%"></button>
+    </div>
+  </div>
 
-        <!-- 1. Whirlpool — whirlpool-icon.png: spiral on teal water disc -->
-        <div class="cb-row">
-          <div class="cb-icon">
-            <img src="whirlpool-icon.png" alt="Whirlpool">
-          </div>
-          <div class="cb-text">
-            <b>AVOID WHIRLPOOLS</b>
-            they spin you out and<br>knock oranges loose.
-          </div>
-        </div>
-
-        <!-- 2. Boulder — real game art -->
-        <div class="cb-row">
-          <div class="cb-icon">
-            <img src="boulder-2.png" alt="Boulder">
-          </div>
-          <div class="cb-text">
-            <b>AVOID BOULDERS</b>
-            steer around them.
-          </div>
-        </div>
-
-        <!-- 3. Poppy + dashed shield ring overlay -->
-        <div class="cb-row">
-          <div class="cb-icon">
-            <img src="poppy-icon.png?v=17" alt="Poppy" style="width:44px;height:44px;object-fit:contain;">
-            <svg viewBox="0 0 100 110" width="52" height="57" fill="none"
-                 style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none;">
-              <path d="M50 6 L88 20 V52 C88 80 68 98 50 106 C32 98 12 80 12 52 V20 Z"
-                    stroke="#F9A03C" stroke-width="5" stroke-linejoin="round"/>
-            </svg>
-          </div>
-          <div class="cb-text">
-            <b>GRAB POPPIES</b>
-            from the bank –<br>earns a shield.
-          </div>
-        </div>
-
-        <!-- 4. Orange — real game art with +100 badge -->
-        <div class="cb-row">
-          <div class="cb-icon">
-            <div class="cb-orange-wrap">
-              <img src="orange.png?v=13" alt="Orange" style="width:36px;height:36px;object-fit:contain;">
-              <span class="cb-orange-badge">+100</span>
-            </div>
-          </div>
-          <div class="cb-text">
-            <b>COLLECT ORANGES</b>
-            fill your basket,<br>worth more each stage.
-          </div>
-        </div>
-
-        <div class="cb-ready-row">
-          <button class="cb-ready" id="btn3-ready">READY? &gt;</button>
-        </div>
-      </div><!-- /.cb-paper -->
-    </div><!-- /.cb-body -->
-  </div><!-- /#notice3 -->
+  <!-- CONTROLS SCREEN (new — shown between main menu and river rules) -->
+  <div id="controls3">
+    <div class="menu-img-wrap">
+      <img src="controls.png?v=1" alt="Controls">
+      <div class="controls3-hint">CLICK TO CONTINUE</div>
+    </div>
+  </div>
 
   <!-- ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) ===== -->
   <div id="dev-stage-label">DEV: press 1-5 to jump stages</div>
@@ -525,6 +613,6 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="game-3d.js?v=16"></script>
+  <script src="game-3d.js?v=26"></script>
 </body>
 </html>
