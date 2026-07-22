@@ -194,22 +194,38 @@ const STAGES3 = [
   },
 ];
 
-// ── QUALITY TIER (controls decorative sprite count = draw calls) ──
-var _qOverride = (location.search.match(/[?&]q=(low|high)/) || [])[1];
-var _qWeak = window.matchMedia('(pointer: coarse)').matches
-          || (navigator.hardwareConcurrency || 8) <= 4
-          || (navigator.deviceMemory || 8) <= 4;
-var Q_LOW     = _qOverride ? (_qOverride === 'low') : _qWeak;
-var DECO_MULT = Q_LOW ? 0.35 : 1;   // build ~35% of decorative scatter on low
-console.log('[KRR] quality tier =', Q_LOW ? 'LOW' : 'HIGH', ' decoMult=', DECO_MULT);
-FISH_SCHOOL_SIZE = Math.max(1, Math.floor(FISH_SCHOOL_SIZE * DECO_MULT));  // now DECO_MULT is set
-
 // ── THREE.JS RENDERER + SCENE ────────────────────────────────────
 const canvas3d = document.getElementById('gameCanvas');
 const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
+
+// ── GPU / SOFTWARE-RENDER DETECTION (the real perf divider) ──
+var GPU_RENDERER = 'unknown', SOFTWARE_GL = false;
+try {
+  var _gl  = renderer.getContext();
+  var _dbg = _gl.getExtension('WEBGL_debug_renderer_info');
+  GPU_RENDERER = _dbg ? _gl.getParameter(_dbg.UNMASKED_RENDERER_WEBGL) : 'hidden';
+  SOFTWARE_GL  = /swiftshader|software|llvmpipe|basic render|microsoft basic|angle \(software|paravirtual/i.test(GPU_RENDERER);
+} catch (e) {}
+console.log('[KRR] GPU =', GPU_RENDERER, '| software =', SOFTWARE_GL);
+
+// Quality tier: force LOW for weak devices OR software rendering (unless URL overrides)
+var _qOverride = (location.search.match(/[?&]q=(low|high)/) || [])[1];
+var _qWeak = window.matchMedia('(pointer: coarse)').matches
+          || (navigator.hardwareConcurrency || 8) <= 4
+          || (navigator.deviceMemory || 8) <= 4;
+var Q_LOW     = _qOverride ? (_qOverride === 'low') : (_qWeak || SOFTWARE_GL);
+var DECO_MULT = Q_LOW ? 0.35 : 1;
+console.log('[KRR] quality =', Q_LOW ? 'LOW' : 'HIGH', ' decoMult=', DECO_MULT);
+FISH_SCHOOL_SIZE = Math.max(1, Math.floor(FISH_SCHOOL_SIZE * DECO_MULT));  // now DECO_MULT is set
+
+// Software rendering chokes on pixels + shadows — strip both, but ONLY for software clients
+if (SOFTWARE_GL) {
+  renderer.setPixelRatio(1);
+  renderer.shadowMap.enabled = false;
+}
 
 const scene  = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
@@ -9439,7 +9455,8 @@ function loop3() {
         : parseFloat(spf) >= 2.5
           ? 'CPU-BOUND — JS too heavy per frame'
           : 'LOW FPS (~' + fps + ')';
-      _fpsEl.textContent = 'FPS ' + fps + '  |  steps/frame ' + spf + '\n' + verdict;
+      var gpuLine = 'GPU: ' + (SOFTWARE_GL ? 'SOFTWARE ⚠' : 'HARDWARE') + '  ' + GPU_RENDERER.slice(0, 40);
+      _fpsEl.textContent = 'FPS ' + fps + '  |  steps/frame ' + spf + '\n' + verdict + '\n' + gpuLine;
       _fpsFrames = 0; _fpsSteps = 0; _fpsT0 = now;
     }
   }
