@@ -103,7 +103,7 @@ var FISH_SWIM_SPEED     = 0.50;  // Z-drift wu/s (slowed for linger); Ctrl+Shift
 var FISH_HOLD_MS        = 45000; // ms fish stay visible per sighting; Ctrl+Shift+L/;
 var FISH_UNDULATION_AMP = 1.0;   // body-wave X amplitude multiplier
 var FISH_WEAVE_AMT      = 1.0;   // S-weave X deviation multiplier; Ctrl+Shift+B/V
-var FISH_SCHOOL_SIZE    = 3;     // fish per sighting (1–3); page reload to change
+var FISH_SCHOOL_SIZE    = 3;     // fish per sighting (1–3); scaled by quality tier after DECO_MULT is set
 var FISH_ANIM_FPS       = 8;    // sprite swim-frame rate (cycles through 3 frames)
 var FISH_SPRITE_W       = 0.42; // sprite plane width wu (fish cross-section at scale 1)
 var FISH_SPRITE_L       = 1.2;  // sprite plane length wu (nose to tail at scale 1)
@@ -193,6 +193,16 @@ const STAGES3 = [
     ],
   },
 ];
+
+// ── QUALITY TIER (controls decorative sprite count = draw calls) ──
+var _qOverride = (location.search.match(/[?&]q=(low|high)/) || [])[1];
+var _qWeak = window.matchMedia('(pointer: coarse)').matches
+          || (navigator.hardwareConcurrency || 8) <= 4
+          || (navigator.deviceMemory || 8) <= 4;
+var Q_LOW     = _qOverride ? (_qOverride === 'low') : _qWeak;
+var DECO_MULT = Q_LOW ? 0.35 : 1;   // build ~35% of decorative scatter on low
+console.log('[KRR] quality tier =', Q_LOW ? 'LOW' : 'HIGH', ' decoMult=', DECO_MULT);
+FISH_SCHOOL_SIZE = Math.max(1, Math.floor(FISH_SCHOOL_SIZE * DECO_MULT));  // now DECO_MULT is set
 
 // ── THREE.JS RENDERER + SCENE ────────────────────────────────────
 const canvas3d = document.getElementById('gameCanvas');
@@ -1869,7 +1879,7 @@ function buildWorld() {
   // Each has a unique shimmer phase so they twinkle independently. Scrolled in update3()
   // like the flow lines. renderOrder=3, depthWrite:false, max opacity ~0.30 for subtlety.
   var spkBaseMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0, depthWrite: false });
-  for (var spkI = 0; spkI < 28; spkI++) {
+  for (var spkI = 0; spkI < Math.round(28 * DECO_MULT); spkI++) {
     var spkX = -rw / 2 + 0.5 + Math.random() * (rw - 1.0);
     var spkZ = SPAWN_Z + Math.random() * (Math.abs(SPAWN_Z) + 8);
     var spkMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.07, 0.07), spkBaseMat.clone());
@@ -1950,9 +1960,9 @@ var S5_BD_SCALE = 0.86; // Stage 5 backdrop initial scale (TEMP framing tuner; b
 var S5_BD_Y    = -3.0;  // Stage 5 backdrop Y offset from default y=26 (TEMP framing tuner)
 var S5_TERR_SCROLL   = 1.0;  // Stage 5 swamp terrain scroll multiplier
 // Stage 5 bank decoration pool sizes (module-level; tunable live via Ctrl+F7-F12)
-var S5_POOL_BASE     = 6;   // decor pool multiplier (Ctrl+F11/F12 to tune; was 8)
-var S5_TREE_COUNT    = 25;  // bank tree count for stage 5 only (Ctrl+F9/F10; was 24 → +5%)
-var S5_BOULDER_COUNT = 12;  // bank boulder count for stage 5 only (Ctrl+F7/F8; was 11 → +5%)
+var S5_POOL_BASE     = Math.max(2, Math.round(6  * DECO_MULT));  // decor pool multiplier (Ctrl+F11/F12 to tune; was 8)
+var S5_TREE_COUNT    = Math.round(25 * DECO_MULT);  // bank tree count for stage 5 only (Ctrl+F9/F10; was 24 → +5%)
+var S5_BOULDER_COUNT = Math.round(12 * DECO_MULT);  // bank boulder count for stage 5 only (Ctrl+F7/F8; was 11 → +5%)
 // Stage 5 bank decoration spawn frequencies (relative to S5_POOL_BASE)
 // pool count = Math.max(1, Math.round(freq * S5_POOL_BASE))
 var S5_FREQ_TREE_STUMP   = 0.60;   // semi-frequent ground clutter
@@ -1977,8 +1987,8 @@ var S5_FISHING_SCALE   = 3.50;  // 2.0 base x 2.5 x 0.7
 var S5_GRASS_W        = 0.69;  // grass tuft width wu; Alt+7/8 to tune (-/+0.05); was 0.60 (+15%)
 var S5_GRASS_POOL     = 189;   // ground scatter pool count; was 180 (+5%)
 var S5_GRASS_BANK_POOL = 63;   // bank-top scatter pool count; was 60 (+5%)
-var S1_GRASS_POOL      = 137;  // stage 1 far-ground scatter (also used by stage 3); was 130 (+5%)
-var S1_GRASS_BANK_POOL = 17;   // stage 1 bank-top (also used by stage 3); was 16 (+5%)
+var S1_GRASS_POOL      = Math.round(137 * DECO_MULT);  // stage 1 far-ground scatter (also used by stage 3); was 130 (+5%)
+var S1_GRASS_BANK_POOL = Math.round(17  * DECO_MULT);  // stage 1 bank-top (also used by stage 3); was 16 (+5%)
 var S5_GRASS_XBAND    = 8.0;   // scatter band width wu from bank apron edge; Alt+9/0 to tune
 var S5_BANK_SEAT_Y    = 0.62;  // Y for sprites on bank-top surface (bank segs at y=0.30 + half-h=0.30)
 var S5_CART_SEAT_Y     = -0.20;  // bottom anchor Y; sinks lower ~third of cart below water surface (y=0.15)
@@ -2175,12 +2185,12 @@ function makeBankTreeSprite(variety, h) {
   return spr;
 }
 
-var STAGE1_TREE_COUNT    = 67;   // bank tree pool for stage 1; was 64 (+5%)
-var STAGE1_BOULDER_COUNT = 13;   // bank boulder pool for stage 1; was 12 (+5%)
-var STAGE3_TREE_COUNT    = 44;   // bank tree pool for stage 3; was 42 (+5%)
+var STAGE1_TREE_COUNT    = Math.round(67 * DECO_MULT);  // bank tree pool for stage 1; was 64 (+5%)
+var STAGE1_BOULDER_COUNT = Math.round(13 * DECO_MULT);  // bank boulder pool for stage 1; was 12 (+5%)
+var STAGE3_TREE_COUNT    = Math.round(44 * DECO_MULT);  // bank tree pool for stage 3; was 42 (+5%)
 var TREE_XOFF_BIAS       = 0.50; // exponent for tree xOff: 0.5=strongly outward, 1.0=uniform; Ctrl+Shift+B/H
-var STAGE3_BOULDER_COUNT = 12;   // bank boulder pool for stage 3; was 11 (+5%)
-var CATTAIL_GROUPS_PER_SIDE = 6;  // group slots per bank side (tune to adjust density)
+var STAGE3_BOULDER_COUNT = Math.round(12 * DECO_MULT);  // bank boulder pool for stage 3; was 11 (+5%)
+var CATTAIL_GROUPS_PER_SIDE = Math.max(2, Math.round(6 * DECO_MULT));  // group slots per bank side (tune to adjust density)
 
 // ── BILLBOARD CONSTANTS ───────────────────────────────────────────────────
 var BILLBOARD_SCALE     = 3.5;   // world-unit height of sign; Shift+C/F to tune (-/+0.25)
