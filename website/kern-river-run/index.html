@@ -2,97 +2,834 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Kern River Run — Hewett Will Do It 2026</title>
-  <link rel="icon" type="image/x-icon" href="../assets/favicon/favicon.ico">
-  <link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon/favicon-32x32.png">
-  <link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon/favicon-16x16.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="../assets/favicon/apple-touch-icon.png">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0B1F3A">
+  <title>Kern River Run — 3D Experiment</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden; background: #0B1F3A;
+      overscroll-behavior: none; touch-action: none;
+    }
+    body { display: flex; justify-content: center; align-items: center; }
+    #gameCanvas { display: block; max-width: 100vw; max-height: 100vh; }
 
-    body {
-      min-height: 100dvh;
-      background: #0B1F3A;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-family: 'Inter', sans-serif;
-      color: #F5F0E8;
-      padding: 24px;
+    /* ── HUD ── */
+    #hud3 {
+      position: fixed; top: 0; left: 50%; transform: translateX(-50%);
+      width: min(430px, 100vw); height: 78px;
+      background: rgba(11,31,58,0.92);
+      border-bottom: 2px solid rgba(201,136,58,.55);
+      box-shadow: 0 2px 12px rgba(0,0,0,.55);
+      font-family: 'Press Start 2P', monospace;
+      color: #F5F0E8; font-size: 7px;
+      display: none; padding: 0 12px; z-index: 10;
+    }
+    #hud3.visible {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center; gap: 6px;
     }
 
-    .container {
-      text-align: center;
-      max-width: 480px;
+    /* Left zone: mile, stage#, progress bar */
+    #hud3-left  { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
+    #hud3-mile     { font-size: 13px; color: #F5F0E8; letter-spacing: 0.04em; }
+    #hud3-stageNum { font-size: 11px; color: #C9883A; }
+    #hud3-progress-track {
+      width: 100px; height: 4px;
+      background: rgba(255,255,255,.14); border-radius: 2px; overflow: hidden;
+    }
+    #hud3-progress-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #C9883A, #F1B24A);
+      border-radius: 2px; transition: width 0.5s ease;
     }
 
-    .eyebrow {
-      font-family: 'Inter', sans-serif;
-      font-size: 0.75rem;
-      font-weight: 600;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: #C9883A;
-      margin-bottom: 16px;
+    /* Center zone: stage-name hero + pause */
+    #hud3-center { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; }
+    #hud3-stage {
+      font-size: 12px; color: #F1B24A;
+      letter-spacing: 1px; white-space: nowrap;
+      text-shadow: 0 0 7px rgba(241,178,74,.55), 0 2px 0 rgba(0,0,0,.6);
+      animation: stage-glow 2.5s ease-in-out infinite;
     }
-
-    h1 {
-      font-family: 'Playfair Display', serif;
-      font-size: clamp(2rem, 10vw, 3rem);
-      font-weight: 700;
-      color: #F5F0E8;
-      line-height: 1.15;
-      margin-bottom: 20px;
-    }
-
-    .divider {
-      width: 48px;
-      height: 3px;
-      background: #C9883A;
-      margin: 0 auto 20px;
-      border-radius: 2px;
-    }
-
-    .subtitle {
-      font-size: 1.05rem;
-      font-weight: 300;
-      color: #CBD5E1;
-      line-height: 1.65;
-      margin-bottom: 40px;
-    }
-
-    .back-link {
+    /* Flanking CSS diamonds — no font-character dependency */
+    #hud3-stage::before, #hud3-stage::after {
+      content: '';
       display: inline-block;
-      font-family: 'Inter', sans-serif;
-      font-size: 0.85rem;
-      font-weight: 500;
-      color: #F5F0E8;
-      text-decoration: none;
-      border: 1.5px solid rgba(245,240,232,0.35);
-      border-radius: 4px;
-      padding: 10px 24px;
-      transition: border-color 0.18s, color 0.18s;
+      width: 5px; height: 5px;
+      background: #F1B24A; border-radius: 1px;
+      transform: rotate(45deg); vertical-align: middle; opacity: 0.72;
+    }
+    #hud3-stage::before { margin-right: 5px; }
+    #hud3-stage::after  { margin-left:  5px; }
+    @keyframes stage-glow {
+      0%, 100% { text-shadow: 0 0 7px rgba(241,178,74,.55), 0 2px 0 rgba(0,0,0,.6); }
+      50%       { text-shadow: 0 0 18px rgba(241,178,74,.92), 0 0 32px rgba(241,178,74,.28), 0 2px 0 rgba(0,0,0,.6); }
+    }
+    #btn3-pause {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 7px; color: rgba(245,240,232,0.78);
+      background: rgba(30,58,95,0.65);
+      border: 1px solid rgba(245,240,232,0.22);
+      padding: 3px 8px; cursor: pointer; white-space: nowrap;
+      transition: background 150ms;
+    }
+    #btn3-pause:hover { background: rgba(45,106,79,0.80); color: #F5F0E8; }
+
+    /* Right zone: oranges top, score/best bottom */
+    #hud3-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; min-width: 0; }
+    #hud3-oranges { display: flex; align-items: center; gap: 5px; }
+    #hud3-orange-icon  { width: 24px; height: 24px; image-rendering: pixelated; object-fit: contain; }
+    #hud3-orange-count { color: #F97316; font-size: 16px; text-shadow: 0 0 8px rgba(249,115,22,.50); }
+    #hud3-score-wrap   { display: flex; align-items: flex-end; gap: 6px; }
+    #hud3-score-block, #hud3-best-block { display: flex; flex-direction: column; align-items: flex-end; gap: 0; }
+    .hud3-micro { font-size: 5px; color: #C9883A; opacity: 0.65; }
+    #hud3-score { color: #C9883A; font-size: 13px; }
+    #hud3-best  { color: #C9883A; font-size: 10px; opacity: 0.8; }
+
+    /* ── STAGE TRANSITION FLASH ── */
+    #transitionMsg3 {
+      position: fixed; left: 50%; transform: translateX(-50%);
+      top: 55%; width: min(430px, 100vw);
+      text-align: center; font-family: 'Press Start 2P', monospace;
+      font-size: 8px; color: #C9883A;
+      background: rgba(11,31,58,0.90);
+      padding: 10px 0; opacity: 0;
+      pointer-events: none; z-index: 15;
     }
 
-    .back-link:hover,
-    .back-link:focus {
-      border-color: #C9883A;
-      color: #C9883A;
-      outline: none;
+    /* ── OVERLAY ── */
+    #overlay3 {
+      position: fixed; inset: 0;
+      background: rgba(11,31,58,0.94);
+      z-index: 20; display: flex;
+      align-items: center; justify-content: center;
+      overflow-y: auto;
+    }
+    #overlay3.hidden { display: none; }
+
+    .screen3 {
+      display: none; flex-direction: column; align-items: center; gap: 16px;
+      font-family: 'Press Start 2P', monospace; color: #F5F0E8;
+      width: min(360px, 92vw); text-align: center;
+      padding: 24px 20px;
+    }
+    .screen3.visible { display: flex; }
+
+    .screen3 h1 { font-size: clamp(13px,3.5vw,20px); color: #C9883A; line-height: 1.45; }
+    .screen3 p  { font-size: 7px; color: #93C5FD; line-height: 1.75; }
+    .screen3 .sub { font-size: 5px; color: #9CA3AF; line-height: 1.75; }
+    .screen3 .body-txt { font-size: 6px; color: #F5F0E8; line-height: 1.90; }
+    .screen3 .quote-txt { font-size: 6px; color: #FDE68A; line-height: 1.90; }
+    .screen3 .attr-txt  { font-size: 5px; color: #93C5FD; line-height: 1.75; }
+
+    .btn3 {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 9px; color: #F5F0E8;
+      background: #2D6A4F; border: 2px solid #F5F0E8;
+      padding: 12px 20px; cursor: pointer; width: 100%;
+      max-width: 300px; text-align: center; line-height: 1.4;
+    }
+    .btn3:hover { background: #3D8A6F; }
+    .btn3.secondary   { background: #1E3A5F; color: #C9883A; border-color: #C9883A; }
+    .btn3.secondary:hover { background: #2E4A6F; }
+    .btn3.teal   { background: #164E63; color: #38BDF8; border-color: #38BDF8; }
+    .btn3.teal:hover { background: #1E6479; }
+    .btn3.muted  { background: #374151; color: #F5F0E8; border-color: rgba(245,240,232,0.40); }
+    .btn3.muted:hover { background: #4B5563; }
+
+    .score-line { font-size: 10px; color: #C9883A; }
+    .best-line  { font-size: 10px; color: #93C5FD; }
+
+    .exp-badge {
+      font-size: 5px; color: #F97316;
+      border: 1px solid #F97316; padding: 4px 8px;
+    }
+    .divider-line {
+      width: 60px; height: 2px;
+      background: #C9883A; border-radius: 1px;
+    }
+
+    /* ── FULL-SCREEN IMAGE MENUS ── */
+
+    /* Main menu start screen: let the image drive the size */
+    #screen3-start { width: auto; max-width: 100vw; padding: 0; gap: 0; }
+    /* Tighter glow so highlights stay within baked artwork */
+    #screen3-start .hit-area:hover {
+      box-shadow: 0 0 16px 4px rgba(255,214,120,.48), inset 0 0 14px rgba(255,214,120,.20);
+    }
+
+    /* Game-over screen: same image-driven override */
+    #screen3-gameover { width: auto; max-width: 100vw; padding: 0; gap: 0; }
+    /* Tighter glow so highlight stays within baked artwork */
+    #screen3-gameover .hit-area:hover {
+      box-shadow: 0 0 16px 4px rgba(255,214,120,.48), inset 0 0 14px rgba(255,214,120,.20);
+    }
+    /* Title is baked into artwork — keep element in DOM but hide it */
+    #screen3-gameover .go-title3 { display: none; }
+
+
+    /* Stats overlay: compact centered block over the image's bottom strip */
+    .go-stats-wrap {
+      position: absolute;
+      left: 16%; right: 16%; top: 82%;
+      pointer-events: none;
+      display: flex; flex-direction: column; align-items: center;
+      gap: 3px;
+      background: rgba(0,0,0,0.52);
+      border-radius: 6px;
+      padding: 7px 14px 10px;
+    }
+    .go-stats-wrap p {
+      margin: 0; padding: 0; text-align: center;
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(5px, 1.5vw, 7px);
+      color: #D1C9BA; line-height: 1.75;
+    }
+    .go-stats-wrap .go-score3 { color: #C9883A; }
+    .go-stats-wrap .go-best3  { color: #93C5FD; }
+
+    /* Image wrapper: shrinks exactly to the rendered image box */
+    .menu-img-wrap {
+      position: relative; display: inline-block; line-height: 0;
+    }
+    .menu-img-wrap img {
+      display: block; max-width: 100vw; max-height: 100vh; object-fit: contain;
+    }
+
+    /* Hit-area: transparent abs-positioned button, percent-coordinates track image */
+    .hit-area {
+      position: absolute; border: none; cursor: pointer; padding: 0;
+      background: transparent;
+      transition: box-shadow 150ms ease, backdrop-filter 150ms ease;
+    }
+    .hit-area:hover {
+      box-shadow: 0 0 28px 10px rgba(255,214,120,.48), inset 0 0 20px rgba(255,214,120,.20);
+      backdrop-filter: brightness(1.08);
+    }
+
+    /* ── LOGO SHEEN (main menu) ── */
+    /* Hover zone sized to logo band — pointer-events:auto, but buttons (later in DOM) sit on top */
+    .logo-hover-zone {
+      position: absolute;
+      left: 16%; top: 16%; width: 68%; height: 32%;
+      cursor: default;
+    }
+    /* Sheen container: full-wrapper, masked to logo silhouette, blends with screen mode */
+    .logo-sheen {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none;
+      overflow: hidden;
+      mix-blend-mode: screen;
+      -webkit-mask-image: url(logo-mask.png?v=2);
+              mask-image: url(logo-mask.png?v=2);
+      -webkit-mask-size: 100% 100%;
+              mask-size: 100% 100%;
+      mask-repeat: no-repeat;
+      -webkit-mask-repeat: no-repeat;
+      transition: filter 200ms ease;
+    }
+    /* Diagonal sweep glint band */
+    .logo-sheen::before {
+      content: '';
+      position: absolute;
+      top: -20%; left: 0;
+      width: 28%; height: 140%;
+      background: linear-gradient(to right,
+        transparent 0%, rgba(255,255,255,.52) 50%, transparent 100%);
+      transform: translateX(-120%) skewX(-18deg);
+      animation: logo-sweep 5.5s cubic-bezier(0.4,0,0.6,1) infinite;
+    }
+    /* Warm glow overlay — fades in on hover */
+    .logo-sheen::after {
+      content: '';
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at 50% 45%,
+        rgba(255,214,120,.30) 0%, transparent 65%);
+      opacity: 0;
+      transition: opacity 300ms ease;
+    }
+    @keyframes logo-sweep {
+      0%   { transform: translateX(-120%) skewX(-18deg); opacity: 0; }
+      6%   { opacity: 1; }
+      38%  { transform: translateX(500%)  skewX(-18deg); opacity: 1; }
+      46%  { transform: translateX(500%)  skewX(-18deg); opacity: 0; }
+      100% { transform: translateX(-120%) skewX(-18deg); opacity: 0; }
+    }
+    /* On logo hover: brighter sweep + warm glow */
+    .logo-hover-zone:hover ~ .logo-sheen { filter: brightness(1.9); }
+    .logo-hover-zone:hover ~ .logo-sheen::after { opacity: 1; }
+
+    /* Mute button — inline in HUD next to PAUSE, matches pause button style */
+    #hud3-center-row { display: flex; gap: 4px; align-items: center; }
+    #btn-mute {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 7px; color: rgba(245,240,232,0.78);
+      background: rgba(30,58,95,0.65);
+      border: 1px solid rgba(245,240,232,0.22);
+      padding: 3px 6px; cursor: pointer;
+      transition: background 150ms;
+    }
+    #btn-mute:hover { background: rgba(45,106,79,0.80); color: #F5F0E8; }
+
+    /* Volume slider — desktop only; hidden on touch via media query */
+    #vol-slider {
+      display: none;
+      width: 52px; height: 3px; vertical-align: middle;
+      -webkit-appearance: none; appearance: none;
+      background: rgba(11,31,58,0.70);
+      border: 1px solid rgba(245,240,232,0.22);
+      border-radius: 2px; cursor: pointer;
+      accent-color: #C9883A;
+    }
+    @media (pointer: fine) { #vol-slider { display: inline-block; } }
+    #vol-slider::-webkit-slider-runnable-track {
+      background: rgba(11,31,58,0.70); height: 3px; border-radius: 2px;
+    }
+    #vol-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 10px; height: 10px; margin-top: -3.5px;
+      background: #C9883A; border-radius: 50%; cursor: pointer;
+    }
+    #vol-slider::-moz-range-track {
+      background: rgba(11,31,58,0.70); height: 3px; border-radius: 2px;
+    }
+    #vol-slider::-moz-range-thumb {
+      width: 10px; height: 10px;
+      background: #C9883A; border: none; border-radius: 50%; cursor: pointer;
+    }
+
+    /* Controls screen (new) */
+    #controls3 {
+      position: fixed; inset: 0; z-index: 21;
+      display: none;
+      align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.85);
+    }
+    #controls3.visible { display: flex; }
+
+    /* "CLICK TO CONTINUE" hint — subtle pulse */
+    .controls3-hint {
+      position: absolute; bottom: 5%; left: 50%; transform: translateX(-50%);
+      font-family: 'Press Start 2P', monospace; font-size: 7px;
+      color: rgba(245,240,232,0.85); white-space: nowrap;
+      pointer-events: none;
+      animation: hint-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes hint-pulse {
+      0%, 100% { opacity: 0.3; }
+      50%       { opacity: 1; }
+    }
+
+    /* ── RIVER RULES NOTICE (image) ── */
+    #notice3 {
+      position: fixed; inset: 0; z-index: 21;
+      display: none;
+      flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.85);
+    }
+    #notice3.visible { display: flex; }
+
+    /* Clipboard wood body -- rounds top, extends off bottom of screen */
+    .cb-body {
+      width: min(370px, 92vw);
+      min-height: calc(100vh - 14px);
+      background: linear-gradient(160deg, #9e7c52 0%, #7d5530 50%, #8d6238 100%);
+      border-radius: 10px 10px 0 0;
+      padding: 0 10px 60px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.75), inset 0 1px 0 rgba(255,255,255,0.12);
+      position: relative;
+    }
+
+    /* Metal clip bar overhangs the clipboard top edge */
+    .cb-clip {
+      width: 76px; height: 26px;
+      background: linear-gradient(180deg, #d0d8df 0%, #9eb0bc 60%, #7a8e98 100%);
+      border: 1px solid #6a7d87;
+      border-radius: 5px 5px 7px 7px;
+      margin: 0 auto;
+      position: relative; top: -13px;
+      box-shadow: 0 3px 7px rgba(0,0,0,0.55), inset 0 1px 1px rgba(255,255,255,0.45);
+    }
+    .cb-clip::before, .cb-clip::after {
+      content: ''; position: absolute;
+      width: 9px; height: 9px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #c0cdd4, #7a8e98);
+      top: 50%; transform: translateY(-50%);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
+    }
+    .cb-clip::before { left: 9px; }
+    .cb-clip::after  { right: 9px; }
+
+    /* Cream paper sheet */
+    .cb-paper {
+      background: #f7f2e8;
+      border-radius: 3px;
+      padding: 16px 16px 20px;
+      margin-top: 3px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      position: relative; overflow: hidden;
+    }
+    /* Faint ruled lines behind content */
+    .cb-paper::before {
+      content: ''; position: absolute; inset: 28px 0 0;
+      background: repeating-linear-gradient(
+        transparent, transparent 22px,
+        rgba(120,140,160,0.12) 22px, rgba(120,140,160,0.12) 23px
+      );
+      pointer-events: none;
+    }
+
+    /* Paper header */
+    .cb-header {
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(10px, 2.8vw, 15px);
+      color: #1a5c38; text-align: center; margin-bottom: 14px;
+      position: relative; text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+    }
+    .cb-header::after {
+      content: ''; display: block; height: 2px;
+      background: linear-gradient(90deg, transparent, #1a5c38, transparent);
+      margin-top: 8px; opacity: 0.35;
+    }
+
+    /* Rule rows: icon + text */
+    .cb-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 9px 0; border-bottom: 1px solid rgba(0,0,0,0.07);
+      position: relative;
+    }
+    .cb-row:last-of-type { border-bottom: none; }
+
+    /* Fixed 44×44 icon cell */
+    .cb-icon {
+      width: 44px; height: 44px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    .cb-icon img { max-width: 44px; max-height: 44px; object-fit: contain; display: block; }
+
+    /* Rule text */
+    .cb-text {
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(5px, 1.5vw, 6.5px);
+      color: #2a2a2a; line-height: 1.95;
+    }
+    .cb-text b { display: block; color: #b84000; margin-bottom: 2px; font-size: clamp(5.5px, 1.6vw, 7px); }
+
+    /* Orange icon +100 badge */
+    .cb-orange-wrap { position: relative; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; }
+    .cb-orange-badge {
+      position: absolute; bottom: 0; right: -3px;
+      font-family: 'Press Start 2P', monospace; font-size: 5px;
+      color: #1a5c38; background: #f7f2e8; border: 1px solid #1a5c38;
+      padding: 1px 3px; line-height: 1;
+    }
+
+    /* READY? button */
+    .cb-ready-row { display: flex; justify-content: flex-end; padding-top: 14px; }
+    .cb-ready {
+      font-family: 'Press Start 2P', monospace; font-size: 9px;
+      color: #f7f2e8; background: #1a5c38; border: 2px solid #0f3d25;
+      padding: 11px 18px; cursor: pointer; box-shadow: 0 4px 0 #0f3d25;
+      transition: transform 0.07s, box-shadow 0.07s;
+    }
+    .cb-ready:hover { background: #246b45; }
+    .cb-ready:active { transform: translateY(3px); box-shadow: 0 1px 0 #0f3d25; }
+
+    /* ── STORY VIEWER ── */
+    #story-viewer {
+      position: fixed; inset: 0; z-index: 30;
+      background: #000;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: space-between;
+      padding: 12px 16px 16px; gap: 10px;
+      opacity: 0; pointer-events: none; visibility: hidden;
+    }
+    #story-viewer.sv-visible { visibility: visible; }
+
+    #story-progress {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 7px; color: rgba(245,240,232,0.65);
+      flex-shrink: 0; letter-spacing: 0.08em;
+    }
+
+    .story-flip-wrap {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      perspective: 1000px;
+      width: 100%; overflow: hidden; position: relative;
+    }
+    #story-flip {
+      /* Portrait panels ~2:3; box sized to whichever constraint binds first */
+      width:  min(calc((100vh - 130px) * 0.667), calc(100vw - 32px));
+      height: min(calc(100vh - 130px), calc((100vw - 32px) * 1.5));
+      transform-origin: center; will-change: transform;
+    }
+    #story-img {
+      width: 100%; height: 100%; object-fit: contain;
+      display: block; background: #000;
+    }
+
+    .sv-zone {
+      position: absolute; top: 0; bottom: 0; width: 50%;
+      cursor: pointer; z-index: 1;
+    }
+    .sv-zone-left  { left: 0; }
+    .sv-zone-right { right: 0; }
+
+    .story-controls {
+      display: flex; gap: 10px; align-items: center;
+      justify-content: center; flex-shrink: 0; flex-wrap: wrap;
+    }
+    .story-controls .btn3 { max-width: 170px; font-size: 8px; padding: 10px 14px; }
+
+    #dev-stage-label { display: none; }
+
+
+    /* ── PAUSE SCREEN (image-based) ── */
+    #screen3-paused { width: auto; max-width: 100vw; padding: 0; gap: 0; }
+    /* Tighter glow on pause buttons so highlight stays within baked artwork */
+    #screen3-paused .hit-area:hover {
+      box-shadow: 0 0 16px 4px rgba(255,214,120,.48), inset 0 0 14px rgba(255,214,120,.20);
+    }
+
+    /* ── SCOREBOARD SCREEN ── */
+    #screen3-scoreboard { width: auto; max-width: 100vw; padding: 0; gap: 0; cursor: pointer; }
+    /* Row list: scrollable window over the baked-art grid area */
+    #sb3-rows {
+      position: absolute; top: 33%; left: 0; width: 100%; height: 45%;
+      display: flex; flex-direction: column;
+      overflow-y: auto; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; pointer-events: auto;
+    }
+    #sb3-rows::-webkit-scrollbar { display: none; }
+    .sb3-row {
+      position: relative; flex: 0 0 10%; /* fixed 1/10 of container; 11-25 scroll */
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(4px, 1.25vw, 8px); color: #F5F0E8;
+    }
+    .sb3-row.sb3-own { color: #F1B24A; background: rgba(201,136,58,.12); }
+    /* Each cell is absolute so columns match baked header */
+    .sb3-cell { position: absolute; top: 50%; overflow: hidden; white-space: nowrap; }
+    .sb3-rank  { left: 13%; transform: translate(-50%, -50%); }
+    .sb3-name  { left: 23%; transform: translateY(-50%); max-width: 36%; text-overflow: ellipsis; }
+    .sb3-score { left: 61%; transform: translate(-50%, -50%); }
+    .sb3-orng  { left: 87%; transform: translate(-50%, -50%); }
+    #sb3-empty {
+      position: absolute; top: 55%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(6px, 1.5vw, 9px); color: rgba(245,240,232,0.65);
+      pointer-events: none; text-align: center; white-space: nowrap; line-height: 1.8;
+    }
+    /* ── NAME ENTRY SCREEN ── */
+    #sb3-name-input {
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(9px, 2.2vw, 14px);
+      color: #F5F0E8; background: rgba(11,31,58,0.85);
+      border: 2px solid #C9883A; padding: 10px 14px;
+      width: 100%; max-width: 260px;
+      text-transform: uppercase; text-align: center;
+      letter-spacing: 0.12em; outline: none; caret-color: #F1B24A;
+      box-sizing: border-box; display: block; margin: 0 auto;
+    }
+    #sb3-name-input:focus { border-color: #F1B24A; box-shadow: 0 0 0 2px rgba(241,178,74,0.28); }
+    #sb3-name-input::placeholder { color: rgba(245,240,232,0.30); }
+    .nameentry-btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 1em; }
+    /* ── MAIN-MENU MODE CARD PICKER ── */
+    .mode-picker-wrap {
+      position: absolute; left: 50%; top: 68%; transform: translateX(-50%);
+      width: 64%; pointer-events: auto; z-index: 2;
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+    }
+    .mode-picker-row {
+      display: flex; gap: 2%; width: 100%; justify-content: center; align-items: flex-start;
+    }
+    /* Each card column: same fixed width, no internal flex (avoids align-items: center shrinkage) */
+    .mode-card-col {
+      position: relative;   /* badge anchors absolutely to this */
+      flex: 0 0 28%;
+      min-width: 0;         /* prevent min-width: auto from widening cols */
+    }
+    .mode-card {
+      display: block;       /* <button> is inline by default — must be block */
+      width: 100%;          /* fills the 28% col exactly */
+      border: none; background: transparent; padding: 0;
+      cursor: pointer; pointer-events: auto;
+      filter: brightness(0.68);
+      transform: translateY(0);
+      transition: filter 0.15s, transform 0.15s;
+    }
+    .mode-card img { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+    @keyframes badge-wiggle {
+      0%   { transform: translateX(-50%) rotate(-2.5deg); }
+      50%  { transform: translateX(-50%) rotate( 2.5deg); }
+      100% { transform: translateX(-50%) rotate(-2.5deg); }
+    }
+    /* Recommended badge: absolutely positioned below Classic card, never affects column width */
+    .mode-card-recommended {
+      position: absolute;
+      top: calc(100% + 7px);
+      left: 50%;
+      transform-origin: center;
+      animation: badge-wiggle 1.4s ease-in-out infinite;
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(8px, 1.4vw, 11px);
+      color: #F1E7D7;
+      text-shadow: 1px 1px 0 #0B1F3A, -1px 1px 0 #0B1F3A,
+                   1px -1px 0 #0B1F3A, -1px -1px 0 #0B1F3A;
+      text-align: center;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    .mode-card:hover:not(.selected) { filter: brightness(0.88); transform: translateY(-3px); }
+    .mode-card.selected {
+      filter: brightness(1.05) drop-shadow(0 0 10px rgba(241,178,74,.75));
+      transform: translateY(-4px);
+    }
+    @keyframes mode-nudge {
+      0%   { transform: translateY(0);    filter: brightness(0.68); }
+      25%  { transform: translateY(-6px); filter: brightness(1.00); }
+      65%  { transform: translateY(-2px); filter: brightness(0.82); }
+      100% { transform: translateY(0);    filter: brightness(0.68); }
+    }
+    .mode-card.nudge { animation: mode-nudge 0.5s ease-out forwards; }
+    /* ── MAIN-MENU SCOREBOARD IMAGE BUTTON ── */
+    #btn3-sb-mainmenu {
+      position: absolute; left: 29%; top: 61%; width: 42%; height: auto;
+      display: block; cursor: pointer;
+      border: none; background: transparent; padding: 0;
+      transition: box-shadow 150ms ease, filter 150ms ease;
+    }
+    #btn3-sb-mainmenu img { display: block; width: 100%; height: auto; }
+    #btn3-sb-mainmenu:hover {
+      box-shadow: 0 0 28px 10px rgba(255,214,120,.48), inset 0 0 20px rgba(255,214,120,.20);
+      filter: brightness(1.08);
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <p class="eyebrow">Ward 3 &middot; 2026</p>
-    <h1>Kern River Run</h1>
-    <div class="divider"></div>
-    <p class="subtitle">A new way to experience Seth&rsquo;s campaign,<br>coming soon.</p>
-    <a href="/" class="back-link">Back to Campaign</a>
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- HUD (shown while playing) — single-row three-zone grid -->
+  <div id="hud3">
+    <!-- LEFT: mile · stage# · progress bar -->
+    <div id="hud3-left">
+      <span id="hud3-mile">MILE 0 / 165</span>
+      <span id="hud3-stageNum">STAGE 1/5</span>
+      <div id="hud3-progress-track">
+        <div id="hud3-progress-fill"></div>
+      </div>
+    </div>
+    <!-- CENTER: stage name hero · pause · mute · volume -->
+    <div id="hud3-center">
+      <span id="hud3-stage">HEADWATERS</span>
+      <div id="hud3-center-row">
+        <button id="btn3-pause">&#10074;&#10074; PAUSE</button>
+        <button id="btn-mute" aria-label="Toggle mute">🔊</button>
+        <input type="range" id="vol-slider" min="0" max="1" step="0.05" aria-label="Volume">
+      </div>
+    </div>
+    <!-- RIGHT: orange count · score/best -->
+    <div id="hud3-right">
+      <div id="hud3-oranges">
+        <img id="hud3-orange-icon" src="orange.png?v=13" alt="">
+        <span id="hud3-orange-count">0</span>
+      </div>
+      <div id="hud3-score-wrap">
+        <div id="hud3-score-block">
+          <span class="hud3-micro">SCORE</span>
+          <span id="hud3-score">0</span>
+        </div>
+        <div id="hud3-best-block">
+          <span class="hud3-micro">BEST</span>
+          <span id="hud3-best">0</span>
+        </div>
+      </div>
+    </div>
   </div>
+
+  <!-- Stage transition flash -->
+  <div id="transitionMsg3"></div>
+
+  <!-- All screens inside one overlay -->
+  <div id="overlay3">
+
+    <!-- START SCREEN (main menu image) -->
+    <div id="screen3-start" class="screen3 visible">
+      <div class="menu-img-wrap">
+        <img src="main-menu.png?v=2" alt="Main Menu">
+        <!-- Logo sheen: hover zone first (buttons later in DOM sit on top), then sheen layer -->
+        <div class="logo-hover-zone" aria-hidden="true"></div>
+        <div class="logo-sheen" aria-hidden="true"></div>
+        <button class="hit-area" id="btn3-start"
+          style="left:27%;top:47%;width:46%;height:7.5%"></button>
+        <button class="hit-area" id="btn3-story"
+          style="left:27%;top:55%;width:46%;height:5%"></button>
+        <button id="btn3-sb-mainmenu"><img src="scoreboard-btn.png?v=2" alt="Scoreboard"></button>
+        <div class="mode-picker-wrap" id="mode-picker">
+          <div class="mode-picker-row">
+            <div class="mode-card-col">
+              <button class="mode-card" id="mode-card-classic" aria-label="Classic mode">
+                <img src="mode-classic.png?v=3" alt="Classic">
+              </button>
+              <span class="mode-card-recommended">RECOMMENDED</span>
+            </div>
+            <div class="mode-card-col">
+              <button class="mode-card" id="mode-card-daring" aria-label="Daring mode">
+                <img src="mode-daring.png?v=3" alt="Daring">
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GAME OVER SCREEN (run-ended.png artwork) -->
+    <div id="screen3-gameover" class="screen3">
+      <div class="menu-img-wrap">
+        <img src="run-ended.png?v=1" alt="Run Ended">
+        <!-- Title kept in DOM (showScreen3 sets its text); visual is baked into artwork -->
+        <h1 class="go-title3"></h1>
+        <!-- Hit-area buttons — IDs/handlers unchanged -->
+        <button class="hit-area" id="btn3-retry"
+          style="left:16%;top:65%;width:68%;height:7.5%"></button>
+        <button class="hit-area" id="btn3-menu"
+          style="left:16%;top:73.5%;width:68%;height:7.5%"></button>
+        <!-- Dynamic stats below the buttons -->
+        <div class="go-stats-wrap">
+          <p class="go-stage3"></p>
+          <p class="go-mile3"></p>
+          <p class="go-score3"></p>
+          <p class="go-best3"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- PAUSED SCREEN (pause.png image-based) -->
+    <div id="screen3-paused" class="screen3">
+      <div class="menu-img-wrap">
+        <img src="pause.png?v=1" alt="Paused">
+        <button class="hit-area" id="btn3-resume"
+          style="left:20%;top:34.5%;width:59%;height:7%"></button>
+        <button class="hit-area" id="btn3-quit"
+          style="left:20%;top:42.5%;width:59%;height:7%"></button>
+        <button class="hit-area" id="btn3-scoreboard"
+          style="left:20%;top:50.5%;width:59%;height:7%"></button>
+      </div>
+    </div>
+
+    <!-- SCOREBOARD SCREEN -->
+    <div id="screen3-scoreboard" class="screen3">
+      <div class="menu-img-wrap">
+        <img src="scoreboard.png?v=1" alt="Scoreboard">
+        <div id="sb3-rows"></div>
+        <div id="sb3-empty" style="display:none">NO SCORES YET</div>
+      </div>
+    </div>
+
+    <!-- ENDING DIALOG 1 (Kern River message) -->
+    <div id="screen3-ending1" class="screen3">
+      <h1 style="color:#C9883A">YOU MADE IT.</h1>
+      <p style="color:#F97316;font-size:8px;line-height:1.5">
+        THE KERN RIVER<br>DOESN'T.
+      </p>
+      <div class="divider-line"></div>
+      <p class="body-txt">
+        Every year, snowmelt begins a 165-mile journey from the Sierra Nevada toward Bakersfield.
+      </p>
+      <p class="body-txt">
+        The Kern River has shaped our communities, our history, and our identity for generations.
+        This public resource deserves public stewardship.
+      </p>
+      <p class="body-txt">
+        My campaign is committed to ensuring the Kern River is better protected, better appreciated,
+        and better connected to the people of Bakersfield.
+      </p>
+      <button class="btn3" id="btn3-ending1-continue">CONTINUE &gt;</button>
+    </div>
+
+    <!-- ENDING DIALOG 2 (campaign CTA) -->
+    <div id="screen3-ending2" class="screen3">
+      <p class="body-txt">
+        In June 1973, Bakersfield leaders negotiated the Kern River into public hands.
+      </p>
+      <p class="quote-txt">
+        "We achieved far more for the citizens of Bakersfield than we had dared dream."
+      </p>
+      <p class="attr-txt">
+        — Walter F. Heisey, after negotiating the Kern River from a private company for $17.9 million
+      </p>
+      <div class="divider-line"></div>
+      <p class="go-score3-final score-line">FINAL SCORE: 0</p>
+      <p class="go-best3-final best-line">BEST: 0</p>
+      <button class="btn3 teal"   id="btn3-learn">LEARN MORE</button>
+      <button class="btn3 muted"  id="btn3-campaign">RETURN TO CAMPAIGN</button>
+      <button class="btn3"        id="btn3-playagain">PLAY AGAIN</button>
+    </div>
+
+    <!-- NAME ENTRY (post-win scoreboard submit) -->
+    <div id="screen3-nameentry" class="screen3">
+      <h1 style="color:#C9883A;font-size:clamp(10px,3vw,20px)">165 MILES!</h1>
+      <p id="nameentry-score" class="score-line">SCORE: 0</p>
+      <div class="divider-line"></div>
+      <p class="body-txt" style="font-size:clamp(5px,1.4vw,8px)">Enter your name for the leaderboard:</p>
+      <input type="text" id="sb3-name-input" maxlength="10" placeholder="YOUR NAME"
+             autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
+      <div class="nameentry-btns">
+        <button class="btn3" id="btn3-nameentry-submit">SUBMIT</button>
+        <button class="btn3 muted" id="btn3-nameentry-skip">SKIP</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- STORY VIEWER (full-screen comic panel reader) -->
+  <div id="story-viewer">
+    <div id="story-progress">1 / 7</div>
+    <div class="story-flip-wrap">
+      <div id="story-flip">
+        <img id="story-img" src="" alt="Story panel">
+      </div>
+      <div class="sv-zone sv-zone-left"  id="sv-zone-left"></div>
+      <div class="sv-zone sv-zone-right" id="sv-zone-right"></div>
+    </div>
+    <div class="story-controls">
+      <button class="btn3 secondary" id="story-back">&#9664; BACK</button>
+      <button class="btn3"           id="story-next">NEXT &#9654;</button>
+      <button class="btn3 teal"      id="story-done"   style="display:none">DONE</button>
+      <button class="btn3 secondary" id="story-replay" style="display:none">&#8635; REPLAY</button>
+    </div>
+  </div>
+
+  <!-- RIVER RULES (intro-menu image) -->
+  <div id="notice3">
+    <div class="menu-img-wrap">
+      <img src="intro-menu.png?v=1" alt="River Rules">
+      <button class="hit-area" id="btn3-ready"
+        style="left:27%;top:77.5%;width:46%;height:10%"></button>
+    </div>
+  </div>
+
+  <!-- CONTROLS SCREEN (new — shown between main menu and river rules) -->
+  <div id="controls3">
+    <div class="menu-img-wrap">
+      <img id="controls3-img" src="" alt="Controls">
+    </div>
+  </div>
+
+  <!-- ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) ===== -->
+  <div id="dev-stage-label">DEV: press 1-5 to jump stages</div>
+  <!-- ===== END TEMP DEV STAGE JUMP ===== -->
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="game-3d.js?v=73"></script>
 </body>
 </html>

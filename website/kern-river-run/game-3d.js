@@ -8250,7 +8250,7 @@ function showScreen3(which, _complete) {
 // Jump the player to any stage's start mile for fast local testing.
 // Stage start miles: 1=0, 2=33, 3=66, 4=99, 5=132.
 // To remove: delete this block, the DEV_STAGE_JUMP const above, the
-// key handler addition below, and the #dev-stage-label in game-dev.html.
+// key handler addition below, and the #dev-stage-label in index.html.
 function devJumpToStage(idx) {
   var startMile = (idx === 0) ? 0 : STAGES3[idx - 1].endMile;
   distance3  = startMile * MI_PER_PX;
