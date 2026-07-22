@@ -9367,11 +9367,66 @@ document.getElementById('btn3-campaign').addEventListener('click', () => {
 document.getElementById('btn3-playagain').addEventListener('click', startGame3);
 
 // ── GAME LOOP ──────────────────────────────────────────────────────
+var _loopLastT = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+var _loopAcc   = 0;
+const SIM_STEP_MS   = 1000 / 60;  // one sim tick = 1/60 s (matches how the game was tuned)
+const SIM_MAX_STEPS = 5;           // cap catch-up so a slow frame can't spiral
+
+// FPS meter — hidden unless ?fps=1 in URL or 'F' key pressed
+var _fpsShow   = /[?&]fps=1/.test(location.search);
+var _fpsFrames = 0;
+var _fpsT0     = _loopLastT;
+var _fpsSteps  = 0;
+var _fpsEl     = null;
+function _ensureFpsEl() {
+  if (_fpsEl) return;
+  _fpsEl = document.createElement('div');
+  _fpsEl.style.cssText = 'position:fixed;top:6px;right:8px;z-index:99999;font:bold 13px/1.3 monospace;'
+    + 'color:#8fff8f;background:rgba(0,0,0,.55);padding:3px 7px;border-radius:5px;pointer-events:none;white-space:pre;';
+  document.body.appendChild(_fpsEl);
+}
+window.addEventListener('keydown', function(e) {
+  if (e.key === 'f' || e.key === 'F') { _fpsShow = !_fpsShow; if (!_fpsShow && _fpsEl) _fpsEl.style.display = 'none'; }
+});
+
 function loop3() {
   requestAnimationFrame(loop3);
-  if (gameState3 === 'playing') update3();
+
+  var now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  var frameMs = now - _loopLastT;
+  _loopLastT = now;
+  if (frameMs > 250) frameMs = 250;  // clamp big gaps (tab backgrounded, etc.)
+
+  var stepsThisFrame = 0;
+  if (gameState3 === 'playing') {
+    _loopAcc += frameMs;
+    while (_loopAcc >= SIM_STEP_MS && stepsThisFrame < SIM_MAX_STEPS) {
+      update3();
+      _loopAcc -= SIM_STEP_MS;
+      stepsThisFrame++;
+    }
+    if (stepsThisFrame >= SIM_MAX_STEPS) _loopAcc = 0;  // can't keep up — drop backlog, hold correct speed
+  } else {
+    _loopAcc = 0;
+  }
+
   updateVisuals3();
   renderer.render(scene, camera);
+
+  // FPS sampling
+  _fpsFrames++;
+  _fpsSteps += stepsThisFrame;
+  if (_fpsShow) {
+    _ensureFpsEl();
+    _fpsEl.style.display = 'block';
+    var el = now - _fpsT0;
+    if (el >= 500) {
+      var fps = Math.round(_fpsFrames * 1000 / el);
+      var spf = (_fpsSteps / Math.max(1, _fpsFrames)).toFixed(1);
+      _fpsEl.textContent = fps + ' fps  (' + spf + ' steps/frame)';
+      _fpsFrames = 0; _fpsSteps = 0; _fpsT0 = now;
+    }
+  }
 }
 
 // ── AUDIO ─────────────────────────────────────────────────────────
