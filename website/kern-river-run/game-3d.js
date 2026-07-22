@@ -69,6 +69,32 @@ const SPD_SCALE = 0.060;
 // Master game-speed multiplier. Tune live with ?spd=1.8 in the URL; default is the baked-in value.
 var GAME_SPEED = parseFloat((location.search.match(/[?&]spd=([\d.]+)/) || [])[1]);
 if (!GAME_SPEED || GAME_SPEED <= 0 || GAME_SPEED > 5) GAME_SPEED = 1.75;
+
+// Live speed tuner — enable with ?tune=1. Tap −/+ to change speed live; the label shows the value.
+if (/[?&]tune=1/.test(location.search)) {
+  var _spdLbl = document.createElement('div');
+  _spdLbl.style.cssText = 'position:fixed;bottom:118px;left:50%;transform:translateX(-50%);z-index:100000;'
+    + 'font:bold 24px monospace;color:#fff;background:rgba(0,0,0,.75);padding:6px 16px;border-radius:10px;';
+  var _refreshSpdLbl = function(){ _spdLbl.textContent = 'spd × ' + GAME_SPEED.toFixed(2); };
+  _refreshSpdLbl();
+  document.body.appendChild(_spdLbl);
+
+  var _mkSpdBtn = function(txt, dx, side){
+    var b = document.createElement('button');
+    b.textContent = txt;
+    b.style.cssText = 'position:fixed;bottom:24px;' + side + ':24px;z-index:100000;width:88px;height:88px;'
+      + 'font:bold 40px monospace;color:#fff;background:rgba(0,0,0,.6);border:2px solid #fff;border-radius:18px;';
+    var bump = function(e){ e.preventDefault(); e.stopPropagation();
+      GAME_SPEED = Math.min(4, Math.max(0.2, +(GAME_SPEED + dx).toFixed(2)));
+      _refreshSpdLbl();
+    };
+    b.addEventListener('click', bump);
+    b.addEventListener('touchstart', function(e){ e.stopPropagation(); }, {passive:false});
+    document.body.appendChild(b);
+  };
+  _mkSpdBtn('−', -0.1, 'left');
+  _mkSpdBtn('+', +0.1, 'right');
+}
 const CAM_Y     = 4.8;
 const CAM_Z_BK  = 8.5;
 const CAM_LOOK_Z = -8.0;
