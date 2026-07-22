@@ -36,7 +36,7 @@
     }
 
     /* Left zone: mile, stage#, progress bar */
-    #hud3-left  { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+    #hud3-left  { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
     #hud3-mile     { font-size: 13px; color: #F5F0E8; letter-spacing: 0.04em; }
     #hud3-stageNum { font-size: 11px; color: #C9883A; }
     #hud3-progress-track {
@@ -50,10 +50,10 @@
     }
 
     /* Center zone: stage-name hero + pause */
-    #hud3-center { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+    #hud3-center { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; }
     #hud3-stage {
-      font-size: 15px; color: #F1B24A;
-      letter-spacing: 1.5px; white-space: nowrap;
+      font-size: 12px; color: #F1B24A;
+      letter-spacing: 1px; white-space: nowrap;
       text-shadow: 0 0 7px rgba(241,178,74,.55), 0 2px 0 rgba(0,0,0,.6);
       animation: stage-glow 2.5s ease-in-out infinite;
     }
@@ -65,8 +65,8 @@
       background: #F1B24A; border-radius: 1px;
       transform: rotate(45deg); vertical-align: middle; opacity: 0.72;
     }
-    #hud3-stage::before { margin-right: 8px; }
-    #hud3-stage::after  { margin-left:  8px; }
+    #hud3-stage::before { margin-right: 5px; }
+    #hud3-stage::after  { margin-left:  5px; }
     @keyframes stage-glow {
       0%, 100% { text-shadow: 0 0 7px rgba(241,178,74,.55), 0 2px 0 rgba(0,0,0,.6); }
       50%       { text-shadow: 0 0 18px rgba(241,178,74,.92), 0 0 32px rgba(241,178,74,.28), 0 2px 0 rgba(0,0,0,.6); }
@@ -82,7 +82,7 @@
     #btn3-pause:hover { background: rgba(45,106,79,0.80); color: #F5F0E8; }
 
     /* Right zone: oranges top, score/best bottom */
-    #hud3-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+    #hud3-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; min-width: 0; }
     #hud3-oranges { display: flex; align-items: center; gap: 5px; }
     #hud3-orange-icon  { width: 24px; height: 24px; image-rendering: pixelated; object-fit: contain; }
     #hud3-orange-count { color: #F97316; font-size: 16px; text-shadow: 0 0 8px rgba(249,115,22,.50); }
@@ -159,9 +159,17 @@
 
     /* Main menu start screen: let the image drive the size */
     #screen3-start { width: auto; max-width: 100vw; padding: 0; gap: 0; }
+    /* Tighter glow so highlights stay within baked artwork */
+    #screen3-start .hit-area:hover {
+      box-shadow: 0 0 16px 4px rgba(255,214,120,.48), inset 0 0 14px rgba(255,214,120,.20);
+    }
 
     /* Game-over screen: same image-driven override */
     #screen3-gameover { width: auto; max-width: 100vw; padding: 0; gap: 0; }
+    /* Tighter glow so highlight stays within baked artwork */
+    #screen3-gameover .hit-area:hover {
+      box-shadow: 0 0 16px 4px rgba(255,214,120,.48), inset 0 0 14px rgba(255,214,120,.20);
+    }
     /* Title is baked into artwork — keep element in DOM but hide it */
     #screen3-gameover .go-title3 { display: none; }
 
@@ -219,8 +227,8 @@
       pointer-events: none;
       overflow: hidden;
       mix-blend-mode: screen;
-      -webkit-mask-image: url(logo-mask.png?v=1);
-              mask-image: url(logo-mask.png?v=1);
+      -webkit-mask-image: url(logo-mask.png?v=2);
+              mask-image: url(logo-mask.png?v=2);
       -webkit-mask-size: 100% 100%;
               mask-size: 100% 100%;
       mask-repeat: no-repeat;
@@ -257,6 +265,45 @@
     /* On logo hover: brighter sweep + warm glow */
     .logo-hover-zone:hover ~ .logo-sheen { filter: brightness(1.9); }
     .logo-hover-zone:hover ~ .logo-sheen::after { opacity: 1; }
+
+    /* Mute button — inline in HUD next to PAUSE, matches pause button style */
+    #hud3-center-row { display: flex; gap: 4px; align-items: center; }
+    #btn-mute {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 7px; color: rgba(245,240,232,0.78);
+      background: rgba(30,58,95,0.65);
+      border: 1px solid rgba(245,240,232,0.22);
+      padding: 3px 6px; cursor: pointer;
+      transition: background 150ms;
+    }
+    #btn-mute:hover { background: rgba(45,106,79,0.80); color: #F5F0E8; }
+
+    /* Volume slider — desktop only; hidden on touch via media query */
+    #vol-slider {
+      display: none;
+      width: 52px; height: 3px; vertical-align: middle;
+      -webkit-appearance: none; appearance: none;
+      background: rgba(11,31,58,0.70);
+      border: 1px solid rgba(245,240,232,0.22);
+      border-radius: 2px; cursor: pointer;
+      accent-color: #C9883A;
+    }
+    @media (pointer: fine) { #vol-slider { display: inline-block; } }
+    #vol-slider::-webkit-slider-runnable-track {
+      background: rgba(11,31,58,0.70); height: 3px; border-radius: 2px;
+    }
+    #vol-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 10px; height: 10px; margin-top: -3.5px;
+      background: #C9883A; border-radius: 50%; cursor: pointer;
+    }
+    #vol-slider::-moz-range-track {
+      background: rgba(11,31,58,0.70); height: 3px; border-radius: 2px;
+    }
+    #vol-slider::-moz-range-thumb {
+      width: 10px; height: 10px;
+      background: #C9883A; border: none; border-radius: 50%; cursor: pointer;
+    }
 
     /* Controls screen (new) */
     #controls3 {
@@ -443,6 +490,128 @@
     .story-controls .btn3 { max-width: 170px; font-size: 8px; padding: 10px 14px; }
 
     #dev-stage-label { display: none; }
+
+
+    /* ── PAUSE SCREEN (image-based) ── */
+    #screen3-paused { width: auto; max-width: 100vw; padding: 0; gap: 0; }
+    /* Tighter glow on pause buttons so highlight stays within baked artwork */
+    #screen3-paused .hit-area:hover {
+      box-shadow: 0 0 16px 4px rgba(255,214,120,.48), inset 0 0 14px rgba(255,214,120,.20);
+    }
+
+    /* ── SCOREBOARD SCREEN ── */
+    #screen3-scoreboard { width: auto; max-width: 100vw; padding: 0; gap: 0; cursor: pointer; }
+    /* Row list: scrollable window over the baked-art grid area */
+    #sb3-rows {
+      position: absolute; top: 33%; left: 0; width: 100%; height: 45%;
+      display: flex; flex-direction: column;
+      overflow-y: auto; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; pointer-events: auto;
+    }
+    #sb3-rows::-webkit-scrollbar { display: none; }
+    .sb3-row {
+      position: relative; flex: 0 0 10%; /* fixed 1/10 of container; 11-25 scroll */
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(4px, 1.25vw, 8px); color: #F5F0E8;
+    }
+    .sb3-row.sb3-own { color: #F1B24A; background: rgba(201,136,58,.12); }
+    /* Each cell is absolute so columns match baked header */
+    .sb3-cell { position: absolute; top: 50%; overflow: hidden; white-space: nowrap; }
+    .sb3-rank  { left: 13%; transform: translate(-50%, -50%); }
+    .sb3-name  { left: 23%; transform: translateY(-50%); max-width: 36%; text-overflow: ellipsis; }
+    .sb3-score { left: 61%; transform: translate(-50%, -50%); }
+    .sb3-orng  { left: 87%; transform: translate(-50%, -50%); }
+    #sb3-empty {
+      position: absolute; top: 55%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(6px, 1.5vw, 9px); color: rgba(245,240,232,0.65);
+      pointer-events: none; text-align: center; white-space: nowrap; line-height: 1.8;
+    }
+    /* ── NAME ENTRY SCREEN ── */
+    #sb3-name-input {
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(9px, 2.2vw, 14px);
+      color: #F5F0E8; background: rgba(11,31,58,0.85);
+      border: 2px solid #C9883A; padding: 10px 14px;
+      width: 100%; max-width: 260px;
+      text-transform: uppercase; text-align: center;
+      letter-spacing: 0.12em; outline: none; caret-color: #F1B24A;
+      box-sizing: border-box; display: block; margin: 0 auto;
+    }
+    #sb3-name-input:focus { border-color: #F1B24A; box-shadow: 0 0 0 2px rgba(241,178,74,0.28); }
+    #sb3-name-input::placeholder { color: rgba(245,240,232,0.30); }
+    .nameentry-btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 1em; }
+    /* ── MAIN-MENU MODE CARD PICKER ── */
+    .mode-picker-wrap {
+      position: absolute; left: 50%; top: 68%; transform: translateX(-50%);
+      width: 64%; pointer-events: auto; z-index: 2;
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+    }
+    .mode-picker-row {
+      display: flex; gap: 2%; width: 100%; justify-content: center; align-items: flex-start;
+    }
+    /* Each card column: same fixed width, no internal flex (avoids align-items: center shrinkage) */
+    .mode-card-col {
+      position: relative;   /* badge anchors absolutely to this */
+      flex: 0 0 28%;
+      min-width: 0;         /* prevent min-width: auto from widening cols */
+    }
+    .mode-card {
+      display: block;       /* <button> is inline by default — must be block */
+      width: 100%;          /* fills the 28% col exactly */
+      border: none; background: transparent; padding: 0;
+      cursor: pointer; pointer-events: auto;
+      filter: brightness(0.68);
+      transform: translateY(0);
+      transition: filter 0.15s, transform 0.15s;
+    }
+    .mode-card img { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+    @keyframes badge-wiggle {
+      0%   { transform: translateX(-50%) rotate(-2.5deg); }
+      50%  { transform: translateX(-50%) rotate( 2.5deg); }
+      100% { transform: translateX(-50%) rotate(-2.5deg); }
+    }
+    /* Recommended badge: absolutely positioned below Classic card, never affects column width */
+    .mode-card-recommended {
+      position: absolute;
+      top: calc(100% + 7px);
+      left: 50%;
+      transform-origin: center;
+      animation: badge-wiggle 1.4s ease-in-out infinite;
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(8px, 1.4vw, 11px);
+      color: #F1E7D7;
+      text-shadow: 1px 1px 0 #0B1F3A, -1px 1px 0 #0B1F3A,
+                   1px -1px 0 #0B1F3A, -1px -1px 0 #0B1F3A;
+      text-align: center;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    .mode-card:hover:not(.selected) { filter: brightness(0.88); transform: translateY(-3px); }
+    .mode-card.selected {
+      filter: brightness(1.05) drop-shadow(0 0 10px rgba(241,178,74,.75));
+      transform: translateY(-4px);
+    }
+    @keyframes mode-nudge {
+      0%   { transform: translateY(0);    filter: brightness(0.68); }
+      25%  { transform: translateY(-6px); filter: brightness(1.00); }
+      65%  { transform: translateY(-2px); filter: brightness(0.82); }
+      100% { transform: translateY(0);    filter: brightness(0.68); }
+    }
+    .mode-card.nudge { animation: mode-nudge 0.5s ease-out forwards; }
+    /* ── MAIN-MENU SCOREBOARD IMAGE BUTTON ── */
+    #btn3-sb-mainmenu {
+      position: absolute; left: 29%; top: 61%; width: 42%; height: auto;
+      display: block; cursor: pointer;
+      border: none; background: transparent; padding: 0;
+      transition: box-shadow 150ms ease, filter 150ms ease;
+    }
+    #btn3-sb-mainmenu img { display: block; width: 100%; height: auto; }
+    #btn3-sb-mainmenu:hover {
+      box-shadow: 0 0 28px 10px rgba(255,214,120,.48), inset 0 0 20px rgba(255,214,120,.20);
+      filter: brightness(1.08);
+    }
   </style>
 </head>
 <body>
@@ -458,10 +627,14 @@
         <div id="hud3-progress-fill"></div>
       </div>
     </div>
-    <!-- CENTER: stage name hero · pause -->
+    <!-- CENTER: stage name hero · pause · mute · volume -->
     <div id="hud3-center">
       <span id="hud3-stage">HEADWATERS</span>
-      <button id="btn3-pause">&#10074;&#10074; PAUSE</button>
+      <div id="hud3-center-row">
+        <button id="btn3-pause">&#10074;&#10074; PAUSE</button>
+        <button id="btn-mute" aria-label="Toggle mute">🔊</button>
+        <input type="range" id="vol-slider" min="0" max="1" step="0.05" aria-label="Volume">
+      </div>
     </div>
     <!-- RIGHT: orange count · score/best -->
     <div id="hud3-right">
@@ -496,9 +669,25 @@
         <div class="logo-hover-zone" aria-hidden="true"></div>
         <div class="logo-sheen" aria-hidden="true"></div>
         <button class="hit-area" id="btn3-start"
-          style="left:29%;top:47%;width:42%;height:7%"></button>
+          style="left:27%;top:47%;width:46%;height:7.5%"></button>
         <button class="hit-area" id="btn3-story"
-          style="left:29%;top:54.5%;width:42%;height:6.5%"></button>
+          style="left:27%;top:55%;width:46%;height:5%"></button>
+        <button id="btn3-sb-mainmenu"><img src="scoreboard-btn.png?v=2" alt="Scoreboard"></button>
+        <div class="mode-picker-wrap" id="mode-picker">
+          <div class="mode-picker-row">
+            <div class="mode-card-col">
+              <button class="mode-card" id="mode-card-classic" aria-label="Classic mode">
+                <img src="mode-classic.png?v=3" alt="Classic">
+              </button>
+              <span class="mode-card-recommended">RECOMMENDED</span>
+            </div>
+            <div class="mode-card-col">
+              <button class="mode-card" id="mode-card-daring" aria-label="Daring mode">
+                <img src="mode-daring.png?v=3" alt="Daring">
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -510,9 +699,9 @@
         <h1 class="go-title3"></h1>
         <!-- Hit-area buttons — IDs/handlers unchanged -->
         <button class="hit-area" id="btn3-retry"
-          style="left:16%;top:64.5%;width:68%;height:8%"></button>
+          style="left:16%;top:65%;width:68%;height:7.5%"></button>
         <button class="hit-area" id="btn3-menu"
-          style="left:16%;top:72.5%;width:68%;height:8%"></button>
+          style="left:16%;top:73.5%;width:68%;height:7.5%"></button>
         <!-- Dynamic stats below the buttons -->
         <div class="go-stats-wrap">
           <p class="go-stage3"></p>
@@ -523,11 +712,26 @@
       </div>
     </div>
 
-    <!-- PAUSED SCREEN -->
+    <!-- PAUSED SCREEN (pause.png image-based) -->
     <div id="screen3-paused" class="screen3">
-      <h1>PAUSED</h1>
-      <button class="btn3" id="btn3-resume">RESUME</button>
-      <button class="btn3 secondary" id="btn3-quit">QUIT RUN</button>
+      <div class="menu-img-wrap">
+        <img src="pause.png?v=1" alt="Paused">
+        <button class="hit-area" id="btn3-resume"
+          style="left:20%;top:34.5%;width:59%;height:7%"></button>
+        <button class="hit-area" id="btn3-quit"
+          style="left:20%;top:42.5%;width:59%;height:7%"></button>
+        <button class="hit-area" id="btn3-scoreboard"
+          style="left:20%;top:50.5%;width:59%;height:7%"></button>
+      </div>
+    </div>
+
+    <!-- SCOREBOARD SCREEN -->
+    <div id="screen3-scoreboard" class="screen3">
+      <div class="menu-img-wrap">
+        <img src="scoreboard.png?v=1" alt="Scoreboard">
+        <div id="sb3-rows"></div>
+        <div id="sb3-empty" style="display:none">NO SCORES YET</div>
+      </div>
     </div>
 
     <!-- ENDING DIALOG 1 (Kern River message) -->
@@ -570,6 +774,20 @@
       <button class="btn3"        id="btn3-playagain">PLAY AGAIN</button>
     </div>
 
+    <!-- NAME ENTRY (post-win scoreboard submit) -->
+    <div id="screen3-nameentry" class="screen3">
+      <h1 style="color:#C9883A;font-size:clamp(10px,3vw,20px)">165 MILES!</h1>
+      <p id="nameentry-score" class="score-line">SCORE: 0</p>
+      <div class="divider-line"></div>
+      <p class="body-txt" style="font-size:clamp(5px,1.4vw,8px)">Enter your name for the leaderboard:</p>
+      <input type="text" id="sb3-name-input" maxlength="10" placeholder="YOUR NAME"
+             autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
+      <div class="nameentry-btns">
+        <button class="btn3" id="btn3-nameentry-submit">SUBMIT</button>
+        <button class="btn3 muted" id="btn3-nameentry-skip">SKIP</button>
+      </div>
+    </div>
+
   </div>
 
   <!-- STORY VIEWER (full-screen comic panel reader) -->
@@ -602,8 +820,7 @@
   <!-- CONTROLS SCREEN (new — shown between main menu and river rules) -->
   <div id="controls3">
     <div class="menu-img-wrap">
-      <img src="controls.png?v=1" alt="Controls">
-      <div class="controls3-hint">CLICK TO CONTINUE</div>
+      <img id="controls3-img" src="" alt="Controls">
     </div>
   </div>
 
@@ -613,6 +830,6 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="game-3d.js?v=26"></script>
+  <script src="game-3d.js?v=73"></script>
 </body>
 </html>

@@ -1,8 +1,7 @@
 # Kern River Run game dev workspace — exclude raw exports and junk
 
-# Audio and compressed files
+# Compressed files
 *.zip
-*.mp3
 
 # Any filename containing a space (raw Blender/Photoshop exports)
 * *

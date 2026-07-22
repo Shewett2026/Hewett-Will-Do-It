@@ -13,8 +13,8 @@ const BK_SEG_N  = 18;   // segments per side; chain length = BK_SEG_N * BK_SEG_Z
 const BANK_W0   = 5.0;  // base segment width for meander sine
 const BANK_AMP  = 2.8;  // meander amplitude
 const BANK_FREQ = 0.048; // meander spatial frequency (radians per world unit)
-var JUMP_DURATION    = 100;  // frames airborne at 60fps (~1.67 sec); was 56 (~0.93 sec)
-var JUMP_HEIGHT      = 2.8;  // world units at apex (was 4.5; lower = floaty glide, not moon-leap)
+var JUMP_DURATION    = 120;  // frames airborne at 60fps (~2.0 sec); +20% for trick breathing room
+var JUMP_HEIGHT      = 3.36; // world units at apex; +20% (was 2.8)
 var JUMP_ARC_FLATTEN = 0.60; // exponent < 1 broadens the sin peak into a hang plateau; 1.0 = pure sine
 // Jump body animation (layered on torso rotation, not the arc itself)
 var JUMP_CROUCH_AMOUNT = 0.18; // rad: torso leans forward at liftoff anticipation
@@ -26,6 +26,22 @@ var JUMP_PITCH_DOWN = -0.18; // rad nose-down on re-entry (peak at t=0.95; negat
 // Tail whip: steering-driven yaw+roll kick, unwinds to 0 before landing
 var JUMP_WHIP_YAW  = 0.35;  // rad: tail swings out in the steering direction
 var JUMP_WHIP_ROLL = 0.20;  // rad: roll lean into the whip (heels toward the kick)
+// Air trick (second spacebar press while airborne)
+var _airTrick          = false;
+var _airTrickStartFrame = 0;
+var _airTrickType      = '';   // 'roll' | 'flip' | 'spin'
+var _airTrickDir       = 1;
+// Trick + spin scoring
+var TRICK_BONUS    = 500;   // points for a flair trick (roll / flip / spin)
+var SPIN_PTS_DEG   = 2;     // points per degree of total air-spin on landing (DARING only)
+var SPIN_MIN_DEG   = 30;    // minimum degrees before any spin bonus is awarded
+// Air-spin: held A/D during jump accumulates yaw; landing snaps to forward or backward.
+var AIR_YAW_RATE = 0.05;    // rad/frame while steer key held airborne
+var _airYaw      = 0;       // yaw accumulated this jump (resolved at landing)
+var _baseFacingY = 0;       // persistent boat-base facing: 0 = forward, Math.PI = backward
+var _reversed    = false;   // true = facing backward; steering is inverted
+var _settleYawFrom = 0;     // rotation.y captured at the moment of landing
+var _settleYawT    = 1.0;   // settle progress: 1.0 = done (not settling)
 // Water re-entry splash constants
 var SPLASH_COUNT    = 28;   // droplets on landing
 var SPLASH_SPREAD   = 1.8;  // X offset (world units) for port/starboard hull rings
@@ -56,7 +72,7 @@ const CAM_LOOK_Z = -8.0;
 const WATER_OPACITY = 0.60;   // tune here: 0=invisible 1=solid; 0.60 = clear shallow river
 var NARROW_MILES = 1.5;        // miles over which sub-narrow squeeze animates (Shift+F7/F8 to tune)
 // ── CLOUD SHADOW / CREPUSCULAR RAY CONSTANTS ─────────────────────
-var CLOUD_SHADOW_OPACITY     = 0.40;  // shadow blob max opacity; Ctrl+Shift+1/2 (-/+0.02)
+var CLOUD_SHADOW_OPACITY     = 0.26;  // shadow blob max opacity; Ctrl+Shift+1/2 (-/+0.02); was 0.40 (−35%)
 var CLOUD_SHADOW_SIZE        = 24;    // shadow base width wu — SUNNY stages; Alt+q/w (-/+10)
 var CLOUD_SHADOW_SIZE_STORM  = 45;    // shadow size for canyon stages 3+4; Ctrl+Alt+1/2 (-/+10)
 var CLOUD_DRIFT_SPEED        = 0.80;  // wu/s ambient drift, independent of terrain; Ctrl+Shift+5/6
@@ -327,7 +343,7 @@ var fxCurrentTex = null;
     tex.generateMipmaps = false; tex.needsUpdate = true;
     fxRippleTex = tex;
   }, undefined, function(e) { console.warn('[KRR WFX] fx-ripple.png failed', e); });
-  ldr.load('fx-bubble.png', function(tex) {
+  ldr.load('fx-bubble.png?v=3', function(tex) {
     tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
     tex.generateMipmaps = false; tex.needsUpdate = true;
     fxBubbleTex = tex;
@@ -454,6 +470,8 @@ let wfGroup     = null;
 let wfStrips    = [];
 let bankTrees3      = [];  // scrolling tree sprite pool (not riverGroup children)
 let bankBoulders3   = [];  // scrolling bank boulder sprite pool (stages 2-4, decoration only)
+let bankCattails3   = [];  // scrolling cattail sprites (flat list; for teardown)
+var _cattailGroups  = [];  // group objects (anchor Z + member list); used for scroll/recycle
 let bankBillboards3 = [];  // scrolling billboard sprite pool (stages 1,3,5)
 var _lastBillboardIdx      = -1;  // last texture index used; avoid back-to-back repeats on recycle
 var _lastBillboardDespawnT =  0;  // wall-clock ms when any billboard last left the view (for cadence log)
@@ -477,6 +495,7 @@ var _diagS3HouseDone    = false; // one-shot diag for stage-3 lake-house y; remo
 var _diagS5FarmDone     = false; // one-shot diag for stage-5 farm-house y; remove after reading
 let bankHouses3   = [];  // scrolling lake-house sprite pool (Stage 3 only)
 let canyonWalls4  = [];  // scrolling canyon-wall boulder sprite pool (Stage 4 only)
+let shoreScatter4 = [];  // small pebble + decor sprites on Stage-4 shore band (no collision)
 let canyonFill4     = [];  // mesh refs for disposal (Stage 4 canyon fill pool)
 let canyonFillSegs4 = [];  // { mesh, z } z-scroll pool (Stage 4 canyon fill segments)
 let rockWallMats4   = [];  // retained for compat; no longer populated (UV scroll removed)
@@ -694,6 +713,19 @@ var boulderObsTexNames = ['boulder-2.png', 'boulder-3.png', 'boulder-5.png'];
       }, undefined, function(e) { console.error('[KRR] ' + boulderObsTexNames[idx] + ' FAILED', e); });
     })(boi);
   }
+})();
+
+// ── CATTAIL TEXTURES ──────────────────────────────────────────────────────
+var cattailTex = [null, null];  // cattail-1, cattail-2
+(function preloadCattailTex() {
+  var loader = new THREE.TextureLoader();
+  ['cattail-1.png?v=1', 'cattail-2.png?v=1'].forEach(function(name, idx) {
+    loader.load(name, function(tex) {
+      tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+      tex.generateMipmaps = false; tex.needsUpdate = true;
+      cattailTex[idx] = tex;
+    }, undefined, function(e) { console.error('[KRR] ' + name + ' FAILED', e); });
+  });
 })();
 
 // ── ALPHA-BOTTOM PADDING HELPER ──────────────────────────────────────────
@@ -1370,6 +1402,11 @@ function buildWorld() {
   bankGrassTufts5Top = [];
   canyonWalls4.forEach(function(cw) { scene.remove(cw.sprite); if (cw.sprite.material) cw.sprite.material.dispose(); });
   canyonWalls4 = [];
+  shoreScatter4.forEach(function(ss) { scene.remove(ss.sprite); if (ss.sprite.material) ss.sprite.material.dispose(); });
+  shoreScatter4 = [];
+  bankCattails3.forEach(function(ct) { scene.remove(ct.sprite); if (ct.sprite.material) ct.sprite.material.dispose(); });
+  bankCattails3 = [];
+  _cattailGroups = [];
   // Dispose shared canyon fill material once, then free per-segment geometries
   if (canyonFillSegs4.length > 0 && canyonFillSegs4[0].mesh.material) {
     var _cfmD = canyonFillSegs4[0].mesh.material;
@@ -1795,11 +1832,13 @@ function buildWorld() {
   else if (stg.num === 4) {
     initCanyonWalls4(rw);
     initCanyonFillPool4(riverGroup, rw);
-    console.log('[KRR S4 AUDIT] wallBoulders=' + canyonWalls4.length + ' otherBankBoulders=' + bankBoulders3.length);
+    initShoreScatter4(rw);
+    console.log('[KRR S4 AUDIT] wallBoulders=' + canyonWalls4.length + ' otherBankBoulders=' + bankBoulders3.length + ' shoreScatter=' + shoreScatter4.length);
   }
   // No poppies in Stage 2 (stageIdx 1) or Stage 4 (stageIdx 3) -- water-heavy stages
   if (stageIdx !== 1 && stageIdx !== 3) { initBankPoppies3(rw); }
   if (BILLBOARD_STAGES.indexOf(STAGES3[stageIdx].num) !== -1) { initBankBillboards3(rw); }
+  if (stageIdx !== 1) { initBankCattails3(rw); }  // stages 1,3,4,5; skip stage 2
   applyRiverWidth();
   initWaterFX();
 
@@ -1912,8 +1951,8 @@ var S5_BD_Y    = -3.0;  // Stage 5 backdrop Y offset from default y=26 (TEMP fra
 var S5_TERR_SCROLL   = 1.0;  // Stage 5 swamp terrain scroll multiplier
 // Stage 5 bank decoration pool sizes (module-level; tunable live via Ctrl+F7-F12)
 var S5_POOL_BASE     = 6;   // decor pool multiplier (Ctrl+F11/F12 to tune; was 8)
-var S5_TREE_COUNT    = 24;  // bank tree count for stage 5 only (Ctrl+F9/F10; was 16)
-var S5_BOULDER_COUNT = 11;  // bank boulder count for stage 5 only (Ctrl+F7/F8)
+var S5_TREE_COUNT    = 25;  // bank tree count for stage 5 only (Ctrl+F9/F10; was 24 → +5%)
+var S5_BOULDER_COUNT = 12;  // bank boulder count for stage 5 only (Ctrl+F7/F8; was 11 → +5%)
 // Stage 5 bank decoration spawn frequencies (relative to S5_POOL_BASE)
 // pool count = Math.max(1, Math.round(freq * S5_POOL_BASE))
 var S5_FREQ_TREE_STUMP   = 0.60;   // semi-frequent ground clutter
@@ -1935,11 +1974,11 @@ var DECOR_SINK_TRIM    = 0.03;  // subtracted from padFrac to lift slightly-buri
 var S5_FARMHOUSE_SEAT_Y = -3.23; // bottom anchor Y; seats building base at GROUND_PLANE_Y (-0.02) accounting for ~27% art padding (0.27*11.9=3.21); set by DECOR_SEAT_GND - 3.21 in per-frame loop
 var BANK_BLDG_SEAT_Y   = 0.60;  // bank top Y reference (bank box height=0.60, center 0.30); reserved for decor that sits ON the bank, not the far ground
 var S5_FISHING_SCALE   = 3.50;  // 2.0 base x 2.5 x 0.7
-var S5_GRASS_W        = 0.60;  // grass tuft width wu; Alt+7/8 to tune (-/+0.05)
-var S5_GRASS_POOL     = 180;   // ground scatter pool count (+50% from 120); Alt+5/6 to tune
-var S5_GRASS_BANK_POOL = 60;   // bank-top scatter pool count (+50% from 40; page reload to change)
-var S1_GRASS_POOL      = 130;  // stage 1 far-ground scatter (slightly sparser than stage 5)
-var S1_GRASS_BANK_POOL = 16;   // stage 1 bank-top: sparse tufts, not a carpet
+var S5_GRASS_W        = 0.69;  // grass tuft width wu; Alt+7/8 to tune (-/+0.05); was 0.60 (+15%)
+var S5_GRASS_POOL     = 189;   // ground scatter pool count; was 180 (+5%)
+var S5_GRASS_BANK_POOL = 63;   // bank-top scatter pool count; was 60 (+5%)
+var S1_GRASS_POOL      = 137;  // stage 1 far-ground scatter (also used by stage 3); was 130 (+5%)
+var S1_GRASS_BANK_POOL = 17;   // stage 1 bank-top (also used by stage 3); was 16 (+5%)
 var S5_GRASS_XBAND    = 8.0;   // scatter band width wu from bank apron edge; Alt+9/0 to tune
 var S5_BANK_SEAT_Y    = 0.62;  // Y for sprites on bank-top surface (bank segs at y=0.30 + half-h=0.30)
 var S5_CART_SEAT_Y     = -0.20;  // bottom anchor Y; sinks lower ~third of cart below water surface (y=0.15)
@@ -2136,11 +2175,12 @@ function makeBankTreeSprite(variety, h) {
   return spr;
 }
 
-var STAGE1_TREE_COUNT    = 64;   // bank tree pool for stage 1; requires stage reload to apply
-var STAGE1_BOULDER_COUNT = 12;   // bank boulder pool for stage 1; low-moderate scatter
-var STAGE3_TREE_COUNT    = 42;   // tune to thin or thicken Stage 3 bank trees; requires stage reload
+var STAGE1_TREE_COUNT    = 67;   // bank tree pool for stage 1; was 64 (+5%)
+var STAGE1_BOULDER_COUNT = 13;   // bank boulder pool for stage 1; was 12 (+5%)
+var STAGE3_TREE_COUNT    = 44;   // bank tree pool for stage 3; was 42 (+5%)
 var TREE_XOFF_BIAS       = 0.50; // exponent for tree xOff: 0.5=strongly outward, 1.0=uniform; Ctrl+Shift+B/H
-var STAGE3_BOULDER_COUNT = 11;   // sparser than trees by design; tune separately
+var STAGE3_BOULDER_COUNT = 12;   // bank boulder pool for stage 3; was 11 (+5%)
+var CATTAIL_GROUPS_PER_SIDE = 6;  // group slots per bank side (tune to adjust density)
 
 // ── BILLBOARD CONSTANTS ───────────────────────────────────────────────────
 var BILLBOARD_SCALE     = 3.5;   // world-unit height of sign; Shift+C/F to tune (-/+0.25)
@@ -2199,6 +2239,114 @@ function initBankBoulders3(rw, count) {
     scene.add(spr);
     bankBoulders3.push({ sprite: spr, side: side, z: zInit, xOff: xOff, shoreW: SHORE_W });
   }
+}
+
+// ── SCROLLING CATTAIL POOL (GROUP-BASED) ──────────────────────────────────
+// Groups: SINGLE (1 plant), STRETCH (4–7 in a Z-line), CONGREGATION (5–9 cluster).
+// bankCattails3 = flat list of all sprites for teardown.
+// _cattailGroups = group objects for per-frame scroll/recycle.
+
+function _ctMkCattail(rw, side, anchorZ, dz, xOff, members) {
+  var vIdx = Math.floor(Math.random() * 2);
+  var tex  = cattailTex[vIdx];
+  var cH   = 0.85 + Math.random() * 0.85;
+  var cAR  = tex && tex.image && tex.image.naturalHeight > 0
+    ? tex.image.naturalWidth / tex.image.naturalHeight : 0.38;
+  var mat  = new THREE.SpriteMaterial({ map: tex || null, transparent: true, alphaTest: 0.06, depthWrite: false });
+  var spr  = new THREE.Sprite(mat);
+  spr.center.set(0.5, 0);
+  spr.scale.set(cH * cAR, cH, 1);
+  spr.position.set(side * (rw / 2 + xOff), DECOR_SEAT_GND, anchorZ + dz);
+  scene.add(spr);
+  members.push({ sprite: spr, dx: xOff, dz: dz, isGrass: false, varIdx: vIdx });
+}
+
+function _ctMkGrass(rw, side, anchorZ, dz, xOff, members, texPool) {
+  var tex    = texPool.length > 0 ? texPool[Math.floor(Math.random() * texPool.length)] : null;
+  var natAR  = tex && tex.image && tex.image.naturalHeight > 0
+    ? tex.image.naturalHeight / tex.image.naturalWidth : 0.621;
+  var scl    = 0.65 + Math.random() * 0.35;
+  var padFrac = tex && tex._padFrac !== undefined ? tex._padFrac : 0;
+  var mat    = tex
+    ? new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.08 })
+    : new THREE.SpriteMaterial({ color: 0x7A9A60, transparent: true, opacity: 0.85 });
+  var spr    = new THREE.Sprite(mat);
+  spr.scale.set(S5_GRASS_W * scl, S5_GRASS_W * natAR * scl, 1);
+  spr.center.set(0.5, _effectivePadFrac(padFrac));
+  spr.position.set(side * (rw / 2 + xOff), DECOR_SEAT_GND, anchorZ + dz);
+  scene.add(spr);
+  members.push({ sprite: spr, dx: xOff, dz: dz, isGrass: true });
+}
+
+function initBankCattails3(rw) {
+  _cattailGroups = [];
+  var zSpan = Math.abs(SPAWN_Z) + DESPAWN_Z;  // full visible Z range
+
+  // Grass textures to supplement each stretch / congregation
+  var _gTexPool;
+  if      (stageIdx === 0) _gTexPool = grassTuftTex1 ? [grassTuftTex1] : [];
+  else if (stageIdx === 2) _gTexPool = grassTuftTex3 ? [grassTuftTex3] : [];
+  else if (stageIdx === 3) _gTexPool = [grassTuftTex1, grassTuftTex3, grassTuftTex5].filter(Boolean);
+  else if (stageIdx === 4) _gTexPool = grassTuftTex5 ? [grassTuftTex5] : [];
+  else _gTexPool = [];
+
+  [-1, 1].forEach(function(bankSide) {
+    for (var gi = 0; gi < CATTAIL_GROUPS_PER_SIDE; gi++) {
+      // Stagger group anchors across Z, with random jitter inside each slot
+      var anchorZ = SPAWN_Z + (gi + 0.25 + Math.random() * 0.55) * (zSpan / CATTAIL_GROUPS_PER_SIDE);
+
+      var typeRoll = Math.random();
+      var gType = typeRoll < 0.40 ? 'SINGLE' : typeRoll < 0.70 ? 'STRETCH' : 'CONGREGATION';
+      var members = [];
+
+      if (gType === 'SINGLE') {
+        var _xo = 0.08 + Math.random() * 0.42;
+        _ctMkCattail(rw, bankSide, anchorZ, 0, _xo, members);
+
+      } else if (gType === 'STRETCH') {
+        var _cnt     = 4 + Math.floor(Math.random() * 4);   // 4–7 plants
+        var _spacing = 0.48 + Math.random() * 0.42;          // Z gap between plants
+        var _baseX   = 0.06 + Math.random() * 0.32;
+        for (var si = 0; si < _cnt; si++) {
+          var _dz = (si - (_cnt - 1) / 2) * _spacing;
+          var _dx = Math.max(0.05, _baseX + (Math.random() - 0.5) * 0.12);
+          _ctMkCattail(rw, bankSide, anchorZ, _dz, _dx, members);
+        }
+        // 2–4 grass sprites scattered around the stretch
+        var _gCnt = 2 + Math.floor(Math.random() * 3);
+        for (var gsi = 0; gsi < _gCnt; gsi++) {
+          var _gdz = (Math.random() - 0.5) * _cnt * _spacing * 1.5;
+          var _gdx = SHORE_W * 0.15 + Math.random() * (SHORE_W * 0.80);
+          _ctMkGrass(rw, bankSide, anchorZ, _gdz, _gdx, members, _gTexPool);
+        }
+
+      } else {  // CONGREGATION
+        var _cnt  = 5 + Math.floor(Math.random() * 5);   // 5–9 plants
+        var _baseX = 0.10 + Math.random() * 0.32;
+        for (var ci = 0; ci < _cnt; ci++) {
+          var _dz = (Math.random() - 0.5) * 2.0;
+          var _dx = Math.max(0.05, _baseX + (Math.random() - 0.5) * 0.28);
+          _ctMkCattail(rw, bankSide, anchorZ, _dz, _dx, members);
+        }
+        // 2–4 grass sprites around the cluster
+        var _gCnt = 2 + Math.floor(Math.random() * 3);
+        for (var gci = 0; gci < _gCnt; gci++) {
+          var _gdz = (Math.random() - 0.5) * 3.2;
+          var _gdx = SHORE_W * 0.15 + Math.random() * (SHORE_W * 0.80);
+          _ctMkGrass(rw, bankSide, anchorZ, _gdz, _gdx, members, _gTexPool);
+        }
+      }
+
+      // maxDz = furthest-downstream member offset (triggers recycle when past DESPAWN)
+      var maxDz = 0;
+      for (var mi = 0; mi < members.length; mi++) {
+        if (members[mi].dz > maxDz) maxDz = members[mi].dz;
+      }
+
+      _cattailGroups.push({ side: bankSide, z: anchorZ, type: gType, members: members, maxDz: maxDz });
+      for (var ti = 0; ti < members.length; ti++) { bankCattails3.push(members[ti]); }
+    }
+  });
 }
 
 // ── SCROLLING BILLBOARD POOL ──────────────────────────────────────────────
@@ -2430,6 +2578,38 @@ function initCanyonFillPool4(rg, rw) {
 }
 
 
+// Stage 4 shore scatter: small pebble sprites on the flat strip between water edge and canyon wall.
+// X band: E + SHORE4_X_MIN .. E + SHORE4_X_MAX, well outside the play lane (WALL4_INNER_GAP=1.8).
+// No collision — purely decorative. Reuses bankBoulderTex at greatly reduced scale.
+function initShoreScatter4(rw) {
+  var E     = rw / 2;
+  var zSpan = Math.abs(SPAWN_Z) + 12;
+  for (var si = 0; si < SHORE4_COUNT * 2; si++) {
+    var side   = si < SHORE4_COUNT ? -1 : 1;
+    var dx     = SHORE4_X_MIN + Math.random() * (SHORE4_X_MAX - SHORE4_X_MIN);
+    var xPos   = side * (E + dx);
+    var zInit  = SPAWN_Z + Math.random() * zSpan;
+    var texIdx = Math.floor(Math.random() * bankBoulderTex.length);
+    var tex    = bankBoulderTex[texIdx];
+    var mat    = tex
+      ? new THREE.SpriteMaterial({ map: tex, transparent: true, alphaTest: 0.10 })
+      : new THREE.SpriteMaterial({ color: 0x7A6A58, transparent: true, opacity: 0.85 });
+    // subtle tint variation so pebbles don't look uniform
+    var tv = 0.72 + Math.random() * 0.28;
+    mat.color.setRGB(tv, tv, tv);
+    var flipX  = Math.random() < 0.5 ? 1 : -1;
+    var h      = SHORE4_SCALE_MIN + Math.random() * (SHORE4_SCALE_MAX - SHORE4_SCALE_MIN);
+    var wf     = 0.75 + Math.random() * 0.70; // wider or more squarish pebbles
+    var spr    = new THREE.Sprite(mat);
+    spr.center.set(0.5, 0);  // base-anchored; sits on the shore surface
+    spr.scale.set(h * wf * flipX, h, 1);
+    spr.position.set(xPos, -0.12, zInit); // slightly below 0 so base kisses the pebble-floor
+    spr.renderOrder = 2;
+    scene.add(spr);
+    shoreScatter4.push({ sprite: spr, side: side, dx: dx, z: zInit, h: h, wf: wf, flipX: flipX });
+  }
+}
+
 var STAGE3_HOUSE_COUNT = 4;    // sparse landmark count; tune by eye (3-6 feels right)
 var STAGE3_HOUSE_SCALE = 8;    // sprite height in world units; tune by eye
 
@@ -2437,7 +2617,7 @@ var STAGE3_HOUSE_SCALE = 8;    // sprite height in world units; tune by eye
 // Boulders scatter-fill the FULL slope surface (not row-based); see initCanyonWalls4
 var WALL4_COUNT        = 350;  // boulder sprites per side; crank to pack slope (TEMP COVER tuner: z/x)
 var WALL4_COVER_X      = 18;   // outward X extent boulders reach (0..WALL4_ROCK_WIDTH) (TEMP COVER tuner: c/f)
-var WALL4_INNER_GAP    = 0.2;  // x-gap from play edge E to innermost boulder; channel-clamp guard
+var WALL4_INNER_GAP    = 1.8;  // x-gap from play edge E to innermost boulder; channel-clamp guard
 var WALL4_SCALE_BASE   = 2.6;  // median boulder height world units (TEMP SIZE tuner: b/v)
 var WALL4_SCALE_SPREAD = 0.6;  // random size band: baseH = SCALE_BASE * (1-SPREAD/2 .. 1+SPREAD/2)
 var WALL4_Y_JITTER     = 0.4;  // +/- y deviation of boulder base from slope surface (world units)
@@ -2457,6 +2637,12 @@ var WALL4_ROCK_TINT    = 0x7A6850;  // darker warm canyon rock
 var WALL4_ROCK_RPT_U   = 5;         // texture tiles along stage length
 var WALL4_ROCK_RPT_V   = 3;         // texture tiles along slope height
 var WALL4_ROCK_SCROLL_MULT = 1.0;   // multiply rock-wall scroll rate vs world speed
+// Shore scatter (small pebbles on the flat strip between water and canyon wall)
+var SHORE4_COUNT      = 80;   // pebble sprites per side
+var SHORE4_SCALE_MIN  = 0.18; // minimum pebble height (world units)
+var SHORE4_SCALE_MAX  = 0.45; // maximum pebble height
+var SHORE4_X_MIN      = 0.05; // inward margin from play edge E (stays outside lane)
+var SHORE4_X_MAX      = 1.35; // outward limit (WALL4_INNER_GAP=1.8 minus a small safety margin)
 // Legacy slope constants -- not used; retained for reference
 var WALL4_FILL_COLOR        = 0x3A3028;
 var WALL4_FILL_H_FAR        = -0.5;
@@ -2560,7 +2746,7 @@ function initWaterFX() {
   teardownWaterFX();
   var _types = [
     { type: 'ripple',  tex: fxRippleTex,  n: 8 },
-    { type: 'bubble',  tex: fxBubbleTex,  n: 8 },
+    { type: 'bubble',  tex: fxBubbleTex,  n: 4 },
     { type: 'current', tex: fxCurrentTex, n: 8 },
   ];
   for (var _ti = 0; _ti < _types.length; _ti++) {
@@ -2574,7 +2760,7 @@ function initWaterFX() {
       _wspr.visible = false;
       _wspr.position.set(0, 0.16, -100);
       scene.add(_wspr);
-      wfxPool.push({ sprite: _wspr, mat: _wmat, type: _td.type, active: false, age: 0, life: 1, z: -100, extraSpd: 0 });
+      wfxPool.push({ sprite: _wspr, mat: _wmat, type: _td.type, active: false, age: 0, life: 1, z: -100, extraSpd: 0, startSc: 0.3, startOp: 0.35, riseFrames: 48 });
     }
   }
   _wfxRippleTimer  = 10 + Math.floor(Math.random() * 40);
@@ -2588,19 +2774,34 @@ function _activateWFX(type) {
     if (_af.type !== type || _af.active) continue;
     var _ax = (Math.random() - 0.5) * (rwCur - 0.6);
     var _az = -30 + Math.random() * 33;
-    _af.z = _az;
-    _af.sprite.position.set(_ax, 0.16, _az);
-    _af.age = 0; _af.active = true; _af.sprite.visible = true;
+    _af.z = _az; _af.age = 0; _af.active = true; _af.sprite.visible = true; _af.extraSpd = 0;
     if (type === 'ripple') {
-      _af.life = 96; _af.extraSpd = 0;
-      _af.mat.opacity = 0.35; _af.sprite.scale.set(0.3, 0.3, 1);
+      _af.life = 96; _af.startSc = 0.3; _af.startOp = 0.35;
+      _af.mat.opacity = 0; _af.sprite.scale.set(0.3, 0.3, 1);
+      _af.sprite.position.set(_ax, 0.16, _az);
     } else if (type === 'bubble') {
-      _af.life = 60; _af.extraSpd = 0.012;
-      _af.mat.opacity = 0.5; _af.sprite.scale.set(0.3, 0.3, 1);
+      // Rise phase: 48 frames from y=0.04 to y=0.16; pop phase: 8 frames
+      _af.life = 56; _af.riseFrames = 48;
+      _af.mat.opacity = 0; _af.sprite.scale.set(0.15, 0.15, 1);
+      _af.sprite.position.set(_ax, 0.04, _az);
     } else {
-      _af.life = 132; _af.extraSpd = 0;
+      _af.life = 132;
       _af.mat.opacity = 0; _af.sprite.scale.set(1.6, 0.25, 1);
+      _af.sprite.position.set(_ax, 0.16, _az);
     }
+    return;
+  }
+}
+
+function _triggerPopRipple(x, z) {
+  for (var _pri = 0; _pri < wfxPool.length; _pri++) {
+    var _pr = wfxPool[_pri];
+    if (_pr.type !== 'ripple' || _pr.active) continue;
+    _pr.z = z; _pr.age = 0; _pr.life = 72; _pr.extraSpd = 0;
+    _pr.startSc = 0.1; _pr.startOp = 0.22;
+    _pr.active = true; _pr.sprite.visible = true;
+    _pr.mat.opacity = 0; _pr.sprite.scale.set(0.1, 0.1, 1);
+    _pr.sprite.position.set(x, 0.16, z);
     return;
   }
 }
@@ -2615,8 +2816,7 @@ function updateWaterFX(spd) {
   _wfxBubbleTimer--;
   if (_wfxBubbleTimer <= 0) {
     _activateWFX('bubble');
-    if (Math.random() < 0.3) _activateWFX('bubble');
-    _wfxBubbleTimer = 72 + Math.floor(Math.random() * 78);
+    _wfxBubbleTimer = 240 + Math.floor(Math.random() * 240); // 4-8s rare
   }
   _wfxCurrentTimer--;
   if (_wfxCurrentTimer <= 0) {
@@ -2631,13 +2831,31 @@ function updateWaterFX(spd) {
     _uf.z += spd + _uf.extraSpd;
     _uf.sprite.position.z = _uf.z;
     if (_uf.type === 'ripple') {
-      var _usc = 0.3 + _ut * 1.1;
+      // Expand from startSc to 1.4wu; fade startOp → 0
+      var _usc = _uf.startSc + _ut * (1.4 - _uf.startSc);
       _uf.sprite.scale.set(_usc, _usc, 1);
-      _uf.mat.opacity = 0.35 * (1 - _ut);
+      _uf.mat.opacity = _uf.startOp * (1 - _ut);
     } else if (_uf.type === 'bubble') {
-      var _bsc = 0.3 + Math.sin(_uf.age * 0.4) * 0.04;
-      _uf.sprite.scale.set(_bsc, _bsc, 1);
-      _uf.mat.opacity = 0.5 * (1 - _ut);
+      var _rf = _uf.riseFrames;
+      if (_uf.age <= _rf) {
+        // Rise phase: drift upward 0.04→0.16, grow 0.15→0.30wu, fade in then hold
+        var _bt = _uf.age / _rf;
+        _uf.sprite.position.y = 0.04 + _bt * 0.12;
+        var _bsc = 0.15 + _bt * 0.15;
+        _uf.sprite.scale.set(_bsc, _bsc, 1);
+        _uf.mat.opacity = _bt < 0.25 ? (_bt / 0.25) * 0.45 : 0.45;
+        // Trigger pop ripple on the first frame the bubble reaches the surface
+        if (_uf.age === _rf) {
+          _triggerPopRipple(_uf.sprite.position.x, _uf.z);
+        }
+      } else {
+        // Pop phase: scale-up 0.30→0.39wu, fast fade
+        var _pt = (_uf.age - _rf) / (_uf.life - _rf);
+        _uf.sprite.position.y = 0.16;
+        var _psc = 0.30 + _pt * 0.09;
+        _uf.sprite.scale.set(_psc, _psc, 1);
+        _uf.mat.opacity = 0.45 * (1 - _pt);
+      }
     } else {
       _uf.mat.opacity = _ut < 0.5 ? _ut / 0.5 * 0.3 : (1 - _ut) / 0.5 * 0.3;
     }
@@ -3824,6 +4042,7 @@ var ARM_R_HINGE_X = 0.15;   // right arm GLB-native X (ARM L mirrors to -X)
 var ARM_REACH_ANG = 0.55;   // radians; outward+down reach angle; tuner: Ctrl+Shift+A/Z
 
 // GLB paddle animation state -- null until GLB loads (null = fallback box model is active)
+var _glbModel            = null;  // top-level GLB scene node (child of playerGroup); set on load
 var glbPaddleGroup       = null;
 var glbTorsoNode         = null; // the actual torso Mesh from the GLB
 var glbTorsoGroup        = null; // empty Group at waist pivot; child of torsoNode.parent
@@ -3984,6 +4203,7 @@ if (typeof THREE.GLTFLoader === 'undefined') {
       model.position.y = KAYAKER_Y;
 
       playerGroup.add(model);
+      _glbModel = model;  // save for wipeout ejection animation
       console.log('[kayaker] kayaker-bright.glb loaded. scale=' + KAYAKER_SCALE +
         ' rotY=' + KAYAKER_ROT_Y + ' paddle=' + (glbPaddleGroup ? 'OK' : 'null'));
 
@@ -4187,7 +4407,7 @@ const kayakWake3 = { group: wakeGroup3, bow: bowRipple3 };
 const obsRipplePool3 = [];
 for (var ripI = 0; ripI < 10; ripI++) {
   var ripMesh = new THREE.Mesh(
-    new THREE.RingGeometry(0.32, 0.50, 12),
+    new THREE.RingGeometry(0.32, 0.52, 12),
     new THREE.MeshBasicMaterial({ color: 0xC4EEFF, transparent: true, opacity: 0, depthWrite: false })
   );
   ripMesh.rotation.x = -Math.PI / 2;
@@ -4197,11 +4417,26 @@ for (var ripI = 0; ripI < 10; ripI++) {
   obsRipplePool3.push(ripMesh);
 }
 
-// Splash pool -- 4 reusable expanding ring meshes for paddle and jump splashes.
+// Obstacle upstream foam-crescent pool: thin elongated rings in foam-white,
+// scaled wide×flat to read as a bow-wave arc at each boulder's upstream face.
+const obsFoamPool3 = [];
+for (var foamI = 0; foamI < 10; foamI++) {
+  var foamMesh = new THREE.Mesh(
+    new THREE.RingGeometry(0.20, 0.30, 10),
+    new THREE.MeshBasicMaterial({ color: 0xEEF8FF, transparent: true, opacity: 0, depthWrite: false })
+  );
+  foamMesh.rotation.x = -Math.PI / 2;
+  foamMesh.position.set(0, 0.17, -9999);
+  foamMesh.renderOrder = 3;
+  scene.add(foamMesh);
+  obsFoamPool3.push(foamMesh);
+}
+
+// Splash pool -- 8 reusable expanding ring meshes (4 normal + 4 for crash-impact burst).
 // ROOT CAUSE FIX: old rings were RingGeometry(0.05,0.18) at scale 0.25 = 0.09 world diameter = ~5px. Invisible.
 // New: outer radius 0.35, bright white, y=0.22 (above water wave peaks), renderOrder=4.
 const splashPool3 = [];
-for (var spI3 = 0; spI3 < 4; spI3++) {
+for (var spI3 = 0; spI3 < 8; spI3++) {
   var spMesh3 = new THREE.Mesh(
     new THREE.RingGeometry(0.08, 0.35, 12),
     new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0, depthWrite: false })
@@ -5078,6 +5313,23 @@ function makeObsMesh(type, fullWidth) {
 // ── GAME STATE ───────────────────────────────────────────────────
 let gameState3  = 'start';
 let score3      = 0;
+
+// ── PLAY MODE ────────────────────────────────────────────────────
+// 'classic': snap-to-lane (original)  |  'daring': free analogue steering
+var playMode3 = null;  // set by card selection each visit; null = no mode chosen yet
+
+// Daring free-steering state (unused in classic; never touch classic paths)
+var _daringVx       = 0;      // current horizontal steering velocity (wu/frame)
+var _daringSteerL   = false;  // is left key/touch held right now
+var _daringSteerR   = false;  // is right key/touch held right now
+var DARING_ACCEL    = 0.0165; // wu/frame² acceleration while key held (0.022 × 0.75)
+var DARING_FRICTION = 0.86;   // velocity multiplier per frame (1=no friction, 0=instant stop)
+var DARING_MAX_SPD  = 0.12;   // max steering speed (wu/frame) (0.16 × 0.75)
+var KAYAK_HALF_W    = 0.35;   // margin from river edge to kayak center (world units)
+var _daringRoll3    = 0;      // current hull bank angle (rotation.z), spring-driven
+var _daringRollVel3 = 0;      // roll spring velocity
+var DARING_YAW_MAX  = 0.75;   // rad: nose-lead yaw at full steer
+var DARING_ROLL_MAX = 0.52;   // rad: hull banking lean at full steer
 // One-time migration: clear stored best when scoring scale changes (KRR_SCORE_VER bump).
 // Old scale (~200k) is now unreachable on the new scale (~22k), so we wipe once and re-save.
 const KRR_SCORE_VER = 2;
@@ -5100,6 +5352,22 @@ var endingBeachStartMs   = 0;     // Date.now() when beaching phase started
 var endingCinematicFired = false; // prevents double-trigger of ending dialog
 var _forlornStartMs      = 0;     // Date.now() when forlorn state began; 0 = inactive
 var _forlornTipDone      = false;
+var _qmarkSpr            = null;  // question-mark sprite above beached kayaker (forlorn beat)
+var WIPEOUT_MS           = 1750;  // ms wipeout plays before game-over screen
+var _wipeoutStartMs      = 0;     // Date.now() when wipeout began; 0 = inactive
+var _wipeoutSplashFired  = false; // prevents double-splash
+var _wipeoutKayakerVy    = 0;     // per-frame vertical velocity of ejected GLB model
+var _wipeoutKayakerVx    = 0;     // per-frame lateral drift
+var _wipeoutKayakerVz    = 0;     // per-frame forward/back velocity (endo variant)
+var _wipeoutDir          = 1;     // +1/-1: direction kayaker ejects (and hull capsizes toward)
+var _wipeoutVariant      = 'capsize'; // chosen per crash: 'capsize','endo','spin-flip','float-away'
+var _wipeoutMag          = 1.0;   // random magnitude 0.85–1.15; makes each crash feel different
+var _wipeoutFloating     = false; // float-away: true once kayaker has landed and is bobbing
+var _wipeoutFloatBaseY   = 0.10; // water surface Y for float-away bob
+var _wipeoutFloatPhase   = 0;    // frame counter driving the bob sin
+var _wipeoutGlbInScene   = false; // true once _glbModel is reparented to scene for world-space float
+var _wipeoutPreImpactSpd = 0;     // curSpd3 at moment of impact; eased to zero during wipeout animation
+var _wipeoutOranges      = [];   // [{mesh,vx,vy,vz,driftVx,driftVz,rotSpd,landed,floatBaseY,phase}]
 var _storyPanel          = 0;     // current panel index 0-6
 var _storyTurning        = false; // page-turn animation in progress — block input
 var _storyFromMenu       = false; // true when opened from menu button (not post-game)
@@ -5328,7 +5596,7 @@ function update3() {
 
   const effectiveSpeed = curSpeed3 * endingSpeedMult;
   distance3 += effectiveSpeed;
-  score3    += (effectiveSpeed / MI_PER_PX) * 100; // 100 pts per mile, continuous
+  score3    += (effectiveSpeed / MI_PER_PX) * 100 * (_reversed ? 2 : 1); // 100 pts/mile; 2x while reversed
   curMile3   = Math.floor(distance3 / MI_PER_PX);
 
   if (curMile3 >= 165) { startEnding3(); return; }
@@ -5397,15 +5665,72 @@ function update3() {
 
   if (player3.spinoutFrames > 0) player3.spinoutFrames--;
 
-  // Smooth player X
-  const tx = laneXPos(player3.targetLane);
-  player3.x += (tx - player3.x) * 0.28;
-  if (Math.abs(player3.x - tx) < 0.02) player3.x = tx;
+  // Player X: classic snap-to-lane or daring free steer
+  if (playMode3 === 'daring') {
+    // Apply accel from held keys (suppressed during spinout and during jump — jump uses airYaw).
+    if (player3.spinoutFrames <= 0 && !player3.isJumping) {
+      if (_reversed) {
+        if (_daringSteerL) _daringVx += DARING_ACCEL;
+        if (_daringSteerR) _daringVx -= DARING_ACCEL;
+      } else {
+        if (_daringSteerL) _daringVx -= DARING_ACCEL;
+        if (_daringSteerR) _daringVx += DARING_ACCEL;
+      }
+    }
+    if (!player3.isJumping) _daringVx *= DARING_FRICTION;  // coast in the air
+    if (Math.abs(_daringVx) < 0.0005) _daringVx = 0;
+    player3.x += _daringVx;
+    // Clamp to river (tracks rwCur narrowing automatically)
+    var _halfRiv = rwCur / 2 - KAYAK_HALF_W;
+    player3.x = Math.max(-_halfRiv, Math.min(_halfRiv, player3.x));
+    // Bridge: set targetLane = nearest lane so checkCollisions3 keeps working unchanged
+    var _lw3 = rwCur / curLanes;
+    var _nearL = Math.round(player3.x / _lw3 + (curLanes - 1) / 2);
+    player3.targetLane = Math.max(0, Math.min(curLanes - 1, _nearL));
+  } else {
+    // Classic: smooth slide toward target lane
+    const tx = laneXPos(player3.targetLane);
+    player3.x += (tx - player3.x) * 0.28;
+    if (Math.abs(player3.x - tx) < 0.02) player3.x = tx;
+  }
 
   // Jump arc
   if (player3.isJumping) {
+    // Air-spin: DARING only — held steer keys spin the boat instead of steering X.
+    if (gameState3 === 'playing' && playMode3 === 'daring') {
+      if (_daringSteerL) _airYaw -= AIR_YAW_RATE;
+      if (_daringSteerR) _airYaw += AIR_YAW_RATE;
+    }
     player3.jumpFrame++;
-    if (player3.jumpFrame >= JUMP_DURATION) { player3.isJumping = false; player3.jumpFrame = 0; }
+    if (player3.jumpFrame >= JUMP_DURATION) {
+      player3.isJumping = false; player3.jumpFrame = 0; _airTrick = false;
+      _sfxPlay('splash');
+      if (playMode3 === 'daring') {
+        // Spin bonus: award points for total degrees spun this jump
+        var _spinDeg = Math.abs(_airYaw) * (180 / Math.PI);
+        if (_spinDeg >= SPIN_MIN_DEG) {
+          var _spinPts = Math.round(_spinDeg * SPIN_PTS_DEG) * (_reversed ? 2 : 1);
+          score3 += _spinPts;
+          _spawnScorePopup3(playerGroup.position.x, playerGroup.position.y + 1.5, playerGroup.position.z,
+                            '+' + _spinPts + ' SPIN!' + (_reversed ? ' ×2' : ''));
+        }
+        // Nearest-facing snap: normalize the boat's actual visual angle to (-PI, PI],
+        // then pick forward/backward based on which it's closer to.
+        _settleYawFrom = _baseFacingY + _airYaw;  // visual angle on the last air frame
+        _settleYawT    = 0;                        // kick off the eased settle
+        var _finalFacing = _settleYawFrom % (Math.PI * 2);
+        if (_finalFacing >  Math.PI)  _finalFacing -= Math.PI * 2;
+        if (_finalFacing <= -Math.PI) _finalFacing += Math.PI * 2;
+        if (Math.abs(_finalFacing) <= Math.PI / 2) {
+          _reversed = false; _baseFacingY = 0;        // closer to forward
+        } else {
+          _reversed = true;  _baseFacingY = Math.PI;  // closer to backward
+        }
+      }
+      _airYaw = 0;
+      kayakTurnY3 = 0; kayakTurnVel3 = 0;
+      _daringRoll3 = 0; _daringRollVel3 = 0;
+    }
   }
 
   // Spawn (obstacle spawns suppressed during animated narrow; collectibles continue)
@@ -5740,6 +6065,63 @@ function update3() {
     cw.sprite.scale.set(cwH * cw.wFactor * cw.flipX, cwH, 1);
   }
 
+  // Scroll Stage 4 shore pebbles; simple x-fixed scroll, re-roll dx + tex on recycle
+  for (var ssi = 0; ssi < shoreScatter4.length; ssi++) {
+    var ss = shoreScatter4[ssi];
+    ss.z += spd;
+    ss.sprite.position.z = ss.z;
+    if (ss.z > DESPAWN_Z + 2) {
+      ss.z = SPAWN_Z - Math.random() * 8;
+      ss.dx = SHORE4_X_MIN + Math.random() * (SHORE4_X_MAX - SHORE4_X_MIN);
+      ss.sprite.position.x = ss.side * (rwCur / 2 + ss.dx);
+      ss.sprite.position.z = ss.z;
+      var ssTexIdx = Math.floor(Math.random() * bankBoulderTex.length);
+      if (bankBoulderTex[ssTexIdx]) {
+        ss.sprite.material.map = bankBoulderTex[ssTexIdx];
+        ss.sprite.material.needsUpdate = true;
+      }
+      ss.h   = SHORE4_SCALE_MIN + Math.random() * (SHORE4_SCALE_MAX - SHORE4_SCALE_MIN);
+      ss.wf  = 0.75 + Math.random() * 0.70;
+      ss.flipX = Math.random() < 0.5 ? 1 : -1;
+      var ssTv = 0.72 + Math.random() * 0.28;
+      ss.sprite.material.color.setRGB(ssTv, ssTv, ssTv);
+      ss.sprite.scale.set(ss.h * ss.wf * ss.flipX, ss.h, 1);
+    }
+  }
+
+  // Scroll cattail groups; each group's anchor advances, all members offset from it
+  for (var _cgi = 0; _cgi < _cattailGroups.length; _cgi++) {
+    var _cg = _cattailGroups[_cgi];
+    _cg.z += spd;
+    // Recycle entire group when its last member clears DESPAWN
+    if (_cg.z + _cg.maxDz > DESPAWN_Z + 2) {
+      _cg.z = SPAWN_Z - 5 - Math.random() * 18;
+      // Re-roll cattail texture variants on each pass for variety
+      for (var _cr = 0; _cr < _cg.members.length; _cr++) {
+        var _crm = _cg.members[_cr];
+        if (!_crm.isGrass) {
+          _crm.varIdx = Math.floor(Math.random() * 2);
+          var _crTex = cattailTex[_crm.varIdx];
+          if (_crTex) {
+            var _crH  = 0.85 + Math.random() * 0.85;
+            var _crAR = _crTex.image && _crTex.image.naturalHeight > 0
+              ? _crTex.image.naturalWidth / _crTex.image.naturalHeight : 0.38;
+            _crm.sprite.scale.set(_crH * _crAR, _crH, 1);
+            _crm.sprite.material.map = _crTex;
+            _crm.sprite.material.needsUpdate = true;
+          }
+        }
+      }
+    }
+    // Update every member's world position from group anchor
+    for (var _cmi = 0; _cmi < _cg.members.length; _cmi++) {
+      var _cmb = _cg.members[_cmi];
+      _cmb.sprite.position.z = _cg.z + _cmb.dz;
+      _cmb.sprite.position.x = _cg.side * (rwCur / 2 + _cmb.dx);
+      _cmb.sprite.position.y = DECOR_SEAT_GND;
+    }
+  }
+
   // Scroll lake-house sprites (Stage 3 only); recycle with randomized x-offset and texture
   for (var hsi = 0; hsi < bankHouses3.length; hsi++) {
     var hse = bankHouses3[hsi];
@@ -6004,23 +6386,50 @@ const COLL_FRONT = -1.5;
 const COLL_BACK  =  1.5;
 
 function checkCollisions3() {
+  if (gameState3 !== 'playing') return;  // wipeout/gameover: no re-trigger
   for (const o of obstacles3) {
     if (o.resolved) continue;
     if (o.z < COLL_FRONT || o.z > COLL_BACK) continue;
     o.resolved = true;
-    // fallen_log: safe only in gapLane; instant game-over on any blocked lane.
-    if (o.type === 'fallen_log') {
-      if (!player3.isJumping && player3.targetLane !== o.gapLane) {
-        if (player3.hasShield) { player3.hasShield = false; continue; }
-        endRun3(false);
+    // ── DARING: true X-overlap collision (classic lane-index stays byte-for-byte below) ──
+    if (playMode3 === 'daring') {
+      var _px3c = player3.x;
+      var _lw3c = rwCur / curLanes;
+      var _hit3c = false;
+      if (o.fullWidth) {
+        _hit3c = !player3.isJumping;
+      } else if (o.type === 'fallen_log') {
+        if (!player3.isJumping) {
+          _hit3c = Math.abs(_px3c - laneXPos(o.gapLane)) > _lw3c / 2 - KAYAK_HALF_W;
+        }
+      } else if (!player3.isJumping) {
+        var _obc3c = (o.type === 'boulder_wide')
+          ? (laneXPos(o.lane) + laneXPos(o.lane2)) / 2
+          : laneXPos(o.lane);
+        var _obh3c = (o.type === 'boulder_wide') ? _lw3c * 0.925
+                   : (o.type === 'river_wash')   ? _lw3c * 0.60
+                   : _lw3c * 0.45;
+        _hit3c = Math.abs(_px3c - _obc3c) < KAYAK_HALF_W + _obh3c;
       }
-      continue;
+      if (!_hit3c) continue;
+    } else {
+      // ── CLASSIC: original lane-index logic, untouched ──────────────────────
+      // fallen_log: safe only in gapLane; instant wipeout on any blocked lane.
+      if (o.type === 'fallen_log') {
+        if (!player3.isJumping && player3.targetLane !== o.gapLane) {
+          if (player3.hasShield) { player3.hasShield = false; continue; }
+          // relX: which side of the log the player ran into
+          triggerWipeout(0, laneXPos(player3.targetLane) - laneXPos(o.gapLane));
+        }
+        continue;
+      }
+      // lane2 is set on boulder_wide: hit if player is in lane OR lane2.
+      const inHitLane = (o.lane === player3.targetLane) ||
+                        (o.lane2 !== undefined && o.lane2 === player3.targetLane);
+      const safe = player3.isJumping || (!o.fullWidth && !inHitLane);
+      if (safe) continue;
     }
-    // lane2 is set on boulder_wide: hit if player is in lane OR lane2.
-    const inHitLane = (o.lane === player3.targetLane) ||
-                      (o.lane2 !== undefined && o.lane2 === player3.targetLane);
-    const safe = player3.isJumping || (!o.fullWidth && !inHitLane);
-    if (safe) continue;
+    // ── Shared consequences (reached by both modes on a confirmed hit) ────────
     if (player3.hasShield) { player3.hasShield = false; continue; }
     if (o.type === 'river_wash') {
       player3.spinoutFrames = Math.max(player3.spinoutFrames, 90);
@@ -6053,30 +6462,56 @@ function checkCollisions3() {
           });
         }
       }
+      // DARING only: swell spins you around — flip facing direction
+      if (playMode3 === 'daring') {
+        _reversed    = !_reversed;
+        _baseFacingY = _reversed ? Math.PI : 0;
+        // Let the spinout animation drive the visible spin; settle will land on new facing
+        _settleYawT = 1.0;  // cancel any prior settle so spinout decay takes over cleanly
+      }
     } else {
-      endRun3(false);
+      // Compute obstacle center X for context-aware wipeout direction/variant
+      var _hitObsX;
+      if (o.fullWidth) {
+        _hitObsX = player3.x;         // full-width: centered hit → relX ≈ 0
+      } else if (o.lane2 !== undefined) {
+        _hitObsX = (laneXPos(o.lane) + laneXPos(o.lane2)) / 2;
+      } else {
+        _hitObsX = laneXPos(o.lane);
+      }
+      var _hitPx = (playMode3 === 'daring') ? player3.x : laneXPos(player3.targetLane);
+      var _hitLv = (playMode3 === 'daring') ? _daringVx : 0;
+      triggerWipeout(_hitLv, _hitPx - _hitObsX);
     }
   }
 }
 
 function _spawnScorePopup3(wx, wy, wz, text) {
   var _cv = document.createElement('canvas');
-  _cv.width = 256; _cv.height = 80;
+  var _cvH = 80;
+  var _font = POPUP_FONT_PX + 'px "Press Start 2P", monospace';
+  // Measure text width before committing canvas size to avoid clipping.
+  _cv.width = 512; _cv.height = _cvH;  // scratch size just for measureText
   var _ctx = _cv.getContext('2d');
-  _ctx.font = POPUP_FONT_PX + 'px "Press Start 2P", monospace';
+  _ctx.font = _font;
+  var _pad = Math.round(POPUP_FONT_PX * 1.0);
+  var _cvW = Math.ceil(_ctx.measureText(text).width) + _pad * 2;
+  _cvW = Math.max(_cvW, 64);           // minimum width
+  _cv.width = _cvW;                    // resize to exact fit; clears canvas
+  _ctx.font = _font;                   // re-apply after resize (canvas reset)
   _ctx.lineJoin = 'round';
   _ctx.lineWidth = Math.round(POPUP_FONT_PX * 0.25);
   _ctx.strokeStyle = 'rgba(0,0,0,0.88)';
   _ctx.textAlign = 'center';
   _ctx.textBaseline = 'middle';
-  _ctx.strokeText(text, 128, 40);
+  _ctx.strokeText(text, _cvW / 2, _cvH / 2);
   _ctx.fillStyle = '#F97316';
-  _ctx.fillText(text, 128, 40);
+  _ctx.fillText(text, _cvW / 2, _cvH / 2);
   var _tex = new THREE.CanvasTexture(_cv);
   var _mat = new THREE.SpriteMaterial({ map: _tex, transparent: true, depthTest: false });
   var _spr = new THREE.Sprite(_mat);
-  var _bh = POPUP_FONT_PX * 0.022;   // world height; 32px -> 0.70
-  var _bw = _bh * (256 / 80);        // canvas AR 3.2
+  var _bh = POPUP_FONT_PX * 0.022;    // world height; 32px -> 0.70
+  var _bw = _bh * (_cvW / _cvH);      // AR from actual canvas size
   // stacking: bump spawn Y up if another active popup is within 0.45 world units
   var _spawnY = wy + 0.3;
   for (var _sc = 0; _sc < _scorePopups.length; _sc++) {
@@ -6093,9 +6528,14 @@ function checkCollectibles3() {
   for (const c of collectibles3) {
     if (c.collected) continue;
     if (c.z < COLL_FRONT || c.z > COLL_BACK) continue;
-    if (c.lane !== player3.targetLane) continue;
+    if (playMode3 === 'daring') {
+      if (Math.abs(player3.x - c.mesh.position.x) >= KAYAK_HALF_W + 0.25) continue;
+    } else {
+      if (c.lane !== player3.targetLane) continue;
+    }
     c.collected = true;
     c._inFlight = true;
+    _sfxPlay('collect');
     var _ov = ORANGE_VALUE[stageIdx] !== undefined ? ORANGE_VALUE[stageIdx] : 100;
     if (c.mesh) {
       var _px = c.mesh.position.x, _py = c.mesh.position.y, _pz = c.mesh.position.z;
@@ -6114,6 +6554,7 @@ function checkBankPoppies3() {
       // Replace existing hat poppy if player already has shield (will re-seat new one)
       if (_hatPoppySpr) { _hatPoppySpr.visible = false; }
       player3.hasShield = true;
+      _sfxPlay('shield');
       // Swap to picked texture
       var _ptex = _ppA.side === -1 ? _poppyTexLP : _poppyTexRP;
       if (_ptex) { _ppA.sprite.material.map = _ptex; _ppA.sprite.material.needsUpdate = true; }
@@ -6253,13 +6694,181 @@ function updateVisuals3() {
     var _fEl = Date.now() - _forlornStartMs;
     var _fT  = Math.min(1, _fEl / 2500);
     playerGroup.rotation.z = -(1 - Math.pow(1 - _fT, 3)) * 1.25; // cubic ease-out tip
+    // Animate qmark: gentle bob (y) + wiggle (material.rotation) above the kayaker
+    if (_qmarkSpr) {
+      var _qNow = Date.now();
+      _qmarkSpr.position.set(
+        playerGroup.position.x + 0.2,
+        playerGroup.position.y + 1.6 + Math.sin(_qNow * 0.0035) * 0.07,
+        playerGroup.position.z
+      );
+      _qmarkSpr.material.rotation = Math.sin(_qNow * 0.0055) * 0.22;
+    }
     if (_fEl >= ENDING_FORLORN_MS) {
       _forlornStartMs = 0; // prevent re-trigger
+      if (_qmarkSpr) { scene.remove(_qmarkSpr); _qmarkSpr.material.dispose(); _qmarkSpr = null; }
       _openStoryViewer(false);
     }
   }
 
-  playerGroup.position.x = player3.x;
+  // ── WIPEOUT CAPSIZE ANIMATION ───────────────────────────────────
+  if (gameState3 === 'wipeout' && _wipeoutStartMs > 0) {
+    var _wEl = Date.now() - _wipeoutStartMs;
+
+    // Ease world scroll to rest over 300ms — no jarring freeze at impact
+    var _wSpdT  = Math.min(1, _wEl / 300);
+    curSpd3 = _wipeoutPreImpactSpd * (1 - _wSpdT * _wSpdT * (3 - 2 * _wSpdT));
+
+    // Hull capsize: smootherstep over 800ms — slow onset so boat flows from motion into capsize
+    var _wCapT    = Math.min(1, _wEl / 800);
+    var _wCapEase = _wCapT * _wCapT * (3 - 2 * _wCapT);
+
+    // Ejection onset: 0→1 over 250ms — lateral/tumble ease in, no explosive pop
+    var _wOnsetT = Math.min(1, _wEl / 250);
+    var _wOnset  = _wOnsetT * _wOnsetT * (3 - 2 * _wOnsetT);
+
+    // ── Hull motion per variant ──────────────────────────────────
+    if (_wipeoutVariant === 'endo') {
+      // Nose-dive pitch: bow buries, stern flies up
+      playerGroup.rotation.x = _wCapEase * 1.40 * _wipeoutMag;
+      playerGroup.rotation.z = _wipeoutDir * _wCapEase * 0.25;
+    } else if (_wipeoutVariant === 'spin-flip') {
+      // Side roll + continuous yaw spin
+      playerGroup.rotation.z  = _wipeoutDir * _wCapEase * 1.35 * _wipeoutMag;
+      playerGroup.rotation.y += _wipeoutDir * 0.075 * _wOnset;  // additive spin eases in
+      playerGroup.rotation.x  = _wCapEase * 0.10;
+    } else if (_wipeoutVariant === 'float-away') {
+      // Gentle partial tip — hull stays semi-upright
+      playerGroup.rotation.z = _wipeoutDir * _wCapEase * 0.55 * _wipeoutMag;
+      playerGroup.rotation.x = _wCapEase * 0.08;
+    } else { // capsize (left or right)
+      playerGroup.rotation.z = _wipeoutDir * _wCapEase * 1.35 * _wipeoutMag;
+      playerGroup.rotation.x = _wCapEase * 0.12;
+    }
+
+    // ── Kayaker ejection ─────────────────────────────────────────
+    if (_glbModel) {
+      var _wGrav = (_wipeoutVariant === 'float-away') ? 0.0025 : 0.0042;
+
+      if (_wipeoutFloating) {
+        // ALL variants: world-space bob (_glbModel reparented to scene at landing)
+        _wipeoutFloatPhase++;
+        _glbModel.position.y  = _wipeoutFloatBaseY + 0.018 * Math.sin(_wipeoutFloatPhase * 0.055);
+        _glbModel.position.x += _wipeoutKayakerVx; _wipeoutKayakerVx *= 0.96;
+        _glbModel.position.z += 0.004 + _wipeoutKayakerVz; _wipeoutKayakerVz *= 0.94; // downstream drift
+        _glbModel.rotation.z += _wipeoutDir * 0.002;  // lazy settle roll
+        // Clamp X in world space
+        var _wFltXLim = rwCur / 2 + 2.0;
+        if (Math.abs(_glbModel.position.x) > _wFltXLim) {
+          _glbModel.position.x = Math.sign(_glbModel.position.x) * _wFltXLim;
+          _wipeoutKayakerVx = 0;
+        }
+      } else {
+        // In-flight: Y full physics (keeps landing timing reliable); X/Z ease in over 250ms
+        _wipeoutKayakerVy    -= _wGrav;
+        _glbModel.position.y += _wipeoutKayakerVy;
+        _glbModel.position.x += _wipeoutKayakerVx * _wOnset;
+        _glbModel.position.z += _wipeoutKayakerVz * _wOnset;
+        // Y ceiling: modest arc, no stratosphere
+        if (_glbModel.position.y > 2.5) { _glbModel.position.y = 2.5; _wipeoutKayakerVy = 0; }
+        // X clamp: stay within 2wu of river banks during flight
+        var _wFlyWX = playerGroup.position.x + _glbModel.position.x;
+        var _wFlyXLim = rwCur / 2 + 2.0;
+        if (Math.abs(_wFlyWX) > _wFlyXLim) {
+          _glbModel.position.x = Math.sign(_wFlyWX) * _wFlyXLim - playerGroup.position.x;
+          _wipeoutKayakerVx = 0;
+        }
+
+        // Per-variant tumble — all ramped by onset smootherstep; no snap at start
+        if (_wipeoutVariant === 'endo') {
+          _glbModel.rotation.x -= 0.055 * _wOnset;
+          _glbModel.rotation.z += _wipeoutDir * 0.02 * _wOnset;
+        } else if (_wipeoutVariant === 'spin-flip') {
+          _glbModel.rotation.z += _wipeoutDir * 0.095 * _wOnset;
+          _glbModel.rotation.x -= 0.045 * _wOnset;
+          _glbModel.rotation.y += 0.06 * _wOnset;
+        } else if (_wipeoutVariant === 'float-away') {
+          _glbModel.rotation.z += _wipeoutDir * 0.025 * _wOnset;
+          _glbModel.rotation.x -= 0.018 * _wOnset;
+        } else { // capsize
+          _glbModel.rotation.z += _wipeoutDir * 0.070 * _wOnset;
+          _glbModel.rotation.x -= 0.038 * _wOnset;
+        }
+
+        // Landing detection — ALL variants settle on the surface
+        if (!_wipeoutSplashFired && _glbModel.position.y < 0.14 && _wEl > 250) {
+          _wipeoutSplashFired = true;
+          _sfxPlay('splash');
+          // Capture world position/orientation before reparenting
+          var _wldLandPos  = new THREE.Vector3();
+          var _wldLandQuat = new THREE.Quaternion();
+          _glbModel.getWorldPosition(_wldLandPos);
+          _glbModel.getWorldQuaternion(_wldLandQuat);
+          // Reparent to scene so float Y is in world space, not rotated-parent space
+          playerGroup.remove(_glbModel);
+          scene.add(_glbModel);
+          _glbModel.position.set(_wldLandPos.x, 0.12, _wldLandPos.z);
+          _glbModel.quaternion.copy(_wldLandQuat);
+          _wipeoutGlbInScene = true;
+          // Landing splash at world X
+          var _wpx = _wldLandPos.x;
+          activateSplash3(_wpx, 0, 2.4, 30);
+          activateSplash3(_wpx + _wipeoutDir * 0.55, 0, 1.5, 22);
+          _triggerPopRipple(_wpx, 0);
+          // Switch to float mode — Y is now in world space, always at waterline
+          _wipeoutFloating   = true;
+          _wipeoutFloatBaseY = 0.12;
+          _wipeoutKayakerVy  = 0;
+          _wipeoutKayakerVx *= 0.25;
+          _wipeoutKayakerVz *= 0.25;
+        }
+      }
+    }
+
+    // ── Spilled oranges: arc → land → float ──────────────────────
+    for (var _woi = 0; _woi < _wipeoutOranges.length; _woi++) {
+      var _wo = _wipeoutOranges[_woi];
+      if (!_wo.landed) {
+        _wo.vy -= (_wo.grav !== undefined ? _wo.grav : 0.0030);
+        if (_wo.friction) _wo.vx *= _wo.friction;
+        _wo.mesh.position.x += _wo.vx;
+        _wo.mesh.position.y += _wo.vy;
+        _wo.mesh.position.z += _wo.vz + curSpd3;  // curSpd3 — never bare spd
+        _wo.mesh.rotation.x += _wo.rotSpd;
+        // Scale-punch animation (pop oranges only; scaleT undefined on normal oranges)
+        if (_wo.scaleT !== undefined && _wo.scaleT <= _wo.scaleRise + _wo.scaleFall) {
+          _wo.scaleT++;
+          var _ss;
+          if (_wo.scaleT <= _wo.scaleRise) {
+            _ss = _wo.scaleStart + (_wo.scalePk - _wo.scaleStart) * (_wo.scaleT / _wo.scaleRise);
+          } else {
+            var _sfT = (_wo.scaleT - _wo.scaleRise) / _wo.scaleFall;
+            _ss = _wo.scalePk + (1.0 - _wo.scalePk) * (_sfT * _sfT);  // ease back to 1.0
+          }
+          _wo.mesh.scale.setScalar(_ss);
+        }
+        if (_wo.mesh.position.y < 0.10 && _wo.vy < 0) {
+          _wo.landed      = true;
+          _wo.mesh.position.y = 0.10;
+          if (_wo.scaleT !== undefined) _wo.mesh.scale.setScalar(1.0);  // snap to final size
+          activateSplash3(_wo.mesh.position.x, _wo.mesh.position.z, 0.45, 12);
+        }
+      } else {
+        _wo.phase += 0.038;
+        _wo.mesh.position.y  = _wo.floatBaseY + 0.015 * Math.sin(_wo.phase);
+        _wo.mesh.position.x += _wo.driftVx;
+        _wo.mesh.position.z += _wo.driftVz + curSpd3;  // scroll with the river + small downstream bias
+        _wo.mesh.rotation.y += 0.018;
+      }
+    }
+
+    if (_wEl >= WIPEOUT_MS) {
+      _wipeoutStartMs = 0;
+      endRun3(false);
+    }
+  }
+
+  if (gameState3 !== 'wipeout') playerGroup.position.x = player3.x;
 
   // Flattened arc: Math.pow(..., JUMP_ARC_FLATTEN < 1) broadens the plateau so the boat
   // hangs at moderate height instead of peaking sharply and diving back down immediately.
@@ -6273,83 +6882,140 @@ function updateVisuals3() {
   playerShadow.scale.set(sScale, sScale, sScale);
   shadowMat.opacity = player3.isJumping ? 0.10 : 0.28;
 
-  // Spinout + lane-change tilt (share rotation.y, handled in three phases).
-  // Phase 1: active spinout -- accumulate full rotation, suppress turn.
-  // Phase 2: spinout-exit decay -- preserve the original decay feel before handing off.
-  // Phase 3: normal paddling -- tilt kayak 45 deg toward target lane, snap back when settled.
-  if (player3.spinoutFrames > 0) {
+  // Spinout + lane-change tilt (share rotation.y). Wipeout block owns rotation.y during wipeout.
+  if (gameState3 !== 'wipeout' && player3.spinoutFrames > 0) {
     playerGroup.rotation.y += 0.18;
     kayakWasSpinning3 = true;
     kayakTurnY3 = 0; kayakTurnVel3 = 0;
-  } else if (kayakWasSpinning3) {
-    playerGroup.rotation.y *= 0.75;
-    if (Math.abs(playerGroup.rotation.y) < 0.01) {
-      playerGroup.rotation.y = 0;
+    _daringRoll3 = 0; _daringRollVel3 = 0;
+  } else if (gameState3 !== 'wipeout' && kayakWasSpinning3) {
+    playerGroup.rotation.y = _baseFacingY + (playerGroup.rotation.y - _baseFacingY) * 0.75;
+    if (Math.abs(playerGroup.rotation.y - _baseFacingY) < 0.01) {
+      playerGroup.rotation.y = _baseFacingY;
       kayakWasSpinning3 = false;
     }
-  } else {
-    var lcTarget3 = laneXPos(player3.targetLane);
-    var lcDx3     = lcTarget3 - player3.x;
-    // Capture direction and reset hold timer whenever actively moving toward target
-    if (Math.abs(lcDx3) > 0.02 && !player3.isJumping) {
-      turnDirSign3    = lcDx3 > 0 ? -1 : 1;
-      turnHoldFrames3 = 22;
+  } else if (gameState3 !== 'wipeout') {
+    if (playMode3 === 'daring') {
+      // DARING: fully owns rotation.y (nose-lead yaw) and rotation.z (banking roll).
+      var _steerInput3 = (_daringSteerR ? 1 : 0) - (_daringSteerL ? 1 : 0);
+      var _dYawBlend   = Math.max(-1, Math.min(1,
+        _steerInput3 * 0.55 + (_daringVx / DARING_MAX_SPD) * 0.45));
+      if (_steerInput3 !== 0) turnDirSign3 = -_steerInput3;  // keep jump whip working
+      // Yaw: purely velocity-driven — leads into the turn, eases back to straight as vx decays
+      var _dYawWant   = -Math.max(-1, Math.min(1, _daringVx / DARING_MAX_SPD)) * DARING_YAW_MAX;
+      var _dYawErr    = _dYawWant - kayakTurnY3;
+      kayakTurnVel3  += _dYawErr * 0.15;
+      kayakTurnVel3  *= 0.72;
+      kayakTurnY3    += kayakTurnVel3;
+      if (Math.abs(kayakTurnY3) < 0.008) { kayakTurnY3 = 0; kayakTurnVel3 = 0; }
+      playerGroup.rotation.y = _baseFacingY + kayakTurnY3;
+      // Roll spring — same blend signal, hull banks into the turn
+      var _dRollWant  = -_dYawBlend * DARING_ROLL_MAX;
+      var _dRollErr   = _dRollWant - _daringRoll3;
+      _daringRollVel3 += _dRollErr * 0.12;
+      _daringRollVel3 *= 0.76;
+      _daringRoll3    += _daringRollVel3;
+      if (Math.abs(_daringRoll3) < 0.005) { _daringRoll3 = 0; _daringRollVel3 = 0; }
+      playerGroup.rotation.z = _daringRoll3;
+    } else {
+      // CLASSIC: lane-change tilt — 100% original code, untouched
+      var lcTarget3 = laneXPos(player3.targetLane);
+      var lcDx3     = lcTarget3 - player3.x;
+      if (Math.abs(lcDx3) > 0.02 && !player3.isJumping) {
+        turnDirSign3    = lcDx3 > 0 ? -1 : 1;
+        turnHoldFrames3 = 22;
+      }
+      if (Math.abs(lcDx3) <= 0.02 && turnHoldFrames3 > 0) turnHoldFrames3--;
+      var lcWant3 = ((Math.abs(lcDx3) > 0.02 || turnHoldFrames3 > 0) && !player3.isJumping)
+        ? turnDirSign3 * 0.70
+        : 0;
+      var turnError3 = lcWant3 - kayakTurnY3;
+      kayakTurnVel3 += turnError3 * 0.06;
+      kayakTurnVel3 *= 0.80;
+      kayakTurnY3   += kayakTurnVel3;
+      if (Math.abs(kayakTurnY3) < 0.008) { kayakTurnY3 = 0; kayakTurnVel3 = 0; }
+      playerGroup.rotation.y = _baseFacingY + kayakTurnY3;
     }
-    // Count down hold timer once settled (snapped within 0.02)
-    if (Math.abs(lcDx3) <= 0.02 && turnHoldFrames3 > 0) turnHoldFrames3--;
-    var lcWant3 = ((Math.abs(lcDx3) > 0.02 || turnHoldFrames3 > 0) && !player3.isJumping)
-      ? turnDirSign3 * 0.70
-      : 0;
-    var turnError3 = lcWant3 - kayakTurnY3;
-    kayakTurnVel3 += turnError3 * 0.06;
-    kayakTurnVel3 *= 0.80;
-    kayakTurnY3   += kayakTurnVel3;
-    if (Math.abs(kayakTurnY3) < 0.008) { kayakTurnY3 = 0; kayakTurnVel3 = 0; }
-    playerGroup.rotation.y = kayakTurnY3;
   }
 
-  // Jump pitch (rotation.x) + tail whip (additive rotation.y and rotation.z).
+  // Jump pitch (rotation.x) + air-yaw (rotation.y) replaces tail whip.
   // Both live entirely on playerGroup, additive on top of kayakTurnY3.
   // Both unwind to exactly 0 before landing so there is no residual rotation.
   if (player3.isJumping) {
     var _jvt = player3.jumpFrame / JUMP_DURATION;
 
-    // -- Pitch: nose up on launch, level at apex, nose down into re-entry --
-    // positive rotation.x = nose up (bow at -Z rises in Y); verified for this rig.
-    var _jPitch;
-    if (_jvt < 0.25) {
-      _jPitch = JUMP_PITCH_UP   * Math.sin((_jvt / 0.25) * (Math.PI / 2));
-    } else if (_jvt < 0.55) {
-      _jPitch = JUMP_PITCH_UP   * Math.cos(((_jvt - 0.25) / 0.30) * (Math.PI / 2));
-    } else if (_jvt < 0.95) {
-      _jPitch = JUMP_PITCH_DOWN * Math.sin(((_jvt - 0.55) / 0.40) * (Math.PI / 2));
+    if (_airTrick) {
+      // ── Air trick: full rotation that lands exactly level ─────────────────
+      // trickT maps remaining jump duration to [0, 1]; smootherstep eases it.
+      var _tRemain = JUMP_DURATION - _airTrickStartFrame;
+      var _trickT  = _tRemain > 0
+        ? Math.min(1, (player3.jumpFrame - _airTrickStartFrame) / _tRemain)
+        : 1;
+      var _ease = _trickT * _trickT * _trickT * (6 * _trickT * _trickT - 15 * _trickT + 10);
+      var _full = Math.PI * 2 * _ease;
+      // Zero all axes first, then set the trick axis — avoids stale pitch/whip bleed.
+      playerGroup.rotation.x = 0;
+      playerGroup.rotation.y = _baseFacingY + kayakTurnY3;  // base + steering yaw
+      playerGroup.rotation.z = 0;
+      if (_airTrickType === 'roll')      { playerGroup.rotation.z = _airTrickDir * _full; }
+      else if (_airTrickType === 'flip') { playerGroup.rotation.x = -_full; }
+      else                               { playerGroup.rotation.y = _baseFacingY + _airTrickDir * _full; }
+      if (_trickT >= 1) {
+        _airTrick = false;
+        playerGroup.rotation.x = 0;
+        playerGroup.rotation.z = 0;
+      }
     } else {
-      _jPitch = JUMP_PITCH_DOWN * Math.cos(((_jvt - 0.95) / 0.05) * (Math.PI / 2));
+      // ── Normal jump: pitch; then DARING air-yaw or CLASSIC tail whip ──────
+      // Pitch: nose up on launch, level at apex, nose down into re-entry.
+      var _jPitch;
+      if (_jvt < 0.25) {
+        _jPitch = JUMP_PITCH_UP   * Math.sin((_jvt / 0.25) * (Math.PI / 2));
+      } else if (_jvt < 0.55) {
+        _jPitch = JUMP_PITCH_UP   * Math.cos(((_jvt - 0.25) / 0.30) * (Math.PI / 2));
+      } else if (_jvt < 0.95) {
+        _jPitch = JUMP_PITCH_DOWN * Math.sin(((_jvt - 0.55) / 0.40) * (Math.PI / 2));
+      } else {
+        _jPitch = JUMP_PITCH_DOWN * Math.cos(((_jvt - 0.95) / 0.05) * (Math.PI / 2));
+      }
+      playerGroup.rotation.x = _jPitch;
+      if (playMode3 === 'daring') {
+        // Air-yaw: show accumulated spin relative to base; no tail-whip roll.
+        playerGroup.rotation.y = _baseFacingY + _airYaw;
+        playerGroup.rotation.z = 0;
+      } else {
+        // Classic: original tail whip (yaw + roll kick, unwinds to 0 before landing).
+        var _whipDir = turnDirSign3;
+        var _wCurve;
+        if (_jvt < 0.12) {
+          _wCurve = _jvt / 0.12;
+        } else if (_jvt < 0.55) {
+          _wCurve = 1.0;
+        } else if (_jvt < 0.95) {
+          _wCurve = (0.95 - _jvt) / 0.40;
+        } else {
+          _wCurve = 0;  // hard zero before landing: boat is straight at impact
+        }
+        playerGroup.rotation.y += -_whipDir * JUMP_WHIP_YAW  * _wCurve;
+        playerGroup.rotation.z  =  _whipDir * JUMP_WHIP_ROLL * _wCurve;
+      }
     }
-    playerGroup.rotation.x = _jPitch;
-
-    // -- Tail whip: driven by turnDirSign3 (frozen at last steer during jump) --
-    // Yaw: -turnDirSign3 pushes tail in the steering direction (bow opposite).
-    // Roll: turnDirSign3 leans hull toward the whip (heels to the outside of the kick).
-    // Curve: ramps in over t 0-0.12, holds, unwinds to exactly 0 by t=0.95.
-    var _whipDir = turnDirSign3;  // -1 = last steered right, +1 = left, 0 = straight
-    var _wCurve;
-    if (_jvt < 0.12) {
-      _wCurve = _jvt / 0.12;
-    } else if (_jvt < 0.55) {
-      _wCurve = 1.0;
-    } else if (_jvt < 0.95) {
-      _wCurve = (0.95 - _jvt) / 0.40;
-    } else {
-      _wCurve = 0;  // hard zero before landing: boat is straight at impact
-    }
-    playerGroup.rotation.y += -_whipDir * JUMP_WHIP_YAW  * _wCurve;
-    playerGroup.rotation.z  =  _whipDir * JUMP_WHIP_ROLL * _wCurve;
   } else {
-    // Not jumping: keep pitch and roll at zero (turn yaw handled above).
-    // Skip rotation.z during forlorn — that state owns it for the tip-over animation.
-    playerGroup.rotation.x = 0;
-    if (gameState3 !== 'forlorn') playerGroup.rotation.z = 0;
+    // Not jumping: clear any in-flight trick, then restore level attitude.
+    if (_airTrick) {
+      _airTrick = false;
+      playerGroup.rotation.x = 0;
+      playerGroup.rotation.z = 0;
+    }
+    if (gameState3 !== 'wipeout') playerGroup.rotation.x = 0;
+    if (gameState3 !== 'forlorn' && gameState3 !== 'wipeout' && playMode3 !== 'daring') playerGroup.rotation.z = 0;
+  }
+
+  // Post-landing settle (DARING): smoothly eases rotation.y from the final air angle to base.
+  if (playMode3 === 'daring' && !player3.isJumping && _settleYawT < 1.0 && gameState3 !== 'wipeout') {
+    _settleYawT = Math.min(1.0, _settleYawT + 0.10);
+    var _sEase = _settleYawT * _settleYawT * (3 - 2 * _settleYawT);  // smoothstep
+    playerGroup.rotation.y = _settleYawFrom + (_baseFacingY - _settleYawFrom) * _sEase;
   }
 
   // Paddle stroke: only runs when GLB is loaded (glbPaddleGroup != null).
@@ -6604,6 +7270,7 @@ function updateVisuals3() {
     const stg = STAGES3[stageIdx];
     document.getElementById('hud3-stage').textContent    = stg.name;
     document.getElementById('hud3-mile').textContent     = 'MILE ' + curMile3 + ' / 165';
+    document.getElementById('hud3-progress-fill').style.width = Math.min(100, (curMile3 / 165) * 100) + '%';
     document.getElementById('hud3-stageNum').textContent = 'STAGE ' + stg.num + '/5';
     document.getElementById('hud3-score').textContent        = Math.floor(score3);
     document.getElementById('hud3-best').textContent         = Math.floor(highScore3);
@@ -6633,14 +7300,17 @@ function updateVisuals3() {
     wPos.needsUpdate = true;
   }
 
-  // Scroll water + riverbed textures only while playing — stop during beaching/forlorn so the
-  // world is completely still when the kayaker lies beached. Stillness is the moment.
+  // Scroll water + riverbed textures proportional to curSpd3 so they decelerate in lockstep
+  // with the world during the ending. Constant 0.0067 UV/wu gives ~0.0008/frame at stage-5
+  // full speed (curSpd3 = 2.00 × 0.060 = 0.12); scales naturally across all stage speeds.
+  // Stop entirely during beaching/forlorn — stillness is the emotional beat.
   if (gameState3 === 'playing') {
+    var _wScroll = curSpd3 * 0.0067;
     if (waterMesh && waterMesh.material && waterMesh.material.map) {
-      waterMesh.material.map.offset.y -= 0.0008;
+      waterMesh.material.map.offset.y -= _wScroll;
     }
     if (riverbedTexRef) {
-      riverbedTexRef.offset.y -= 0.0008;
+      riverbedTexRef.offset.y -= _wScroll;
     }
   }
 
@@ -6778,7 +7448,7 @@ function updateVisuals3() {
     }
   }
 
-  // Part 3b: Obstacle upstream parting ripples (pool of 10 reusable rings).
+  // Part 3b: Obstacle upstream parting ripples + foam crescents.
   // Rings are assigned each frame to the first N visible active obstacles.
   // Upstream side = negative z from the obstacle (water flows from -z toward +z).
   var ripIdx = 0;
@@ -6787,16 +7457,28 @@ function updateVisuals3() {
     var obs3 = obstacles3[ri3];
     if (!obs3.mesh) continue;
     if (obs3.z < SPAWN_Z + 5 || obs3.z > DESPAWN_Z - 1) continue;
-    var ripR = obsRipplePool3[ripIdx++];
-    var ripScale = 0.88 + Math.sin(frameN * 0.07 + ri3 * 2.1) * 0.12;
+    // Distance fade: obstacles close to camera (high z) show full effect; far ones fade
+    var _distT = Math.max(0, Math.min(1, (obs3.z + 30) / 33));
+    // Parting ring: pulsing scale, brighter than before
+    var ripR = obsRipplePool3[ripIdx];
+    var ripScale = 1.05 + Math.sin(frameN * 0.07 + ri3 * 2.1) * 0.15;
     ripR.position.set(obs3.mesh.position.x, 0.16, obs3.mesh.position.z - 0.65);
     ripR.scale.set(ripScale, ripScale, 1);
-    ripR.material.opacity = 0.15 + Math.sin(frameN * 0.11 + ri3 * 1.8) * 0.07;
+    ripR.material.opacity = _distT * (0.28 + Math.sin(frameN * 0.11 + ri3 * 1.8) * 0.09);
+    // Foam crescent: wide×flat ring right at the upstream face, fades with distance
+    var foamR = obsFoamPool3[ripIdx];
+    var foamScX = 1.55 + Math.sin(frameN * 0.08 + ri3 * 1.3) * 0.08;
+    foamR.position.set(obs3.mesh.position.x, 0.17, obs3.mesh.position.z - 0.42);
+    foamR.scale.set(foamScX, 0.55, 1); // wide in X, compressed in Z = crescent shape
+    foamR.material.opacity = _distT * (0.22 + Math.sin(frameN * 0.10 + ri3 * 2.7) * 0.06);
+    ripIdx++;
   }
   // Hide all unused pool slots this frame
   for (; ripIdx < obsRipplePool3.length; ripIdx++) {
     obsRipplePool3[ripIdx].material.opacity = 0;
     obsRipplePool3[ripIdx].position.z = -9999;
+    obsFoamPool3[ripIdx].material.opacity = 0;
+    obsFoamPool3[ripIdx].position.z = -9999;
   }
 
   // Refinement 3: Wake chevrons -- curved 3-point arms with organic sway, fade 0.35 to 0.
@@ -6893,8 +7575,10 @@ function updateVisuals3() {
       _of.mesh.scale.setScalar(1.0 + (0.29 - 1.0) * _ofT); // shrink toward basket-orange size
       if (_ofT >= 1) {
         player3.oranges++;
-        score3 += _of.value;
-        _spawnScorePopup3(_of.px, _of.py, _of.pz, '+' + _of.value);
+        _runOranges++;
+        var _ofScore = _of.value * (_reversed ? 2 : 1);
+        score3 += _ofScore;
+        _spawnScorePopup3(_of.px, _of.py, _of.pz, '+' + _ofScore + (_reversed ? ' ×2' : ''));
         scene.remove(_of.mesh);
         disposeMesh(_of.mesh);
         _orangeFlights.splice(_ofi, 1);
@@ -7189,11 +7873,13 @@ function _closeStoryViewer() {
   sv.style.opacity       = '0';
   sv.style.pointerEvents = 'none';
   playerGroup.rotation.z = 0;
-  gameState3 = 'start';
-  setTimeout(function() {
-    sv.classList.remove('sv-visible');
-    showScreen3('start');
-  }, 450);
+  if (_storyFromMenu) {
+    gameState3 = 'start';
+    setTimeout(function() { sv.classList.remove('sv-visible'); showScreen3('start'); }, 450);
+  } else {
+    gameState3 = 'ending1';
+    setTimeout(function() { sv.classList.remove('sv-visible'); showScreen3('ending1'); }, 450);
+  }
 }
 
 function _initStoryViewer() {
@@ -7231,6 +7917,187 @@ function startEnding3() {
   _forlornStartMs = Date.now();
   _forlornTipDone = false;
   gameState3 = 'forlorn';
+  // Spawn question-mark sprite above the kayaker for the forlorn beat
+  new THREE.TextureLoader().load('qmark.png?v=1', function(tex) {
+    if (gameState3 !== 'forlorn' || !_forlornStartMs) return;  // story already opened
+    var _qMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    _qmarkSpr = new THREE.Sprite(_qMat);
+    _qmarkSpr.renderOrder = 25;
+    var _qW = 0.55;
+    _qmarkSpr.scale.set(_qW, _qW * (tex.image.height / tex.image.width), 1);
+    _qmarkSpr.position.set(playerGroup.position.x, playerGroup.position.y + 1.5, playerGroup.position.z);
+    scene.add(_qmarkSpr);
+  });
+}
+
+// ── WIPEOUT ──────────────────────────────────────────────────────────
+// Scripted capsize + kayaker ejection. Plays for WIPEOUT_MS then calls endRun3(false).
+// lateralVx: player lateral velocity at impact (Daring: _daringVx, Classic: 0)
+// relX: player X minus obstacle center X (positive = player right of obstacle)
+function triggerWipeout(lateralVx, relX) {
+  if (gameState3 !== 'playing') return;
+  lateralVx = lateralVx || 0;
+  relX      = relX      || 0;
+
+  gameState3            = 'wipeout';
+  _sfxPlay('crash');
+  _wipeoutStartMs       = Date.now();
+  _wipeoutSplashFired   = false;
+  _wipeoutFloating      = false;
+  _wipeoutFloatPhase    = 0;
+  _wipeoutGlbInScene    = false;
+  player3.dead          = true;
+  player3.isJumping     = false;
+  player3.spinoutFrames = 0;
+  _wipeoutPreImpactSpd  = curSpd3;  // ease to rest in animation block; don't hard-freeze
+  endingSpeedMult       = 0;
+
+  // ── Direction from hit geometry (eject away from clipped side) ───
+  var _absRelX = Math.abs(relX);
+  var _absLatV = Math.abs(lateralVx);
+  if (_absRelX > 0.08) {
+    _wipeoutDir = (relX > 0) ? 1 : -1;   // player right of obstacle → eject right
+  } else if (_absLatV > 0.008) {
+    _wipeoutDir = (lateralVx > 0) ? 1 : -1;  // eject in direction of travel
+  } else {
+    _wipeoutDir = (Math.random() < 0.5) ? 1 : -1;
+  }
+
+  // ── Magnitude scales with impact speed ───────────────────────────
+  _wipeoutMag = Math.min(1.15, 0.82 + _absLatV * 8.0 + _absRelX * 0.4 + Math.random() * 0.18);
+
+  // ── Variant from hit type ─────────────────────────────────────────
+  var _laneW = rwCur / curLanes;
+  if (_absLatV < 0.012 && _absRelX < _laneW * 0.28) {
+    // Head-on: nearly centered, low lateral → nose-dive forward
+    _wipeoutVariant = 'endo';
+  } else if (_absLatV > 0.028 || _absRelX > _laneW * 0.42) {
+    // Hard side hit: fast lateral or off-center → capsize or spin-flip
+    _wipeoutVariant = (Math.random() < 0.55) ? 'capsize' : 'spin-flip';
+  } else {
+    // Mixed: moderate context → weighted random
+    var _vr = Math.random();
+    _wipeoutVariant = _vr < 0.40 ? 'capsize' : _vr < 0.70 ? 'endo' : 'spin-flip';
+  }
+  // Float-away: 12% override (slow comedic tumble regardless of hit type)
+  if (Math.random() < 0.12) _wipeoutVariant = 'float-away';
+
+  // ── Per-variant ejection velocities (Vy ~50% of old values) ─────
+  if (_wipeoutVariant === 'endo') {
+    _wipeoutKayakerVy = 0.026 * _wipeoutMag;
+    _wipeoutKayakerVx = (Math.random() - 0.5) * 0.012;
+    _wipeoutKayakerVz = -0.050 * _wipeoutMag;  // thrown forward (upstream toward camera)
+  } else if (_wipeoutVariant === 'spin-flip') {
+    _wipeoutKayakerVy = 0.040 * _wipeoutMag;
+    _wipeoutKayakerVx = _wipeoutDir * 0.028 * _wipeoutMag;
+    _wipeoutKayakerVz = (Math.random() - 0.5) * 0.016;
+  } else if (_wipeoutVariant === 'float-away') {
+    _wipeoutKayakerVy = 0.020 * _wipeoutMag;
+    _wipeoutKayakerVx = _wipeoutDir * 0.014;
+    _wipeoutKayakerVz = 0.018;  // gentle downstream drift
+  } else { // capsize
+    _wipeoutKayakerVy = 0.033 * _wipeoutMag;
+    _wipeoutKayakerVx = _wipeoutDir * 0.020 * _wipeoutMag;
+    _wipeoutKayakerVz = 0;
+  }
+
+  // ── Crash impact: big water-explosion splash at the collision point ─
+  var _ix = player3.x, _iz = playerGroup.position.z;
+  activateSplash3(_ix,                       _iz,       5.5, 36);  // massive central burst
+  activateSplash3(_ix - 0.90,               _iz + 0.5, 3.2, 30);  // left wing
+  activateSplash3(_ix + 0.90,               _iz - 0.5, 3.0, 28);  // right wing
+  activateSplash3(_ix + _wipeoutDir * 0.45, _iz + 1.0, 2.2, 22);  // directional spray
+  activateSplash3(_ix + _wipeoutDir * 0.20, _iz - 0.3, 1.4, 16);  // inner foam puff
+  activateSplash3(_ix - _wipeoutDir * 0.30, _iz + 0.2, 1.2, 14);  // counter-spray
+  activateDroplets3(_ix, _iz, 20, 2.8);                           // primary arc burst
+  activateDroplets3(_ix + _wipeoutDir * 0.5, _iz + 0.4, 10, 2.0); // secondary spray offset
+
+  // ── Orange spill: eject all basket oranges into scene ──────────────
+  // Get basket world position; spawn physics oranges from it, empty the basket.
+  var _spillCount = Math.min(player3.oranges, BASKET_MAX_VIS);
+  if (_spillCount > 0 && _basketGroup) {
+    var _bwp = new THREE.Vector3();
+    _basketGroup.getWorldPosition(_bwp);
+    var _oGeo = new THREE.SphereGeometry(0.10, 6, 4);
+    for (var _si = 0; _si < _spillCount; _si++) {
+      var _oMat = new THREE.MeshBasicMaterial({ color: 0xF97316 });
+      var _oMsh = new THREE.Mesh(_oGeo, _oMat);
+      // start at basket, random spread within the pile
+      _oMsh.position.set(
+        _bwp.x + (Math.random() - 0.5) * 0.25,
+        _bwp.y + Math.random() * 0.15,
+        _bwp.z + (Math.random() - 0.5) * 0.20
+      );
+      scene.add(_oMsh);
+      var _oSpd = 0.022 + Math.random() * 0.030;
+      var _oAng = Math.random() * Math.PI * 2;
+      _wipeoutOranges.push({
+        mesh:       _oMsh,
+        vx:         Math.cos(_oAng) * _oSpd * 0.8,
+        vy:         0.045 + Math.random() * 0.055,  // upward burst
+        vz:         -(0.015 + Math.random() * 0.025),  // downstream toss (up-screen, toward SPAWN_Z)
+        driftVx:    (Math.random() - 0.5) * 0.004,  // gentle surface drift
+        driftVz:    -(0.006 + Math.random() * 0.004),  // downstream float (up-screen, toward SPAWN_Z)
+        rotSpd:     (Math.random() - 0.5) * 0.18,
+        landed:     false,
+        floatBaseY: 0.12,
+        phase:      Math.random() * Math.PI * 2,
+      });
+    }
+
+    // ── Pop burst: snappy arcade eruption at the moment of impact ─────
+    var POP_COUNT       = 10;    // extra oranges in the burst (on top of basket spill)
+    var POP_SPD_MIN     = 0.08;  // min radial x/z burst speed (wu/frame)
+    var POP_SPD_MAX     = 0.18;  // max radial x/z burst speed
+    var POP_VY_MIN      = 0.10;  // min upward pop velocity
+    var POP_VY_MAX      = 0.20;  // max upward pop velocity
+    var POP_GRAV        = 0.012; // per-frame gravity — 4× normal; keeps arcs snappy not floaty
+    var POP_FRICTION    = 0.90;  // radial drag per frame so they fan out not fly off-screen
+    var POP_SCALE_START = 0.15;  // spawn scale (tiny 'just launched' look)
+    var POP_SCALE_PEAK  = 1.70;  // oversized peak; eye-catching against busy background
+    var POP_SCALE_RISE  = 2;     // frames to pop from start to peak
+    var POP_SCALE_FALL  = 10;    // frames to ease from peak back to 1.0
+    for (var _pi = 0; _pi < POP_COUNT; _pi++) {
+      var _pMat = new THREE.MeshBasicMaterial({ color: 0xF97316 });
+      var _pMsh = new THREE.Mesh(_oGeo, _pMat);  // reuse same geometry as spill
+      _pMsh.position.set(
+        _bwp.x + (Math.random() - 0.5) * 0.20,
+        _bwp.y + Math.random() * 0.22,
+        _bwp.z + (Math.random() - 0.5) * 0.15
+      );
+      _pMsh.scale.setScalar(POP_SCALE_START);
+      scene.add(_pMsh);
+      var _pAng = Math.random() * Math.PI * 2;
+      var _pSpd = POP_SPD_MIN + Math.random() * (POP_SPD_MAX - POP_SPD_MIN);
+      var _pVy  = POP_VY_MIN  + Math.random() * (POP_VY_MAX  - POP_VY_MIN);
+      _wipeoutOranges.push({
+        mesh:       _pMsh,
+        vx:         Math.cos(_pAng) * _pSpd,
+        vy:         _pVy,
+        vz:         -(0.020 + Math.random() * 0.030),  // downstream (negative z, up-screen)
+        driftVx:    (Math.random() - 0.5) * 0.004,
+        driftVz:    -(0.006 + Math.random() * 0.004),  // downstream float (negative z)
+        rotSpd:     (Math.random() - 0.5) * 0.30,
+        landed:     false,
+        floatBaseY: 0.12,
+        phase:      Math.random() * Math.PI * 2,
+        grav:       POP_GRAV,
+        friction:   POP_FRICTION,
+        scaleT:     0,
+        scaleStart: POP_SCALE_START,
+        scalePk:    POP_SCALE_PEAK,
+        scaleRise:  POP_SCALE_RISE,
+        scaleFall:  POP_SCALE_FALL,
+      });
+    }
+  }
+  player3.oranges = 0;  // empties the basket visually on next _updateBasketOranges3 call
+
+  if (_titleCancelFn) { _titleCancelFn(); _titleCancelFn = null; }
+  if (_titleCardEl && _titleCardEl.parentNode) { _titleCardEl.parentNode.removeChild(_titleCardEl); _titleCardEl = null; }
+  _titleCardSuppressSpawn = false;
+  document.getElementById('hud3').classList.remove('visible');
+  console.log('[KRR WIPEOUT] variant=' + _wipeoutVariant + ' mag=' + _wipeoutMag.toFixed(2) + ' oranges=' + _spillCount);
 }
 
 // ── END RUN ─────────────────────────────────────────────────────────
@@ -7248,7 +8115,9 @@ function endRun3(complete) {
 
 // ── START GAME ───────────────────────────────────────────────────────
 function startGame3() {
-  score3 = 0; distance3 = 0; curMile3 = 0;
+  score3 = 0; distance3 = 0; curMile3 = 0; _runOranges = 0;
+  _airTrick = false; _airTrickStartFrame = 0; _airTrickType = ''; _airTrickDir = 1;
+  _airYaw = 0; _baseFacingY = 0; _reversed = false; _settleYawFrom = 0; _settleYawT = 1.0;
   gapFrames3 = 0; frameN = 0; subsFired3 = new Set(); transMsg3 = null;
   stageIdx = 0; curLanes = STAGES3[0].lanes; rwCur = curLanes * LANE_W; curSpeed3 = STAGES3[0].speed;
   curObsFreq3 = STAGES3[0].obsFreq; endingSpeedMult = 1.0;
@@ -7282,10 +8151,28 @@ function startGame3() {
   for (var _ofR = 0; _ofR < _orangeFlights.length; _ofR++) { scene.remove(_orangeFlights[_ofR].mesh); disposeMesh(_orangeFlights[_ofR].mesh); }
   _orangeFlights = [];
   _basketPrevOranges = -1; // force basket re-sync on next frame
-  playerGroup.rotation.y = 0; playerGroup.rotation.z = 0; playerGroup.position.y = 0;
+  playerGroup.rotation.set(0, 0, 0); playerGroup.position.y = 0;
+  _wipeoutStartMs = 0; _wipeoutSplashFired = false; _wipeoutFloating = false; _wipeoutPreImpactSpd = 0;
+  if (_wipeoutGlbInScene && _glbModel) {
+    scene.remove(_glbModel);
+    playerGroup.add(_glbModel);
+    _wipeoutGlbInScene = false;
+  }
+  if (_wipeoutOranges.length > 0) {
+    // All oranges share one geometry — dispose it once, then dispose per-mesh materials.
+    _wipeoutOranges[0].mesh.geometry.dispose();
+    for (var _wor = 0; _wor < _wipeoutOranges.length; _wor++) {
+      scene.remove(_wipeoutOranges[_wor].mesh);
+      _wipeoutOranges[_wor].mesh.material.dispose();
+    }
+    _wipeoutOranges = [];
+  }
+  if (_glbModel) { _glbModel.position.set(0, KAYAKER_Y, 0); _glbModel.rotation.set(0, KAYAKER_ROT_Y, 0); }
   kayakTurnY3 = 0; kayakWasSpinning3 = false; splashWasJumping3 = false;
   paddleSplashPrev3 = 0; wakeChevronTimer3 = 0;
   turnHoldFrames3 = 0; turnDirSign3 = 0; kayakTurnVel3 = 0;
+  _daringVx = 0; _daringSteerL = false; _daringSteerR = false;
+  _daringRoll3 = 0; _daringRollVel3 = 0;
   for (var dpR3 = 0; dpR3 < dropletPool3.length; dpR3++) {
     dropletPool3[dpR3].active = false;
     dropletPool3[dpR3].mesh.material.opacity = 0;
@@ -7324,6 +8211,7 @@ function showScreen3(which, _complete) {
   if (which === 'start') {
     document.getElementById('screen3-start').classList.add('visible');
     document.getElementById('hud3').classList.remove('visible');
+    playMode3 = null; _updateModeToggleLabel();
 
   } else if (which === 'gameover') {
     const scr = document.getElementById('screen3-gameover');
@@ -7345,6 +8233,16 @@ function showScreen3(which, _complete) {
     scr2.classList.add('visible');
     scr2.querySelector('.go-score3-final').textContent = 'FINAL SCORE: ' + Math.floor(score3);
     scr2.querySelector('.go-best3-final').textContent  = 'BEST: ' + Math.floor(highScore3);
+
+  } else if (which === 'nameentry') {
+    document.getElementById('screen3-nameentry').classList.add('visible');
+    document.getElementById('nameentry-score').textContent = 'SCORE: ' + Math.floor(score3);
+    var _ni = document.getElementById('sb3-name-input');
+    _ni.value = '';
+    setTimeout(function() { _ni.focus(); }, 120);
+
+  } else if (which === 'scoreboard') {
+    document.getElementById('screen3-scoreboard').classList.add('visible');
   }
 }
 
@@ -7366,7 +8264,26 @@ function doLeft3()  { if (player3.spinoutFrames > 0) return; if (player3.targetL
 function doRight3() { if (player3.spinoutFrames > 0) return; if (player3.targetLane < curLanes - 1) player3.targetLane++; }
 function doJump3()  {
   if (player3.spinoutFrames > 0) return;
-  if (!player3.isJumping && gameState3 === 'playing') { player3.isJumping = true; player3.jumpFrame = 0; }
+  if (!player3.isJumping && gameState3 === 'playing') {
+    player3.isJumping = true; player3.jumpFrame = 0;
+    _sfxPlay('jump');
+  }
+  // Second space in the air: no-op (trick is now S / ArrowDown via doTrick3)
+}
+function doTrick3() {
+  if (!player3.isJumping || _airTrick || gameState3 !== 'playing') return;
+  if (player3.jumpFrame >= JUMP_DURATION * 0.6) return;
+  _airTrick           = true;
+  _sfxPlay('trick');
+  _airTrickStartFrame = player3.jumpFrame;
+  _airTrickDir        = (Math.random() < 0.5 ? 1 : -1);
+  var _tTypes = ['roll', 'flip', 'spin'];
+  _airTrickType = _tTypes[Math.floor(Math.random() * _tTypes.length)];
+  var _tNames = { roll: 'BARREL ROLL!', flip: 'FRONT FLIP!', spin: 'SPIN!' };
+  var _trickScore = TRICK_BONUS * (_reversed ? 2 : 1);
+  _spawnScorePopup3(playerGroup.position.x, playerGroup.position.y + 1.2, playerGroup.position.z,
+                    _tNames[_airTrickType] + (_reversed ? ' ×2' : ''));
+  score3 += _trickScore;
 }
 
 window.addEventListener('keydown', e => {
@@ -7385,14 +8302,26 @@ window.addEventListener('keydown', e => {
   }
 
   if (gameState3 === 'playing') {
-    switch (e.key) {
-      case 'ArrowLeft':  case 'a': case 'A': doLeft3();  break;
-      case 'ArrowRight': case 'd': case 'D': doRight3(); break;
-      case 'ArrowUp': case 'w': case 'W': case ' ': e.preventDefault(); doJump3(); break;
-      case 'Escape': case 'p': case 'P':
-        gameState3 = 'paused';
-        showScreen3('paused');
-        break;
+    if (playMode3 === 'daring') {
+      // Daring: track held keys for continuous acceleration; jump/pause unchanged
+      switch (e.key) {
+        case 'ArrowLeft':  case 'a': case 'A': _daringSteerL = true;  break;
+        case 'ArrowRight': case 'd': case 'D': _daringSteerR = true;  break;
+        case 'ArrowUp': case 'w': case 'W': case ' ': e.preventDefault(); doJump3(); break;
+        case 'ArrowDown': case 's': case 'S': e.preventDefault(); doTrick3(); break;
+        case 'Escape': case 'p': case 'P': gameState3 = 'paused'; showScreen3('paused'); break;
+      }
+    } else {
+      switch (e.key) {
+        case 'ArrowLeft':  case 'a': case 'A': doLeft3();  break;
+        case 'ArrowRight': case 'd': case 'D': doRight3(); break;
+        case 'ArrowUp': case 'w': case 'W': case ' ': e.preventDefault(); doJump3(); break;
+        case 'ArrowDown': case 's': case 'S': e.preventDefault(); doTrick3(); break;
+        case 'Escape': case 'p': case 'P':
+          gameState3 = 'paused';
+          showScreen3('paused');
+          break;
+      }
     }
     // ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) =====
     if (DEV_STAGE_JUMP && e.key >= '1' && e.key <= '5') {
@@ -8162,23 +9091,103 @@ window.addEventListener('keydown', e => {
   // ===== END TEMP DIAG =====
 });
 
-let tX3 = 0, tY3 = 0, tT3 = 0;
-canvas3d.addEventListener('touchstart', e => {
+// Keyup: release daring steer flags (harmless in classic since flags are never read there)
+window.addEventListener('keyup', e => {
+  switch (e.key) {
+    case 'ArrowLeft':  case 'a': case 'A': _daringSteerL = false; break;
+    case 'ArrowRight': case 'd': case 'D': _daringSteerR = false; break;
+  }
+});
+
+// ── TOUCH CONTROLS ─────────────────────────────────────────────────
+// Tune these if feel needs adjustment on different devices
+var TOUCH_FLICK_MS   = 300;  // max ms a gesture can take and still count as a flick/swipe
+var TOUCH_SWIPE_DIST = 28;   // min px travel for any gesture to register
+var TOUCH_DRAG_DEAD  = 15;   // px from start before daring live-steer engages (joystick deadzone)
+
+var _tX0 = 0, _tY0 = 0, _tT0 = 0;  // gesture start coords + timestamp
+var _tDown = false;                  // true while finger is on canvas
+
+canvas3d.addEventListener('touchstart', function(e) {
   e.preventDefault();
-  const t = e.changedTouches[0]; tX3 = t.clientX; tY3 = t.clientY; tT3 = Date.now();
+  var t = e.changedTouches[0];
+  _tX0 = t.clientX; _tY0 = t.clientY; _tT0 = Date.now();
+  _tDown = true;
 }, { passive: false });
-canvas3d.addEventListener('touchend', e => {
+
+// DARING only: live horizontal drag steers on the ground and air-spins while jumping.
+// Uses total displacement from start (centered-joystick feel), not per-event delta.
+canvas3d.addEventListener('touchmove', function(e) {
   e.preventDefault();
+  if (!_tDown || gameState3 !== 'playing' || playMode3 !== 'daring') return;
+  var dx = e.changedTouches[0].clientX - _tX0;
+  if      (dx >  TOUCH_DRAG_DEAD) { _daringSteerL = false; _daringSteerR = true;  }
+  else if (dx < -TOUCH_DRAG_DEAD) { _daringSteerL = true;  _daringSteerR = false; }
+  else                             { _daringSteerL = false; _daringSteerR = false; }
+}, { passive: false });
+
+canvas3d.addEventListener('touchend', function(e) {
+  e.preventDefault();
+  _tDown = false;
   if (gameState3 !== 'playing') return;
-  const t = e.changedTouches[0];
-  const dx = t.clientX - tX3, dy = t.clientY - tY3;
-  const mag = Math.hypot(dx, dy), dt = Date.now() - tT3;
-  if      (mag < 22 && dt < 280)                    doJump3();
-  else if (Math.abs(dx) > Math.abs(dy) && mag > 28) dx < 0 ? doLeft3() : doRight3();
-  else if (dy < -28)                                doJump3();
+  var t   = e.changedTouches[0];
+  var dx  = t.clientX - _tX0;
+  var dy  = t.clientY - _tY0;
+  var dt  = Date.now() - _tT0;
+  var mag = Math.hypot(dx, dy);
+
+  if (playMode3 === 'daring') {
+    // Always clear live steer when finger lifts
+    _daringSteerL = false; _daringSteerR = false;
+
+    // Slow drags: physics already applied via touchmove; nothing extra on lift
+    if (dt >= TOUCH_FLICK_MS || mag < TOUCH_SWIPE_DIST) return;
+
+    // Flick: classify by which components are present
+    var _th  = TOUCH_SWIPE_DIST * 0.55;  // per-axis threshold (55% of total so diagonals count)
+    var hasU = dy < -_th;
+    var hasD = dy >  _th;
+    var hasL = dx < -_th;
+    var hasR = dx >  _th;
+
+    if (hasU) {
+      // Upward flick (pure or diagonal) → jump; diagonal adds a launch-direction impulse
+      if (hasL) _daringVx -= DARING_MAX_SPD * 0.5;
+      if (hasR) _daringVx += DARING_MAX_SPD * 0.5;
+      doJump3();
+    } else if (hasD && player3.isJumping) {
+      // Downward flick while airborne → flair trick
+      doTrick3();
+    }
+    // Pure horizontal quick-flick: touchmove already built _daringVx; no extra impulse needed
+
+  } else {
+    // CLASSIC — discrete swipes only; no live-drag state, no reversing, no spinning
+    if (mag < TOUCH_SWIPE_DIST) return;
+
+    if (Math.abs(dy) > Math.abs(dx)) {
+      // Vertical dominant
+      if (dy < 0)                 doJump3();   // up → jump (also works mid-air for lane changes via separate left/right swipes)
+      else if (player3.isJumping) doTrick3();  // down while airborne → trick; on ground does nothing
+    } else {
+      // Horizontal dominant — works on ground AND mid-air in classic (mid-air lane changes)
+      if (dx < 0) doLeft3();
+      else        doRight3();
+    }
+  }
+}, { passive: false });
+
+canvas3d.addEventListener('touchcancel', function(e) {
+  // Finger interrupted (notification, call, etc.) — clean up steer state
+  _tDown = false;
+  _daringSteerL = false; _daringSteerR = false;
 }, { passive: false });
 
 // ── CONTROLS3 SCREEN HELPERS ──────────────────────────────────────
+var _isTouch = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+document.getElementById('controls3-img').src =
+  _isTouch ? 'controls-mobile.png?v=1' : 'controls-desktop.png?v=1';
+
 function _controls3KeyHandler() {
   _hideControls3();
   document.getElementById('notice3').classList.add('visible');
@@ -8196,8 +9205,68 @@ document.getElementById('controls3').addEventListener('click', function() {
   document.getElementById('notice3').classList.add('visible');
 });
 
+// ── SCOREBOARD ────────────────────────────────────────────────────
+var _scoreboardOpener = 'mainmenu'; // 'mainmenu' | 'pause' | 'win'
+var _runOranges       = 0;          // total oranges collected this run (not current basket)
+
+function _closeScoreboard3() {
+  if (_scoreboardOpener === 'pause') {
+    showScreen3('paused');
+  } else if (_scoreboardOpener === 'win') {
+    gameState3 = 'ending2'; showScreen3('ending2');
+  } else {
+    showScreen3('start');
+  }
+}
+
+function _renderScoreboard3(rows, ownRank) {
+  var container = document.getElementById('sb3-rows');
+  var empty     = document.getElementById('sb3-empty');
+  container.innerHTML = '';
+  container.scrollTop = 0;
+  if (!rows || rows.length === 0) {
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  for (var i = 0; i < rows.length; i++) {
+    var r   = rows[i];
+    var row = document.createElement('div');
+    row.className = 'sb3-row' + (ownRank && (i + 1) === ownRank ? ' sb3-own' : '');
+    var rank  = document.createElement('span'); rank.className  = 'sb3-cell sb3-rank';  rank.textContent = '#' + (i + 1);
+    var name  = document.createElement('span'); name.className  = 'sb3-cell sb3-name';  name.textContent = (r.name || '???').toUpperCase();
+    var score = document.createElement('span'); score.className = 'sb3-cell sb3-score'; score.textContent = String(r.score || 0);
+    var orng  = document.createElement('span'); orng.className  = 'sb3-cell sb3-orng';  orng.textContent = String(r.oranges || 0);
+    row.appendChild(rank); row.appendChild(name); row.appendChild(score); row.appendChild(orng);
+    container.appendChild(row);
+  }
+  // Scroll own row into view when returning after a win submit
+  if (ownRank) {
+    var ownRow = container.querySelector('.sb3-own');
+    if (ownRow) setTimeout(function() { ownRow.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 80);
+  }
+}
+
+function openScoreboard3(opener) {
+  _scoreboardOpener = opener || 'mainmenu';
+  document.getElementById('sb3-rows').innerHTML = '';
+  document.getElementById('sb3-empty').style.display = 'none';
+  showScreen3('scoreboard');
+  fetch('/.netlify/functions/scores')
+    .then(function(res) { return res.ok ? res.json() : Promise.reject(res.status); })
+    .then(function(data) { _renderScoreboard3(Array.isArray(data) ? data : [], null); })
+    .catch(function()   { _renderScoreboard3([], null); });
+}
+
+// Click anywhere outside the row list to close; scrolling rows should not dismiss it
+document.getElementById('screen3-scoreboard').addEventListener('click', function(e) {
+  if (e.target.closest && e.target.closest('#sb3-rows')) return;
+  _closeScoreboard3();
+});
+
 // ── BUTTON WIRING ─────────────────────────────────────────────────
 document.getElementById('btn3-start').addEventListener('click', function() {
+  if (playMode3 === null) { _nudgeModeCards(); return; }
   document.getElementById('overlay3').classList.add('hidden');
   _showControls3();
 });
@@ -8214,10 +9283,79 @@ document.getElementById('btn3-resume').addEventListener('click', () => {
 document.getElementById('btn3-quit').addEventListener('click', () => {
   gameState3 = 'start'; showScreen3('start');
 });
+document.getElementById('btn3-scoreboard').addEventListener('click', function(e) {
+  e.stopPropagation();
+  openScoreboard3('pause');
+});
+document.getElementById('btn3-sb-mainmenu').addEventListener('click', function(e) {
+  e.stopPropagation();
+  openScoreboard3('mainmenu');
+});
+
+// ── MODE CARD PICKER ──────────────────────────────────────────────
+function _updateModeToggleLabel() {
+  var elC = document.getElementById('mode-card-classic');
+  var elD = document.getElementById('mode-card-daring');
+  if (!elC || !elD) return;
+  elC.classList.toggle('selected', playMode3 === 'classic');
+  elD.classList.toggle('selected', playMode3 === 'daring');
+}
+function _nudgeModeCards() {
+  var cards = [document.getElementById('mode-card-classic'), document.getElementById('mode-card-daring')];
+  var hdr   = document.getElementById('mode-picker-header');
+  cards.forEach(function(el) { el.classList.remove('nudge'); void el.offsetWidth; el.classList.add('nudge'); });
+  if (hdr) { hdr.classList.remove('flash'); void hdr.offsetWidth; hdr.classList.add('flash'); }
+  setTimeout(function() {
+    cards.forEach(function(el) { el.classList.remove('nudge'); });
+    if (hdr) hdr.classList.remove('flash');
+  }, 600);
+}
+document.getElementById('mode-card-classic').addEventListener('click', function(e) {
+  e.stopPropagation();
+  playMode3 = 'classic';
+  localStorage.setItem('krr3d_mode', playMode3);
+  _updateModeToggleLabel();
+});
+document.getElementById('mode-card-daring').addEventListener('click', function(e) {
+  e.stopPropagation();
+  playMode3 = 'daring';
+  localStorage.setItem('krr3d_mode', playMode3);
+  _updateModeToggleLabel();
+});
+_updateModeToggleLabel();
 document.getElementById('btn3-pause').addEventListener('click', () => {
   if (gameState3 === 'playing') { gameState3 = 'paused'; showScreen3('paused'); }
 });
 document.getElementById('btn3-ending1-continue').addEventListener('click', () => {
+  showScreen3('nameentry');
+});
+
+document.getElementById('btn3-nameentry-submit').addEventListener('click', function() {
+  var name = document.getElementById('sb3-name-input').value.trim().toUpperCase();
+  if (!name) { document.getElementById('sb3-name-input').focus(); return; }
+  var btn = this;
+  btn.disabled = true; btn.textContent = '...';
+  fetch('/.netlify/functions/scores', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name, score: Math.floor(score3), oranges: _runOranges })
+  })
+  .then(function(res) { return res.ok ? res.json() : Promise.reject(res.status); })
+  .then(function(data) {
+    btn.disabled = false; btn.textContent = 'SUBMIT';
+    _scoreboardOpener = 'win';
+    document.getElementById('sb3-rows').innerHTML = '';
+    document.getElementById('sb3-empty').style.display = 'none';
+    showScreen3('scoreboard');
+    _renderScoreboard3(Array.isArray(data.top) ? data.top : [], data.rank || null);
+  })
+  .catch(function() {
+    btn.disabled = false; btn.textContent = 'SUBMIT';
+    openScoreboard3('win');
+  });
+});
+
+document.getElementById('btn3-nameentry-skip').addEventListener('click', function() {
   gameState3 = 'ending2'; showScreen3('ending2');
 });
 document.getElementById('btn3-learn').addEventListener('click', () => {
@@ -8235,6 +9373,107 @@ function loop3() {
   updateVisuals3();
   renderer.render(scene, camera);
 }
+
+// ── AUDIO ─────────────────────────────────────────────────────────
+
+var _audioMuted  = localStorage.getItem('krr3d_muted') === '1';
+var _audioVolume = parseFloat(localStorage.getItem('krr3d_vol') || '0.30');
+
+// Music — single element, never recreated; survives deaths/stages/menus
+var _muzTracks = ['music-twang.mp3?v=1', 'music-hidden-creek.mp3?v=1', 'music-desert-road.mp3?v=1'];
+(function() {  // Fisher-Yates shuffle once at load
+  for (var i = _muzTracks.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = _muzTracks[i]; _muzTracks[i] = _muzTracks[j]; _muzTracks[j] = t;
+  }
+})();
+var _muzIdx   = 0;
+var _muzEl    = new Audio(_muzTracks[0]);
+_muzEl.volume = _audioVolume;
+_muzEl.muted  = _audioMuted;
+_muzEl.addEventListener('ended', function() {
+  _muzIdx    = (_muzIdx + 1) % _muzTracks.length;
+  _muzEl.src = _muzTracks[_muzIdx];
+  _muzEl.play().catch(function() {});
+});
+var _muzStarted = false;
+function _muzKickoff() {
+  if (_muzStarted) return;
+  _muzStarted = true;
+  _muzEl.play().catch(function() {});
+}
+// Unlock on first user gesture (browser autoplay policy blocks music until then)
+(function() {
+  function _firstGesture() {
+    _muzKickoff();
+    document.removeEventListener('click',      _firstGesture, true);
+    document.removeEventListener('touchstart', _firstGesture, true);
+    document.removeEventListener('keydown',    _firstGesture, true);
+  }
+  document.addEventListener('click',      _firstGesture, true);
+  document.addEventListener('touchstart', _firstGesture, true);
+  document.addEventListener('keydown',    _firstGesture, true);
+})();
+
+// SFX — preloaded; cloneNode() lets the same sound overlap itself
+var _sfxEls = (function() {
+  var files = {
+    jump:     'sfx-jump.mp3',
+    collect:  'sfx-collect.mp3',
+    trick:    'sfx-trick.mp3',
+    crash:    'sfx-crash.mp3',
+    splash:   'sfx-splash.mp3',
+    select:   'sfx-select.mp3',
+    shield:   'sfx-shield.mp3',
+    nearmiss: 'sfx-nearmiss.mp3'
+  };
+  var els = {};
+  Object.keys(files).forEach(function(k) {
+    var a = new Audio(files[k] + '?v=1');
+    a.volume = 0.45; a.preload = 'auto';
+    els[k] = a;
+  });
+  return els;
+})();
+function _sfxPlay(key) {
+  if (_audioMuted) return;
+  var src = _sfxEls[key]; if (!src) return;
+  var c = src.cloneNode();
+  c.volume = Math.min(1.0, _audioVolume * 1.5);  // SFX ~1.5× music; scale with master volume
+  c.play().catch(function() {});
+}
+
+// Mute toggle — applies to music + SFX, persisted to localStorage
+function _setMuted(val) {
+  _audioMuted  = val;
+  _muzEl.muted = val;
+  localStorage.setItem('krr3d_muted', val ? '1' : '0');
+  document.getElementById('btn-mute').textContent = val ? '🔇' : '🔊';
+}
+_setMuted(_audioMuted);  // apply persisted state immediately
+document.getElementById('btn-mute').addEventListener('click', function() {
+  _setMuted(!_audioMuted);
+});
+
+// ── VOLUME SLIDER (desktop only; hidden on touch via CSS pointer:fine) ───────
+(function() {
+  var _vs = document.getElementById('vol-slider');
+  if (!_vs) return;
+  _vs.value = _audioVolume;
+  _vs.addEventListener('input', function() {
+    _audioVolume    = parseFloat(this.value);
+    _muzEl.volume   = _audioVolume;
+    localStorage.setItem('krr3d_vol', _audioVolume.toFixed(2));
+  });
+})();
+
+// SFX: select sound on all menu/UI buttons
+['btn3-start','btn3-ready','btn3-story','btn3-sb-mainmenu','btn3-scoreboard',
+ 'btn3-pause','btn3-resume','btn3-quit','btn3-retry','btn3-menu',
+ 'mode-card-classic','mode-card-daring'].forEach(function(id) {
+  var el = document.getElementById(id);
+  if (el) el.addEventListener('click', function() { _sfxPlay('select'); });
+});
 
 // ── INIT ──────────────────────────────────────────────────────────
 buildWorld();
