@@ -66,6 +66,9 @@ const MI_PER_PX = 900;
 const COLL_FREQ  = 0.006;
 const COLL_DRIFT = 0.60;  // collectibles float at 60% of obstacle speed (river-current feel)
 const SPD_SCALE = 0.060;
+// Master game-speed multiplier. Tune live with ?spd=1.8 in the URL; default is the baked-in value.
+var GAME_SPEED = parseFloat((location.search.match(/[?&]spd=([\d.]+)/) || [])[1]);
+if (!GAME_SPEED || GAME_SPEED <= 0 || GAME_SPEED > 5) GAME_SPEED = 1.75;
 const CAM_Y     = 4.8;
 const CAM_Z_BK  = 8.5;
 const CAM_LOOK_Z = -8.0;
@@ -217,7 +220,7 @@ var _qWeak = window.matchMedia('(pointer: coarse)').matches
           || (navigator.hardwareConcurrency || 8) <= 4
           || (navigator.deviceMemory || 8) <= 4;
 var Q_LOW     = _qOverride ? (_qOverride === 'low') : (_qWeak || SOFTWARE_GL);
-var DECO_MULT = Q_LOW ? 0.35 : 1;
+var DECO_MULT = 1;
 console.log('[KRR] quality =', Q_LOW ? 'LOW' : 'HIGH', ' decoMult=', DECO_MULT);
 FISH_SCHOOL_SIZE = Math.max(1, Math.floor(FISH_SCHOOL_SIZE * DECO_MULT));  // now DECO_MULT is set
 
@@ -5620,7 +5623,7 @@ function update3() {
     }
   }
 
-  const effectiveSpeed = curSpeed3 * endingSpeedMult;
+  const effectiveSpeed = curSpeed3 * endingSpeedMult * GAME_SPEED;
   distance3 += effectiveSpeed;
   score3    += (effectiveSpeed / MI_PER_PX) * 100 * (_reversed ? 2 : 1); // 100 pts/mile; 2x while reversed
   curMile3   = Math.floor(distance3 / MI_PER_PX);
@@ -9455,7 +9458,7 @@ function loop3() {
         : parseFloat(spf) >= 2.5
           ? 'CPU-BOUND — JS too heavy per frame'
           : 'LOW FPS (~' + fps + ')';
-      var gpuLine = 'GPU: ' + (SOFTWARE_GL ? 'SOFTWARE ⚠' : 'HARDWARE') + '  ' + GPU_RENDERER.slice(0, 40);
+      var gpuLine = 'GPU: ' + (SOFTWARE_GL ? 'SOFTWARE ⚠' : 'HARDWARE') + '  ' + GPU_RENDERER.slice(0, 40) + '  spd×' + GAME_SPEED.toFixed(2);
       _fpsEl.textContent = 'FPS ' + fps + '  |  steps/frame ' + spf + '\n' + verdict + '\n' + gpuLine;
       _fpsFrames = 0; _fpsSteps = 0; _fpsT0 = now;
     }
