@@ -194,16 +194,27 @@ const STAGES3 = [
   },
 ];
 
+// ── PERFORMANCE TIER ───────────────────────────────────────────────
+// 'low' = phones / weak GPUs (lighter scene); 'high' = capable desktops (full quality)
+var _perfCoarse = window.matchMedia('(pointer: coarse)').matches;
+var _perfCores  = (navigator.hardwareConcurrency || 8) <= 4;
+var _perfMem    = (navigator.deviceMemory || 8) <= 4;
+var PERF_TIER   = (_perfCoarse || _perfCores || _perfMem) ? 'low' : 'high';
+var _perfOverride = (location.search.match(/[?&]perf=(low|high)/) || [])[1];
+if (_perfOverride) PERF_TIER = _perfOverride;   // ?perf=low / ?perf=high to force for testing
+var LOW_PERF = (PERF_TIER === 'low');
+console.log('[KRR] perf tier =', PERF_TIER);
+
 // ── THREE.JS RENDERER + SCENE ────────────────────────────────────
 const canvas3d = document.getElementById('gameCanvas');
-const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
+const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, antialias: !LOW_PERF });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, LOW_PERF ? 1 : 2));
+renderer.shadowMap.enabled = !LOW_PERF;
 renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
 
 const scene  = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
-scene.fog        = new THREE.Fog(0x87CEEB, 60, 135);
+scene.fog        = new THREE.Fog(0x87CEEB, LOW_PERF ? 45 : 60, LOW_PERF ? 100 : 135);
 
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 160);
 
@@ -223,7 +234,7 @@ scene.add(new THREE.AmbientLight(0xFFF7ED, 1.20));
 // Directional sun: warm white, angled from up-left-ahead
 const sun = new THREE.DirectionalLight(0xFFFBEB, 2.20);
 sun.position.set(-5, 18, 2);
-sun.castShadow = true;
+sun.castShadow = !LOW_PERF;
 sun.shadow.mapSize.set(512, 512);
 sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 80;
 sun.shadow.camera.left = sun.shadow.camera.bottom = -22;
@@ -1436,7 +1447,7 @@ function buildWorld() {
   // Per-stage sky: Stage 5 gets a dusty haze tone; all others restore the standard sky blue
   scene.background.set(stg.num === 5 ? 0x9FB0B8 : 0x87CEEB);
   // Stage 5: extend far clip so deep terrain planes reach the backdrop bottom; restore for other stages
-  camera.far = (stg.num === 5) ? 350 : 160;
+  camera.far = LOW_PERF ? 130 : ((stg.num === 5) ? 350 : 160);
   camera.updateProjectionMatrix();
   const rw  = riverWidth();
   riverGroup = new THREE.Group();
