@@ -5650,7 +5650,7 @@ function update3() {
     }
   }
 
-  const effectiveSpeed = curSpeed3 * endingSpeedMult * GAME_SPEED * FRAME_SCALE;
+  const effectiveSpeed = curSpeed3 * endingSpeedMult * FRAME_SCALE;
   distance3 += effectiveSpeed;
   score3    += (effectiveSpeed / MI_PER_PX) * 100 * (_reversed ? 2 : 1); // 100 pts/mile; 2x while reversed
   curMile3   = Math.floor(distance3 / MI_PER_PX);
@@ -6981,7 +6981,7 @@ function updateVisuals3() {
         turnDirSign3    = lcDx3 > 0 ? -1 : 1;
         turnHoldFrames3 = 22;
       }
-      if (Math.abs(lcDx3) <= 0.02 && turnHoldFrames3 > 0) turnHoldFrames3--;
+      if (Math.abs(lcDx3) <= 0.02 && turnHoldFrames3 > 0) turnHoldFrames3 -= FRAME_SCALE;
       var lcWant3 = ((Math.abs(lcDx3) > 0.02 || turnHoldFrames3 > 0) && !player3.isJumping)
         ? turnDirSign3 * 0.70
         : 0;
@@ -9452,10 +9452,10 @@ function loop3() {
   var now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
   var frameMs = now - _loopLastT;
   _loopLastT = now;
-  if (frameMs > 100) frameMs = 100;         // clamp tab-away gaps
-  FRAME_SCALE = frameMs / SIM_STEP_MS;      // SIM_STEP_MS = 1000/60
-  if (FRAME_SCALE < 0.1) FRAME_SCALE = 0.1;
-  if (FRAME_SCALE > 4)   FRAME_SCALE = 4;   // safety clamp
+  var timeScale = frameMs / SIM_STEP_MS;   // SIM_STEP_MS = 1000/60
+  if (timeScale > 4)   timeScale = 4;      // clamp real-time gaps (tab-away, hitches)
+  if (timeScale < 0.1) timeScale = 0.1;
+  FRAME_SCALE = timeScale * GAME_SPEED;    // GAME_SPEED now speeds up the ENTIRE game
   var stepsThisFrame = 1;                    // keep meter happy (1 update/frame now)
   if (gameState3 === 'playing') update3();
 
