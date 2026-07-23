@@ -718,6 +718,12 @@ var orangeCollTex = null; // orange.png sprite; used by makeCollMesh3('orange') 
         c.mesh.material.needsUpdate = true;
       }
     });
+    // Also update the template so future clones inherit the texture
+    if (_collTemplates['orange'] && _collTemplates['orange'].material) {
+      _collTemplates['orange'].material.map = tex;
+      _collTemplates['orange'].material.color.setHex(0xFFFFFF);
+      _collTemplates['orange'].material.needsUpdate = true;
+    }
   }, undefined, function(e) { console.error('[KRR] orange.png FAILED', e); });
 })();
 
@@ -4819,7 +4825,9 @@ function disposeMesh(m) {
 }
 
 // ── COLLECTIBLE FACTORY ───────────────────────────────────────────
-function makeCollMesh3(type) {
+var _collTemplates = {};
+
+function _buildCollMesh3(type) {
   let grp, mesh;
 
   switch (type) {
@@ -4925,6 +4933,29 @@ function makeCollMesh3(type) {
     }
   }
 }
+
+function makeCollMesh3(type) {
+  if (!_collTemplates[type]) _collTemplates[type] = _buildCollMesh3(type);
+  var inst = _collTemplates[type].clone(); // shares geometry + material — no per-spawn allocation
+  // Orange uses per-instance material so the late-patch texture race and any per-instance
+  // tint don't stomp a shared material used by other live oranges.
+  if (type === 'orange') {
+    inst.traverse(function(o) { if (o.material) o.material = o.material.clone(); });
+  }
+  return inst;
+}
+
+// Pre-build all templates at load so shader compilation happens during loading, not mid-game.
+// Only 'orange' is spawned at runtime (pickCollType3 always returns it), but list all types
+// that _buildCollMesh3 supports so their shaders compile up front.
+(function _preloadCollTemplates() {
+  var allTypes = [
+    'orange', 'golden_trout', 'mountain_crystal', 'fishing_lure',
+    'golden_eagle_feather', 'beach_ball', 'cooler', 'gold_nugget',
+    'treasure_chest', 'fox_theater_ticket', 'city_seal_medallion'
+  ];
+  for (var _ti = 0; _ti < allTypes.length; _ti++) { makeCollMesh3(allTypes[_ti]); }
+})();
 
 // ── OBSTACLE FACTORY ─────────────────────────────────────────────
 const OBS_MAT_COL = {
@@ -5500,7 +5531,7 @@ function applyStage3(idx, msg) {
 
 function clearActive() {
   obstacles3.forEach(o    => { if (o.mesh)   { disposeMesh(o.mesh);   scene.remove(o.mesh);   } });
-  collectibles3.forEach(c => { if (c.mesh)   { disposeMesh(c.mesh);   scene.remove(c.mesh);   } });
+  collectibles3.forEach(c => { if (c.mesh)   { scene.remove(c.mesh); } }); // clones: don't dispose shared geometry/material
   obstacles3 = []; collectibles3 = [];
 }
 
@@ -5831,7 +5862,7 @@ function update3() {
   }
   collectibles3 = collectibles3.filter(c => {
     if (c._inFlight) { return false; } // mesh handed off to _orangeFlights; no disposal
-    if (c.collected || c.z > DESPAWN_Z) { disposeMesh(c.mesh); scene.remove(c.mesh); return false; }
+    if (c.collected || c.z > DESPAWN_Z) { scene.remove(c.mesh); return false; } // clones share template resources — no dispose
     return true;
   });
 
@@ -7636,8 +7667,7 @@ function updateVisuals3() {
         var _ofScore = _of.value * (_reversed ? 2 : 1);
         score3 += _ofScore;
         _spawnScorePopup3(_of.px, _of.py, _of.pz, '+' + _ofScore + (_reversed ? ' ×2' : ''));
-        scene.remove(_of.mesh);
-        disposeMesh(_of.mesh);
+        scene.remove(_of.mesh); // clone — don't dispose shared template resources
         _orangeFlights.splice(_ofi, 1);
       }
     }
@@ -8205,7 +8235,7 @@ function startGame3() {
   _scorePopups = [];
   for (var _sor = 0; _sor < _swellOrangeSprites.length; _sor++) { scene.remove(_swellOrangeSprites[_sor].mesh); }
   _swellOrangeSprites = [];
-  for (var _ofR = 0; _ofR < _orangeFlights.length; _ofR++) { scene.remove(_orangeFlights[_ofR].mesh); disposeMesh(_orangeFlights[_ofR].mesh); }
+  for (var _ofR = 0; _ofR < _orangeFlights.length; _ofR++) { scene.remove(_orangeFlights[_ofR].mesh); } // clones — no dispose
   _orangeFlights = [];
   _basketPrevOranges = -1; // force basket re-sync on next frame
   playerGroup.rotation.set(0, 0, 0); playerGroup.position.y = 0;
