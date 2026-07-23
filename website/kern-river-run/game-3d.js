@@ -68,7 +68,7 @@ const COLL_DRIFT = 0.60;  // collectibles float at 60% of obstacle speed (river-
 const SPD_SCALE = 0.060;
 // Master game-speed multiplier. Tune live with ?spd=1.8 in the URL; default is the baked-in value.
 var GAME_SPEED = parseFloat((location.search.match(/[?&]spd=([\d.]+)/) || [])[1]);
-if (!GAME_SPEED || GAME_SPEED <= 0 || GAME_SPEED > 5) GAME_SPEED = 1.75;
+if (!GAME_SPEED || GAME_SPEED <= 0 || GAME_SPEED > 20) GAME_SPEED = 1.75;
 
 // Live speed tuner — enable with ?tune=1. Tap −/+ to change speed live; the label shows the value.
 if (/[?&]tune=1/.test(location.search)) {
@@ -85,15 +85,15 @@ if (/[?&]tune=1/.test(location.search)) {
     b.style.cssText = 'position:fixed;bottom:24px;' + side + ':24px;z-index:100000;width:88px;height:88px;'
       + 'font:bold 40px monospace;color:#fff;background:rgba(0,0,0,.6);border:2px solid #fff;border-radius:18px;';
     var bump = function(e){ e.preventDefault(); e.stopPropagation();
-      GAME_SPEED = Math.min(4, Math.max(0.2, +(GAME_SPEED + dx).toFixed(2)));
+      GAME_SPEED = Math.min(20, Math.max(0.5, +(GAME_SPEED + dx).toFixed(2)));
       _refreshSpdLbl();
     };
     b.addEventListener('click', bump);
     b.addEventListener('touchstart', function(e){ e.stopPropagation(); }, {passive:false});
     document.body.appendChild(b);
   };
-  _mkSpdBtn('−', -0.1, 'left');
-  _mkSpdBtn('+', +0.1, 'right');
+  _mkSpdBtn('−', -0.5, 'left');
+  _mkSpdBtn('+', +0.5, 'right');
 }
 const CAM_Y     = 4.8;
 const CAM_Z_BK  = 8.5;
@@ -9484,8 +9484,9 @@ function loop3() {
         : parseFloat(spf) >= 2.5
           ? 'CPU-BOUND — JS too heavy per frame'
           : 'LOW FPS (~' + fps + ')';
-      var gpuLine = 'GPU: ' + (SOFTWARE_GL ? 'SOFTWARE ⚠' : 'HARDWARE') + '  ' + GPU_RENDERER.slice(0, 40) + '  spd×' + GAME_SPEED.toFixed(2);
-      _fpsEl.textContent = 'FPS ' + fps + '  |  steps/frame ' + spf + '\n' + verdict + '\n' + gpuLine;
+      var gpuLine = 'GPU: ' + (SOFTWARE_GL ? 'SOFTWARE ⚠' : 'HARDWARE') + '  ' + GPU_RENDERER.slice(0, 40);
+      var spdLine = 'scroll ' + (typeof curSpd3 !== 'undefined' ? curSpd3.toFixed(3) : '?') + '  spd× ' + GAME_SPEED.toFixed(2);
+      _fpsEl.textContent = 'FPS ' + fps + '  |  steps/frame ' + spf + '\n' + verdict + '\n' + gpuLine + '\n' + spdLine;
       _fpsFrames = 0; _fpsSteps = 0; _fpsT0 = now;
     }
   }
