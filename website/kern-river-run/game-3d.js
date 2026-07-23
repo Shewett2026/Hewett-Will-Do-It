@@ -5379,7 +5379,7 @@ var playMode3 = null;  // set by card selection each visit; null = no mode chose
 var _daringVx       = 0;      // current horizontal steering velocity (wu/frame)
 var _daringSteerL   = false;  // is left key/touch held right now
 var _daringSteerR   = false;  // is right key/touch held right now
-var DARING_ACCEL    = 0.0165; // wu/frame² acceleration while key held (0.022 × 0.75)
+var DARING_ACCEL    = IS_MOBILE ? 0.0165 * 1.6 : 0.0165; // mobile: 1.6× for snappier response
 var DARING_FRICTION = 0.86;   // velocity multiplier per frame (1=no friction, 0=instant stop)
 var DARING_MAX_SPD  = 0.12;   // max steering speed (wu/frame) (0.16 × 0.75)
 var KAYAK_HALF_W    = 0.35;   // margin from river edge to kayak center (world units)
@@ -9160,7 +9160,7 @@ window.addEventListener('keyup', e => {
 // Tune these if feel needs adjustment on different devices
 var TOUCH_FLICK_MS   = 500;  // max ms a gesture can take and still count as a flick/swipe
 var TOUCH_SWIPE_DIST = 28;   // min px travel for any gesture to register
-var TOUCH_DRAG_DEAD  = 15;   // px from start before daring live-steer engages (joystick deadzone)
+var TOUCH_DRAG_DEAD  = IS_MOBILE ? 6 : 15;   // mobile: tighter deadzone so steer engages sooner
 
 var _tX0 = 0, _tY0 = 0, _tT0 = 0;  // gesture start coords + timestamp
 var _tDown = false;                  // true while finger is on canvas
@@ -9206,15 +9206,14 @@ canvas3d.addEventListener('touchend', function(e) {
     if (dt >= TOUCH_FLICK_MS || mag < TOUCH_SWIPE_DIST) return;
 
     // Flick: classify by which components are present
-    var hasU = dy < -_th;
-    var hasL = dx < -_th;
-    var hasR = dx >  _th;
+    var hasU = dy < -_th, hasD = dy > _th, hasL = dx < -_th, hasR = dx > _th;
 
     if (hasU) {
-      // Upward flick (pure or diagonal) → jump; diagonal adds a launch-direction impulse
-      if (hasL) _daringVx -= DARING_MAX_SPD * 0.5;
-      if (hasR) _daringVx += DARING_MAX_SPD * 0.5;
       doJump3();
+      if (hasL) _daringVx = -DARING_MAX_SPD;   // up-left flick → leap left while jumping
+      else if (hasR) _daringVx = DARING_MAX_SPD; // up-right flick → leap right
+    } else if (hasD && player3.isJumping) {
+      doTrick3();
     }
     // Pure horizontal quick-flick: touchmove already built _daringVx; no extra impulse needed
 
@@ -9222,14 +9221,19 @@ canvas3d.addEventListener('touchend', function(e) {
     // CLASSIC — discrete swipes only; no live-drag state, no reversing, no spinning
     if (mag < TOUCH_SWIPE_DIST) return;
 
-    if (Math.abs(dy) > Math.abs(dx)) {
-      // Vertical dominant
-      if (dy < 0)                 doJump3();   // up → jump (also works mid-air for lane changes via separate left/right swipes)
-      else if (player3.isJumping) doTrick3();  // down while airborne → trick; on ground does nothing
-    } else {
-      // Horizontal dominant — works on ground AND mid-air in classic (mid-air lane changes)
-      if (dx < 0) doLeft3();
-      else        doRight3();
+    var _th2 = TOUCH_SWIPE_DIST * 0.55;
+    var hasU2 = dy < -_th2, hasD2 = dy > _th2, hasL2 = dx < -_th2, hasR2 = dx > _th2;
+
+    if (hasU2) {
+      doJump3();
+      if (hasL2)      doLeft3();   // up-left → jump + one lane left
+      else if (hasR2) doRight3();  // up-right → jump + one lane right
+    } else if (hasD2 && player3.isJumping) {
+      doTrick3();
+    } else if (hasL2) {
+      doLeft3();
+    } else if (hasR2) {
+      doRight3();
     }
   }
 }, { passive: false });
