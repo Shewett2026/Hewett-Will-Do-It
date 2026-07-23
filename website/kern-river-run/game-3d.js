@@ -246,7 +246,8 @@ var _qWeak = window.matchMedia('(pointer: coarse)').matches
           || (navigator.hardwareConcurrency || 8) <= 4
           || (navigator.deviceMemory || 8) <= 4;
 var Q_LOW     = _qOverride ? (_qOverride === 'low') : (_qWeak || SOFTWARE_GL);
-var DECO_MULT = 1;
+var IS_MOBILE = window.matchMedia('(pointer: coarse)').matches;
+var DECO_MULT = IS_MOBILE ? 0.5 : 1;   // half the decorative scatter on phones (fewer draw calls)
 console.log('[KRR] quality =', Q_LOW ? 'LOW' : 'HIGH', ' decoMult=', DECO_MULT);
 FISH_SCHOOL_SIZE = Math.max(1, Math.floor(FISH_SCHOOL_SIZE * DECO_MULT));  // now DECO_MULT is set
 
@@ -9157,7 +9158,7 @@ window.addEventListener('keyup', e => {
 
 // ── TOUCH CONTROLS ─────────────────────────────────────────────────
 // Tune these if feel needs adjustment on different devices
-var TOUCH_FLICK_MS   = 300;  // max ms a gesture can take and still count as a flick/swipe
+var TOUCH_FLICK_MS   = 500;  // max ms a gesture can take and still count as a flick/swipe
 var TOUCH_SWIPE_DIST = 28;   // min px travel for any gesture to register
 var TOUCH_DRAG_DEAD  = 15;   // px from start before daring live-steer engages (joystick deadzone)
 
@@ -9196,13 +9197,16 @@ canvas3d.addEventListener('touchend', function(e) {
     // Always clear live steer when finger lifts
     _daringSteerL = false; _daringSteerR = false;
 
-    // Slow drags: physics already applied via touchmove; nothing extra on lift
+    var _th  = TOUCH_SWIPE_DIST * 0.55;  // per-axis threshold (55% of total so diagonals count)
+
+    // Down-trick: fire on any downward-dominant gesture while airborne, regardless of flick speed
+    if (player3.isJumping && dy > _th && dy > Math.abs(dx)) { doTrick3(); return; }
+
+    // All other actions require a fast flick
     if (dt >= TOUCH_FLICK_MS || mag < TOUCH_SWIPE_DIST) return;
 
     // Flick: classify by which components are present
-    var _th  = TOUCH_SWIPE_DIST * 0.55;  // per-axis threshold (55% of total so diagonals count)
     var hasU = dy < -_th;
-    var hasD = dy >  _th;
     var hasL = dx < -_th;
     var hasR = dx >  _th;
 
@@ -9211,9 +9215,6 @@ canvas3d.addEventListener('touchend', function(e) {
       if (hasL) _daringVx -= DARING_MAX_SPD * 0.5;
       if (hasR) _daringVx += DARING_MAX_SPD * 0.5;
       doJump3();
-    } else if (hasD && player3.isJumping) {
-      // Downward flick while airborne → flair trick
-      doTrick3();
     }
     // Pure horizontal quick-flick: touchmove already built _daringVx; no extra impulse needed
 
