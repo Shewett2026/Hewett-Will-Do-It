@@ -5488,7 +5488,8 @@ const player3 = {
 
 let obstacles3    = [];
 let collectibles3 = [];
-var _scorePopups        = []; // [{spr,tex,startY,startT}] active floating "+N" sprites
+var _scorePopups        = []; // [{spr,startY,startT,bw,bh}] active floating "+N" sprites
+var _popupTexCache      = {}; // text → {tex,bw,bh}; textures built once and reused (avoid per-collect GPU upload)
 var _swellOrangeSprites = []; // [{mesh,vx,vy,vz,rotSpd,startT}] tumbling theft oranges
 var _orangeFlights      = []; // [{mesh,sx,sy,sz,px,py,pz,value,startT}] oranges arcing to basket
 
@@ -6579,31 +6580,39 @@ function checkCollisions3() {
 }
 
 function _spawnScorePopup3(wx, wy, wz, text) {
-  var _cv = document.createElement('canvas');
-  var _cvH = 80;
-  var _font = POPUP_FONT_PX + 'px "Press Start 2P", monospace';
-  // Measure text width before committing canvas size to avoid clipping.
-  _cv.width = 512; _cv.height = _cvH;  // scratch size just for measureText
-  var _ctx = _cv.getContext('2d');
-  _ctx.font = _font;
-  var _pad = Math.round(POPUP_FONT_PX * 1.0);
-  var _cvW = Math.ceil(_ctx.measureText(text).width) + _pad * 2;
-  _cvW = Math.max(_cvW, 64);           // minimum width
-  _cv.width = _cvW;                    // resize to exact fit; clears canvas
-  _ctx.font = _font;                   // re-apply after resize (canvas reset)
-  _ctx.lineJoin = 'round';
-  _ctx.lineWidth = Math.round(POPUP_FONT_PX * 0.25);
-  _ctx.strokeStyle = 'rgba(0,0,0,0.88)';
-  _ctx.textAlign = 'center';
-  _ctx.textBaseline = 'middle';
-  _ctx.strokeText(text, _cvW / 2, _cvH / 2);
-  _ctx.fillStyle = '#F97316';
-  _ctx.fillText(text, _cvW / 2, _cvH / 2);
-  var _tex = new THREE.CanvasTexture(_cv);
-  var _mat = new THREE.SpriteMaterial({ map: _tex, transparent: true, depthTest: false });
+  // Build canvas + CanvasTexture once per unique text string; reuse on subsequent calls.
+  var _cached = _popupTexCache[text];
+  if (!_cached) {
+    var _cv = document.createElement('canvas');
+    var _cvH = 80;
+    var _font = POPUP_FONT_PX + 'px "Press Start 2P", monospace';
+    // Measure text width before committing canvas size to avoid clipping.
+    _cv.width = 512; _cv.height = _cvH;  // scratch size just for measureText
+    var _ctx = _cv.getContext('2d');
+    _ctx.font = _font;
+    var _pad = Math.round(POPUP_FONT_PX * 1.0);
+    var _cvW = Math.ceil(_ctx.measureText(text).width) + _pad * 2;
+    _cvW = Math.max(_cvW, 64);           // minimum width
+    _cv.width = _cvW;                    // resize to exact fit; clears canvas
+    _ctx.font = _font;                   // re-apply after resize (canvas reset)
+    _ctx.lineJoin = 'round';
+    _ctx.lineWidth = Math.round(POPUP_FONT_PX * 0.25);
+    _ctx.strokeStyle = 'rgba(0,0,0,0.88)';
+    _ctx.textAlign = 'center';
+    _ctx.textBaseline = 'middle';
+    _ctx.strokeText(text, _cvW / 2, _cvH / 2);
+    _ctx.fillStyle = '#F97316';
+    _ctx.fillText(text, _cvW / 2, _cvH / 2);
+    var _tex = new THREE.CanvasTexture(_cv);
+    var _bh = POPUP_FONT_PX * 0.022;    // world height; 32px -> 0.70
+    var _bw = _bh * (_cvW / _cvH);      // AR from actual canvas size
+    _cached = { tex: _tex, bw: _bw, bh: _bh };
+    _popupTexCache[text] = _cached;
+  }
+  // Cheap per-instance objects: SpriteMaterial + Sprite only (texture already on GPU).
+  var _mat = new THREE.SpriteMaterial({ map: _cached.tex, transparent: true, depthTest: false });
   var _spr = new THREE.Sprite(_mat);
-  var _bh = POPUP_FONT_PX * 0.022;    // world height; 32px -> 0.70
-  var _bw = _bh * (_cvW / _cvH);      // AR from actual canvas size
+  var _bw = _cached.bw, _bh = _cached.bh;
   // stacking: bump spawn Y up if another active popup is within 0.45 world units
   var _spawnY = wy + 0.3;
   for (var _sc = 0; _sc < _scorePopups.length; _sc++) {
@@ -6613,7 +6622,8 @@ function _spawnScorePopup3(wx, wy, wz, text) {
   _spr.position.set(wx, _spawnY, wz);
   _spr.renderOrder = 20;
   scene.add(_spr);
-  _scorePopups.push({ spr: _spr, tex: _tex, startY: _spawnY, startT: Date.now(), bw: _bw, bh: _bh });
+  _scorePopups.push({ spr: _spr, startY: _spawnY, startT: Date.now(), bw: _bw, bh: _bh });
+  // NOTE: tex is NOT stored per-popup — it lives in _popupTexCache and must never be disposed here.
 }
 
 function checkCollectibles3() {
@@ -7622,8 +7632,7 @@ function updateVisuals3() {
       _spe.spr.material.opacity = _spFrac > _PFD ? 1 - (_spFrac - _PFD) / (1 - _PFD) : 1;
       if (_spFrac >= 1) {
         scene.remove(_spe.spr);
-        _spe.spr.material.dispose();
-        _spe.tex.dispose();
+        _spe.spr.material.dispose(); // per-instance material only — tex lives in _popupTexCache, never dispose it
         _scorePopups.splice(_spi, 1);
       }
     }
@@ -8235,7 +8244,7 @@ function startGame3() {
   player3.isJumping = false; player3.jumpFrame  = 0;
   player3.dead      = false; player3.hasShield  = false; player3.spinoutFrames = 0;
   player3.oranges   = 0;
-  for (var _psr = 0; _psr < _scorePopups.length; _psr++) { scene.remove(_scorePopups[_psr].spr); _scorePopups[_psr].spr.material.dispose(); _scorePopups[_psr].tex.dispose(); }
+  for (var _psr = 0; _psr < _scorePopups.length; _psr++) { scene.remove(_scorePopups[_psr].spr); _scorePopups[_psr].spr.material.dispose(); } // tex lives in _popupTexCache — do not dispose
   _scorePopups = [];
   for (var _sor = 0; _sor < _swellOrangeSprites.length; _sor++) { scene.remove(_swellOrangeSprites[_sor].mesh); }
   _swellOrangeSprites = [];
