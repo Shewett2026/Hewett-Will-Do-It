@@ -68,7 +68,7 @@ const COLL_DRIFT = 0.60;  // collectibles float at 60% of obstacle speed (river-
 const SPD_SCALE = 0.060;
 // Master game-speed multiplier. Tune live with ?spd=1.8 in the URL; default is the baked-in value.
 var GAME_SPEED = parseFloat((location.search.match(/[?&]spd=([\d.]+)/) || [])[1]);
-if (!GAME_SPEED || GAME_SPEED <= 0 || GAME_SPEED > 20) GAME_SPEED = 4.5;
+if (!GAME_SPEED || GAME_SPEED <= 0 || GAME_SPEED > 20) GAME_SPEED = 3;
 
 // Live speed tuner — enable with ?tune=1. Tap −/+ to change speed live; the label shows the value.
 if (/[?&]tune=1/.test(location.search)) {
@@ -138,7 +138,7 @@ var FISH_SPRITE_W       = 0.42; // sprite plane width wu (fish cross-section at 
 var FISH_SPRITE_L       = 1.2;  // sprite plane length wu (nose to tail at scale 1)
 
 // ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) =====
-const DEV_STAGE_JUMP = true;  // flip to false or delete this whole block to disable
+const DEV_STAGE_JUMP = /[?&]dev=1/.test(location.search);
 // ===== END TEMP DEV STAGE JUMP =====
 
 
@@ -5790,10 +5790,10 @@ function update3() {
   }
 
   // Spawn (obstacle spawns suppressed during animated narrow; collectibles continue)
-  gapFrames3++;
+  gapFrames3 += FRAME_SCALE;
   const minF = Math.ceil(MIN_GAP / curSpeed3);
-  if (!narrowing && !_titleCardSuppressSpawn && curMile3 < OBS_CUTOFF_MILE && gapFrames3 >= minF && Math.random() < curObsFreq3 * endingSpeedMult) { spawnObs3(); gapFrames3 = 0; }
-  if (Math.random() < COLL_FREQ) spawnColl3();
+  if (!narrowing && !_titleCardSuppressSpawn && curMile3 < OBS_CUTOFF_MILE && gapFrames3 >= minF && Math.random() < curObsFreq3 * endingSpeedMult * FRAME_SCALE) { spawnObs3(); gapFrames3 = 0; }
+  if (Math.random() < COLL_FREQ * FRAME_SCALE) spawnColl3();
 
   // Move items
   const spd = effectiveSpeed * SPD_SCALE;
