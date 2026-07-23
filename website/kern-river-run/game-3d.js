@@ -141,6 +141,10 @@ var FISH_SPRITE_L       = 1.2;  // sprite plane length wu (nose to tail at scale
 const DEV_STAGE_JUMP = /[?&]dev=1/.test(location.search);
 // ===== END TEMP DEV STAGE JUMP =====
 
+// Diagnostic spawn gates — append ?noobs=1 or ?nocoll=1 to isolate frame stalls
+var _NO_OBS  = /[?&]noobs=1/.test(location.search);
+var _NO_COLL = /[?&]nocoll=1/.test(location.search);
+
 
 // ── STAGE DATA (full roster matching game.js) ─────────────────────
 const STAGES3 = [
@@ -5829,8 +5833,8 @@ function update3() {
   // Spawn (obstacle spawns suppressed during animated narrow; collectibles continue)
   gapFrames3 += FRAME_SCALE;
   const minF = Math.ceil(MIN_GAP / curSpeed3);
-  if (!narrowing && !_titleCardSuppressSpawn && curMile3 < OBS_CUTOFF_MILE && gapFrames3 >= minF && Math.random() < curObsFreq3 * endingSpeedMult * FRAME_SCALE) { spawnObs3(); gapFrames3 = 0; }
-  if (Math.random() < COLL_FREQ * FRAME_SCALE) spawnColl3();
+  if (!_NO_OBS && !narrowing && !_titleCardSuppressSpawn && curMile3 < OBS_CUTOFF_MILE && gapFrames3 >= minF && Math.random() < curObsFreq3 * endingSpeedMult * FRAME_SCALE) { spawnObs3(); gapFrames3 = 0; }
+  if (!_NO_COLL && Math.random() < COLL_FREQ * FRAME_SCALE) spawnColl3();
 
   // Move items
   const spd = effectiveSpeed * SPD_SCALE;
