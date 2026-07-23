@@ -5936,7 +5936,6 @@ function update3() {
       // Always update repeat so texel density stays constant at the new segW
       if (_bs3.mesh.material && _bs3.mesh.material.map) {
         _bs3.mesh.material.map.repeat.set(_bs3.segW / GROUND_TEX_WORLD, (BK_SEG_Z + 0.25) / GROUND_TEX_WORLD);
-        _bs3.mesh.material.map.needsUpdate = true;
       }
       _bs3.mesh.position.x = _bs3.side * (rwCur / 2 + SHORE_W + _bs3.segW / 2);
     }
@@ -5983,7 +5982,6 @@ function update3() {
       bt3.sprite.scale.set(h3 * 0.72, h3, 1);
       if (treeTex[v3]) {
         bt3.sprite.material.map = treeTex[v3];
-        bt3.sprite.material.needsUpdate = true;
         bt3.sprite.center.set(0.5, _effectivePadFrac(treeTex[v3]._padFrac || 0));
       }
     }
@@ -6007,7 +6005,6 @@ function update3() {
       bbd.sprite.scale.set(_bbH * _bbAR, _bbH, 1);
       if (billboardTex[_nIdx]) {
         bbd.sprite.material.map = billboardTex[_nIdx];
-        bbd.sprite.material.needsUpdate = true;
         bbd.sprite.center.set(0.5, _effectivePadFrac(billboardTex[_nIdx]._padFrac || 0));
       }
       bbd.xOff  = 2.5 + Math.random() * 2.0;
@@ -6063,7 +6060,6 @@ function update3() {
       bb3.sprite.position.z = bb3.z;
       if (bankBoulderTex[bbTexIdx]) {
         bb3.sprite.material.map = bankBoulderTex[bbTexIdx];
-        bb3.sprite.material.needsUpdate = true;
       }
     }
   }
@@ -6087,7 +6083,7 @@ function update3() {
       pp3.sprite.scale.set(POPPY_W, 0.7305 * POPPY_W, 1);
       pp3.sprite.material.rotation = 0;
       var ppRestTex = pp3.side === -1 ? _poppyTexL : _poppyTexR;
-      if (ppRestTex) { pp3.sprite.material.map = ppRestTex; pp3.sprite.material.needsUpdate = true; }
+      if (ppRestTex) { pp3.sprite.material.map = ppRestTex; }
       if (pp3.glow) { pp3.glow.renderOrder = 4; pp3.glow.material.opacity = 0.40; pp3.glow.scale.setScalar(POPPY_GLOW_SCALE * POPPY_W); }
     }
     // Position sprite: place center(0.5,0) so tuft anchor lands at tuftX
@@ -6151,7 +6147,6 @@ function update3() {
       cw.sprite.material.color.setRGB(cwTv, cwTv, cwTv);
       if (bankBoulderTex[cwTexIdx]) {
         cw.sprite.material.map = bankBoulderTex[cwTexIdx];
-        cw.sprite.material.needsUpdate = true;
       }
     }
     // per-frame: depth taper (t=0 far/short, t=1 near/tall) applied every frame so funnel is smooth
@@ -6175,7 +6170,6 @@ function update3() {
       var ssTexIdx = Math.floor(Math.random() * bankBoulderTex.length);
       if (bankBoulderTex[ssTexIdx]) {
         ss.sprite.material.map = bankBoulderTex[ssTexIdx];
-        ss.sprite.material.needsUpdate = true;
       }
       ss.h   = SHORE4_SCALE_MIN + Math.random() * (SHORE4_SCALE_MAX - SHORE4_SCALE_MIN);
       ss.wf  = 0.75 + Math.random() * 0.70;
@@ -6205,7 +6199,6 @@ function update3() {
               ? _crTex.image.naturalWidth / _crTex.image.naturalHeight : 0.38;
             _crm.sprite.scale.set(_crH * _crAR, _crH, 1);
             _crm.sprite.material.map = _crTex;
-            _crm.sprite.material.needsUpdate = true;
           }
         }
       }
@@ -6247,7 +6240,6 @@ function update3() {
       if (lakeHouseTex[hTexIdx]) {
         var _hrt = lakeHouseTex[hTexIdx];
         hse.sprite.material.map = _hrt;
-        hse.sprite.material.needsUpdate = true;
         var hRecycleAsp = (_hrt.image && _hrt.image.naturalHeight > 0)
           ? _hrt.image.naturalWidth / _hrt.image.naturalHeight : 1.0;
         hse.sprite.scale.set(STAGE3_HOUSE_SCALE * hRecycleAsp, STAGE3_HOUSE_SCALE, 1);
@@ -6268,7 +6260,7 @@ function update3() {
       st5.sprite.position.x = st5.side * (rwCur / 2 + SHORE_W + st5.xOff);
       st5.sprite.position.z = st5.z;
       if (stumpTex5) {
-        st5.sprite.material.map = stumpTex5; st5.sprite.material.needsUpdate = true;
+        st5.sprite.material.map = stumpTex5;
         var stAsp = (stumpTex5.image && stumpTex5.image.naturalHeight > 0)
           ? stumpTex5.image.naturalWidth / stumpTex5.image.naturalHeight : 1.0;
         st5.sprite.scale.set(S5_STUMP_SCALE * stAsp, S5_STUMP_SCALE, 1);
@@ -6299,7 +6291,7 @@ function update3() {
       fm5.texIdx = fmTexI;
       var fmTex5 = farmTex5[fmTexI];
       if (fmTex5) {
-        fm5.sprite.material.map = fmTex5; fm5.sprite.material.needsUpdate = true;
+        fm5.sprite.material.map = fmTex5;
         var fmAsp = (fmTex5.image && fmTex5.image.naturalHeight > 0)
           ? fmTex5.image.naturalWidth / fmTex5.image.naturalHeight : 1.0;
         fm5.sprite.scale.set(S5_FARMHOUSE_SCALE * fmAsp, S5_FARMHOUSE_SCALE, 1);
@@ -6318,7 +6310,7 @@ function update3() {
       fs5.sprite.position.x = fs5.side * (rwCur / 2 + SHORE_W + fs5.xOff);
       fs5.sprite.position.z = fs5.z;
       if (fishingTex5) {
-        fs5.sprite.material.map = fishingTex5; fs5.sprite.material.needsUpdate = true;
+        fs5.sprite.material.map = fishingTex5;
         var fsAsp5 = (fishingTex5.image && fishingTex5.image.naturalHeight > 0)
           ? fishingTex5.image.naturalWidth / fishingTex5.image.naturalHeight : 1.0;
         fs5.sprite.scale.set(S5_FISHING_SCALE * fsAsp5, S5_FISHING_SCALE, 1);
@@ -6338,7 +6330,7 @@ function update3() {
       gt5.sprite.position.x = gt5.side * (rwCur / 2 + SHORE_W + gt5.xOff);
       gt5.sprite.position.z = gt5.z;
       if (grassTuftTex5) {
-        gt5.sprite.material.map = grassTuftTex5; gt5.sprite.material.needsUpdate = true;
+        gt5.sprite.material.map = grassTuftTex5;
         gt5.sprite.scale.set(S5_GRASS_W * gt5.scaleMult, S5_GRASS_W * 0.621 * gt5.scaleMult, 1);
         gt5.sprite.center.set(0.5, _effectivePadFrac(grassTuftTex5._padFrac || 0));
       }
@@ -6361,7 +6353,7 @@ function update3() {
         gt1.ar = grassTuftTex1._padFrac !== undefined
           ? grassTuftTex1.image.naturalHeight / grassTuftTex1.image.naturalWidth
           : gt1.ar;
-        gt1.sprite.material.map = grassTuftTex1; gt1.sprite.material.needsUpdate = true;
+        gt1.sprite.material.map = grassTuftTex1;
         gt1.sprite.scale.set(S5_GRASS_W * gt1.scaleMult, S5_GRASS_W * (gt1.ar || 0.621) * gt1.scaleMult, 1);
         gt1.sprite.center.set(0.5, _effectivePadFrac(grassTuftTex1._padFrac || 0));
       }
@@ -6384,7 +6376,7 @@ function update3() {
         bt1.ar = grassTuftTex1._padFrac !== undefined
           ? grassTuftTex1.image.naturalHeight / grassTuftTex1.image.naturalWidth
           : bt1.ar;
-        bt1.sprite.material.map = grassTuftTex1; bt1.sprite.material.needsUpdate = true;
+        bt1.sprite.material.map = grassTuftTex1;
         bt1.sprite.scale.set(S5_GRASS_W * bt1.scaleMult, S5_GRASS_W * (bt1.ar || 0.644) * bt1.scaleMult, 1);
         bt1.sprite.center.set(0.5, _effectivePadFrac(grassTuftTex1._padFrac || 0));
       }
@@ -6407,7 +6399,7 @@ function update3() {
         gt3.ar = grassTuftTex3._padFrac !== undefined
           ? grassTuftTex3.image.naturalHeight / grassTuftTex3.image.naturalWidth
           : gt3.ar;
-        gt3.sprite.material.map = grassTuftTex3; gt3.sprite.material.needsUpdate = true;
+        gt3.sprite.material.map = grassTuftTex3;
         gt3.sprite.scale.set(S5_GRASS_W * gt3.scaleMult, S5_GRASS_W * (gt3.ar || 0.644) * gt3.scaleMult, 1);
         gt3.sprite.center.set(0.5, _effectivePadFrac(grassTuftTex3._padFrac || 0));
       }
@@ -6430,7 +6422,7 @@ function update3() {
         bt3.ar = grassTuftTex3._padFrac !== undefined
           ? grassTuftTex3.image.naturalHeight / grassTuftTex3.image.naturalWidth
           : bt3.ar;
-        bt3.sprite.material.map = grassTuftTex3; bt3.sprite.material.needsUpdate = true;
+        bt3.sprite.material.map = grassTuftTex3;
         bt3.sprite.scale.set(S5_GRASS_W * bt3.scaleMult, S5_GRASS_W * (bt3.ar || 0.644) * bt3.scaleMult, 1);
         bt3.sprite.center.set(0.5, _effectivePadFrac(grassTuftTex3._padFrac || 0));
       }
@@ -6450,7 +6442,7 @@ function update3() {
       bt5.sprite.position.x = bt5.side * (rwCur / 2 + bt5.xOff);
       bt5.sprite.position.z = bt5.z;
       if (grassTuftTex5) {
-        bt5.sprite.material.map = grassTuftTex5; bt5.sprite.material.needsUpdate = true;
+        bt5.sprite.material.map = grassTuftTex5;
         bt5.sprite.scale.set(S5_GRASS_W * bt5.scaleMult, S5_GRASS_W * 0.621 * bt5.scaleMult, 1);
         bt5.sprite.center.set(0.5, _effectivePadFrac(grassTuftTex5._padFrac || 0));
       }
