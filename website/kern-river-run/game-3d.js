@@ -225,8 +225,9 @@ const STAGES3 = [
 
 // ── THREE.JS RENDERER + SCENE ────────────────────────────────────
 const canvas3d = document.getElementById('gameCanvas');
-const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+var IS_MOBILE = window.matchMedia('(pointer: coarse)').matches; // needed before renderer construction
+const renderer = new THREE.WebGLRenderer({ canvas: canvas3d, antialias: !IS_MOBILE });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_MOBILE ? 1.5 : 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
 
@@ -284,6 +285,9 @@ sun.shadow.mapSize.set(512, 512);
 sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 80;
 sun.shadow.camera.left = sun.shadow.camera.bottom = -22;
 sun.shadow.camera.right = sun.shadow.camera.top   =  22;
+if (IS_MOBILE) {
+  renderer.shadowMap.type = THREE.PCFShadowMap; // cheaper than PCFSoftShadowMap on mobile
+}
 scene.add(sun);
 // Hemisphere: sky blue above, warm earth below
 scene.add(new THREE.HemisphereLight(0x87CEEB, 0xA3805A, 0.55));
