@@ -16,7 +16,7 @@
       overscroll-behavior: none; touch-action: none;
     }
     body { display: flex; justify-content: center; align-items: center; }
-    #gameCanvas { display: block; max-width: 100vw; max-height: 100vh; }
+    #gameCanvas { display: block; max-width: 100vw; max-height: 100vh; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 
     /* ── HUD ── */
     #hud3 {
@@ -830,6 +830,6 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="game-3d.js?v=89"></script>
+  <script src="game-3d.js?v=90"></script>
 </body>
 </html>

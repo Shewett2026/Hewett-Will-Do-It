@@ -7353,7 +7353,7 @@ function updateVisuals3() {
   // Shield indicator: hat poppy sprite (see _hatPoppySpr block above; no torus ring)
 
   // Chase camera
-  camXSmooth += (player3.x - camXSmooth) * (1 - Math.pow(0.93, FRAME_SCALE));
+  camXSmooth += (player3.x - camXSmooth) * (1 - Math.pow(1 - 0.16, FRAME_SCALE));
   camera.position.set(camXSmooth, CAM_Y, CAM_Z_BK);
   camera.lookAt(camXSmooth, 0.5, CAM_LOOK_Z);
 
@@ -9472,6 +9472,7 @@ var _fpsShow   = /[?&]fps=1/.test(location.search);
 var _fpsFrames = 0;
 var _fpsT0     = _loopLastT;
 var _fpsSteps  = 0;
+var _fpsMaxMs  = 0;
 var _fpsEl     = null;
 function _ensureFpsEl() {
   if (_fpsEl) return;
@@ -9504,6 +9505,7 @@ function loop3() {
   // FPS sampling
   _fpsFrames++;
   _fpsSteps += stepsThisFrame;
+  _fpsMaxMs = Math.max(_fpsMaxMs, frameMs);
   if (_fpsShow) {
     _ensureFpsEl();
     _fpsEl.style.display = 'block';
@@ -9517,9 +9519,9 @@ function loop3() {
           ? 'CPU-BOUND — JS too heavy per frame'
           : 'LOW FPS (~' + fps + ')';
       var gpuLine = 'GPU: ' + (SOFTWARE_GL ? 'SOFTWARE ⚠' : 'HARDWARE') + '  ' + GPU_RENDERER.slice(0, 40);
-      var spdLine = 'scroll ' + (typeof curSpd3 !== 'undefined' ? curSpd3.toFixed(3) : '?') + '  spd× ' + GAME_SPEED.toFixed(2);
+      var spdLine = 'scroll ' + (typeof curSpd3 !== 'undefined' ? curSpd3.toFixed(3) : '?') + '  spd× ' + GAME_SPEED.toFixed(2) + '  worst ' + Math.round(_fpsMaxMs) + 'ms';
       _fpsEl.textContent = 'FPS ' + fps + '  |  steps/frame ' + spf + '\n' + verdict + '\n' + gpuLine + '\n' + spdLine;
-      _fpsFrames = 0; _fpsSteps = 0; _fpsT0 = now;
+      _fpsFrames = 0; _fpsSteps = 0; _fpsT0 = now; _fpsMaxMs = 0;
     }
   }
 }
