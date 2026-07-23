@@ -68,7 +68,7 @@ const COLL_DRIFT = 0.60;  // collectibles float at 60% of obstacle speed (river-
 const SPD_SCALE = 0.060;
 // Master game-speed multiplier. Tune live with ?spd=1.8 in the URL; default is the baked-in value.
 var GAME_SPEED = parseFloat((location.search.match(/[?&]spd=([\d.]+)/) || [])[1]);
-if (!GAME_SPEED || GAME_SPEED <= 0 || GAME_SPEED > 20) GAME_SPEED = 1.75;
+if (!GAME_SPEED || GAME_SPEED <= 0 || GAME_SPEED > 20) GAME_SPEED = 4.5;
 
 // Live speed tuner — enable with ?tune=1. Tap −/+ to change speed live; the label shows the value.
 if (/[?&]tune=1/.test(location.search)) {
@@ -584,6 +584,7 @@ let turnHoldFrames3   = 0;     // frames remaining in post-snap turn hold
 let turnDirSign3      = 0;     // sign of active turn: -1 = nose-right, +1 = nose-left
 let kayakTurnVel3     = 0;     // angular velocity for spring-damper easing
 let curSpd3           = 0;     // last computed scroll speed (shared with updateVisuals3 for droplet physics)
+var FRAME_SCALE = 1;  // real-time movement multiplier (1.0 == a 60fps frame)
 
 // ── TEXTURE PRELOAD ───────────────────────────────────────────────
 // Warms the cache before the player clicks START so buildStageBackdrop
@@ -5629,7 +5630,7 @@ function spawnColl3() {
 
 // ── UPDATE ────────────────────────────────────────────────────────
 function update3() {
-  frameN++;
+  frameN += FRAME_SCALE;
 
   // Stage 5 cinematic deceleration: cosine ease from ENDING_DECEL_START down to ~0
   if (stageIdx === 4 && curMile3 >= ENDING_DECEL_START) {
@@ -5649,7 +5650,7 @@ function update3() {
     }
   }
 
-  const effectiveSpeed = curSpeed3 * endingSpeedMult * GAME_SPEED;
+  const effectiveSpeed = curSpeed3 * endingSpeedMult * GAME_SPEED * FRAME_SCALE;
   distance3 += effectiveSpeed;
   score3    += (effectiveSpeed / MI_PER_PX) * 100 * (_reversed ? 2 : 1); // 100 pts/mile; 2x while reversed
   curMile3   = Math.floor(distance3 / MI_PER_PX);
@@ -5718,23 +5719,23 @@ function update3() {
     }
   }
 
-  if (player3.spinoutFrames > 0) player3.spinoutFrames--;
+  if (player3.spinoutFrames > 0) player3.spinoutFrames -= FRAME_SCALE;
 
   // Player X: classic snap-to-lane or daring free steer
   if (playMode3 === 'daring') {
     // Apply accel from held keys (suppressed during spinout and during jump — jump uses airYaw).
     if (player3.spinoutFrames <= 0 && !player3.isJumping) {
       if (_reversed) {
-        if (_daringSteerL) _daringVx += DARING_ACCEL;
-        if (_daringSteerR) _daringVx -= DARING_ACCEL;
+        if (_daringSteerL) _daringVx += DARING_ACCEL * FRAME_SCALE;
+        if (_daringSteerR) _daringVx -= DARING_ACCEL * FRAME_SCALE;
       } else {
-        if (_daringSteerL) _daringVx -= DARING_ACCEL;
-        if (_daringSteerR) _daringVx += DARING_ACCEL;
+        if (_daringSteerL) _daringVx -= DARING_ACCEL * FRAME_SCALE;
+        if (_daringSteerR) _daringVx += DARING_ACCEL * FRAME_SCALE;
       }
     }
-    if (!player3.isJumping) _daringVx *= DARING_FRICTION;  // coast in the air
+    if (!player3.isJumping) _daringVx *= Math.pow(DARING_FRICTION, FRAME_SCALE);  // coast in the air
     if (Math.abs(_daringVx) < 0.0005) _daringVx = 0;
-    player3.x += _daringVx;
+    player3.x += _daringVx * FRAME_SCALE;
     // Clamp to river (tracks rwCur narrowing automatically)
     var _halfRiv = rwCur / 2 - KAYAK_HALF_W;
     player3.x = Math.max(-_halfRiv, Math.min(_halfRiv, player3.x));
@@ -5745,7 +5746,7 @@ function update3() {
   } else {
     // Classic: smooth slide toward target lane
     const tx = laneXPos(player3.targetLane);
-    player3.x += (tx - player3.x) * 0.28;
+    player3.x += (tx - player3.x) * (1 - Math.pow(1 - 0.28, FRAME_SCALE));
     if (Math.abs(player3.x - tx) < 0.02) player3.x = tx;
   }
 
@@ -5753,10 +5754,10 @@ function update3() {
   if (player3.isJumping) {
     // Air-spin: DARING only — held steer keys spin the boat instead of steering X.
     if (gameState3 === 'playing' && playMode3 === 'daring') {
-      if (_daringSteerL) _airYaw -= AIR_YAW_RATE;
-      if (_daringSteerR) _airYaw += AIR_YAW_RATE;
+      if (_daringSteerL) _airYaw -= AIR_YAW_RATE * FRAME_SCALE;
+      if (_daringSteerR) _airYaw += AIR_YAW_RATE * FRAME_SCALE;
     }
-    player3.jumpFrame++;
+    player3.jumpFrame += FRAME_SCALE;
     if (player3.jumpFrame >= JUMP_DURATION) {
       player3.isJumping = false; player3.jumpFrame = 0; _airTrick = false;
       _sfxPlay('splash');
@@ -5813,7 +5814,7 @@ function update3() {
     } else {
       o.mesh.position.x = laneXPos(o.lane);
     }
-    if (o.type === 'river_wash') { o.mesh.rotation.y += RW_SPIN_SPEED; }
+    if (o.type === 'river_wash') { o.mesh.rotation.y += RW_SPIN_SPEED * FRAME_SCALE; }
   }
   obstacles3 = obstacles3.filter(o => {
     if (o.z > DESPAWN_Z) { disposeMesh(o.mesh); scene.remove(o.mesh); return false; }
@@ -5825,7 +5826,7 @@ function update3() {
     c.z += spd * COLL_DRIFT; c.mesh.position.z = c.z;
     c.mesh.position.x = laneXPos(c.lane);
     c.mesh.position.y = c.baseY + Math.sin(frameN * 0.11 + c.lane * 1.3) * 0.14;
-    c.mesh.rotation.y += 0.028;  // gentle rotation
+    c.mesh.rotation.y += 0.028 * FRAME_SCALE;  // gentle rotation
   }
   collectibles3 = collectibles3.filter(c => {
     if (c._inFlight) { return false; } // mesh handed off to _orangeFlights; no disposal
@@ -5848,7 +5849,7 @@ function update3() {
   // Refinement 3: Wake chevron spawn every 6 frames + scroll all active chevrons.
   // Each chevron gets random spread/zTail/swayPhase for organic V-shape variation.
   if (!player3.isJumping) {
-    wakeChevronTimer3++;
+    wakeChevronTimer3 += FRAME_SCALE;
     if (wakeChevronTimer3 >= 6) {
       wakeChevronTimer3 = 0;
       for (var wcSi = 0; wcSi < wakeChevrons3.length; wcSi++) {
@@ -5870,7 +5871,7 @@ function update3() {
   for (var wcUi = 0; wcUi < wakeChevrons3.length; wcUi++) {
     var wcE = wakeChevrons3[wcUi];
     if (!wcE.active) continue;
-    wcE.life++;
+    wcE.life += FRAME_SCALE;
     wcE.worldZ += spd * 0.5;
     wcE.grp.position.set(wcE.worldX, 0.16, wcE.worldZ);
     if (wcE.life > wcE.maxLife || wcE.worldZ > DESPAWN_Z) {
@@ -9451,20 +9452,12 @@ function loop3() {
   var now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
   var frameMs = now - _loopLastT;
   _loopLastT = now;
-  if (frameMs > 250) frameMs = 250;  // clamp big gaps (tab backgrounded, etc.)
-
-  var stepsThisFrame = 0;
-  if (gameState3 === 'playing') {
-    _loopAcc += frameMs;
-    while (_loopAcc >= SIM_STEP_MS && stepsThisFrame < SIM_MAX_STEPS) {
-      update3();
-      _loopAcc -= SIM_STEP_MS;
-      stepsThisFrame++;
-    }
-    if (stepsThisFrame >= SIM_MAX_STEPS) _loopAcc = 0;  // can't keep up — drop backlog, hold correct speed
-  } else {
-    _loopAcc = 0;
-  }
+  if (frameMs > 100) frameMs = 100;         // clamp tab-away gaps
+  FRAME_SCALE = frameMs / SIM_STEP_MS;      // SIM_STEP_MS = 1000/60
+  if (FRAME_SCALE < 0.1) FRAME_SCALE = 0.1;
+  if (FRAME_SCALE > 4)   FRAME_SCALE = 4;   // safety clamp
+  var stepsThisFrame = 1;                    // keep meter happy (1 update/frame now)
+  if (gameState3 === 'playing') update3();
 
   updateVisuals3();
   renderer.render(scene, camera);
