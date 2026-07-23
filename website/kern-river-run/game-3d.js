@@ -6960,16 +6960,16 @@ function updateVisuals3() {
       // Yaw: purely velocity-driven — leads into the turn, eases back to straight as vx decays
       var _dYawWant   = -Math.max(-1, Math.min(1, _daringVx / DARING_MAX_SPD)) * DARING_YAW_MAX;
       var _dYawErr    = _dYawWant - kayakTurnY3;
-      kayakTurnVel3  += _dYawErr * 0.15;
-      kayakTurnVel3  *= 0.72;
+      kayakTurnVel3  += _dYawErr * (1 - Math.pow(0.85, FRAME_SCALE));
+      kayakTurnVel3  *= Math.pow(0.72, FRAME_SCALE);
       kayakTurnY3    += kayakTurnVel3;
       if (Math.abs(kayakTurnY3) < 0.008) { kayakTurnY3 = 0; kayakTurnVel3 = 0; }
       playerGroup.rotation.y = _baseFacingY + kayakTurnY3;
       // Roll spring — same blend signal, hull banks into the turn
       var _dRollWant  = -_dYawBlend * DARING_ROLL_MAX;
       var _dRollErr   = _dRollWant - _daringRoll3;
-      _daringRollVel3 += _dRollErr * 0.12;
-      _daringRollVel3 *= 0.76;
+      _daringRollVel3 += _dRollErr * (1 - Math.pow(0.88, FRAME_SCALE));
+      _daringRollVel3 *= Math.pow(0.76, FRAME_SCALE);
       _daringRoll3    += _daringRollVel3;
       if (Math.abs(_daringRoll3) < 0.005) { _daringRoll3 = 0; _daringRollVel3 = 0; }
       playerGroup.rotation.z = _daringRoll3;
@@ -6986,8 +6986,8 @@ function updateVisuals3() {
         ? turnDirSign3 * 0.70
         : 0;
       var turnError3 = lcWant3 - kayakTurnY3;
-      kayakTurnVel3 += turnError3 * 0.06;
-      kayakTurnVel3 *= 0.80;
+      kayakTurnVel3 += turnError3 * (1 - Math.pow(0.94, FRAME_SCALE));
+      kayakTurnVel3 *= Math.pow(0.80, FRAME_SCALE);
       kayakTurnY3   += kayakTurnVel3;
       if (Math.abs(kayakTurnY3) < 0.008) { kayakTurnY3 = 0; kayakTurnVel3 = 0; }
       playerGroup.rotation.y = _baseFacingY + kayakTurnY3;
@@ -7317,7 +7317,7 @@ function updateVisuals3() {
   // Shield indicator: hat poppy sprite (see _hatPoppySpr block above; no torus ring)
 
   // Chase camera
-  camXSmooth += (player3.x - camXSmooth) * 0.07;
+  camXSmooth += (player3.x - camXSmooth) * (1 - Math.pow(0.93, FRAME_SCALE));
   camera.position.set(camXSmooth, CAM_Y, CAM_Z_BK);
   camera.lookAt(camXSmooth, 0.5, CAM_LOOK_Z);
 
