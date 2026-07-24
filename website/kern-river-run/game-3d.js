@@ -9610,10 +9610,45 @@ document.getElementById('btn3-ending1-continue').addEventListener('click', () =>
 });
 
 // ── NAME FILTER ────────────────────────────────────────────────────
-// STUB: replace the body of containsBadWord with the real word-filter.js logic.
-// The function receives the name already uppercased and trimmed.
-function containsBadWord(name) {
-  return false; // TODO: paste word-filter.js implementation here
+// Inlined from word-filter.js — blocks profanity + slurs including leetspeak.
+var _LEET = {
+  '@':'a','4':'a','^':'a','8':'b','(':'c','<':'c','{':'c','[':'c',
+  '3':'e','&':'e','6':'g','9':'g','1':'i','!':'i','|':'i','0':'o',
+  '5':'s','$':'s','7':'t','+':'t','2':'z'
+};
+function _normalizeForFilter(raw) {
+  var s = String(raw || '').toLowerCase(), out = '';
+  for (var i = 0; i < s.length; i++) { var ch = s[i]; out += (_LEET[ch] !== undefined) ? _LEET[ch] : ch; }
+  out = out.replace(/[^a-z]/g, '');
+  out = out.replace(/(.)\1+/g, '$1');
+  return out;
+}
+var BLOCKLIST = [
+  'niger','nigga','nigor','nigr','coon','jigaboo','porchmonkey','tarbaby','sambo',
+  'spic','wetback','beaner','chink','gook','jap','kike','heeb','kafir','kaffir','wog',
+  'gyp','gypo','redskin','injun','squaw','raghead','towelhead','sandniger','cameljocky',
+  'zipperhead','slopehead','paki','abo','coolie','darkie','darky',
+  'fagot','fag','fagit','faget','dyke','trany','shemale','ladyboy','homo','queerbait',
+  'retard','retarted','tard','spaz','spastic','mongoloid',
+  'nazi','hitler','heilhitler','kkk','whitepower','lynch','holocaust',
+  'fuck','fuk','fuc','motherfuker','mofuker','shit','shyt','cunt','pussy','pusy','dick',
+  'cock','penis','vagina','boner','cum','jizz','wank','jerkof','handjob','blowjob',
+  'bukake','bukkake','creampie','whore','hoe','slut','skank','thot','milf','gangbang',
+  'orgy','dildo','buttplug','anal','rimjob','twat','clit','labia','scrotum','testicle',
+  'bollock','ballsack','nutsack','queef','smegma',
+  'ashole','asholes','asswipe','dumbass','jackas','dipshit','bulshit','bitch','bich',
+  'biatch','bastard','prick','wanker','douche','douchebag','scumbag','peckerhed',
+  'dickhed','shithed','fuckface','fuckboy','fuktard','cocksuker','motherfucker',
+  'rape','rapist','molest','pedo','pedofile','childporn',
+  'poop','turd','crap'
+];
+var _BLOCK_SET = (function(){ var m={}; for (var i=0;i<BLOCKLIST.length;i++) m[BLOCKLIST[i]]=true; return m; })();
+function containsBadWord(raw) {
+  var norm = _normalizeForFilter(raw);
+  if (!norm) return false;
+  if (_BLOCK_SET[norm]) return true;
+  for (var i = 0; i < BLOCKLIST.length; i++) { if (norm.indexOf(BLOCKLIST[i]) !== -1) return true; }
+  return false;
 }
 
 var _nameAttempts = 0;

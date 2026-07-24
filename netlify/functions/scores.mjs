@@ -1,5 +1,45 @@
 import { getStore } from '@netlify/blobs';
 
+// ── NAME FILTER (inlined from word-filter.js) ──────────────────────
+const _LEET = {
+  '@':'a','4':'a','^':'a','8':'b','(':'c','<':'c','{':'c','[':'c',
+  '3':'e','&':'e','6':'g','9':'g','1':'i','!':'i','|':'i','0':'o',
+  '5':'s','$':'s','7':'t','+':'t','2':'z'
+};
+function _normalizeForFilter(raw) {
+  let s = String(raw || '').toLowerCase(), out = '';
+  for (let i = 0; i < s.length; i++) { const ch = s[i]; out += (_LEET[ch] !== undefined) ? _LEET[ch] : ch; }
+  out = out.replace(/[^a-z]/g, '').replace(/(.)\1+/g, '$1');
+  return out;
+}
+const BLOCKLIST = [
+  'niger','nigga','nigor','nigr','coon','jigaboo','porchmonkey','tarbaby','sambo',
+  'spic','wetback','beaner','chink','gook','jap','kike','heeb','kafir','kaffir','wog',
+  'gyp','gypo','redskin','injun','squaw','raghead','towelhead','sandniger','cameljocky',
+  'zipperhead','slopehead','paki','abo','coolie','darkie','darky',
+  'fagot','fag','fagit','faget','dyke','trany','shemale','ladyboy','homo','queerbait',
+  'retard','retarted','tard','spaz','spastic','mongoloid',
+  'nazi','hitler','heilhitler','kkk','whitepower','lynch','holocaust',
+  'fuck','fuk','fuc','motherfuker','mofuker','shit','shyt','cunt','pussy','pusy','dick',
+  'cock','penis','vagina','boner','cum','jizz','wank','jerkof','handjob','blowjob',
+  'bukake','bukkake','creampie','whore','hoe','slut','skank','thot','milf','gangbang',
+  'orgy','dildo','buttplug','anal','rimjob','twat','clit','labia','scrotum','testicle',
+  'bollock','ballsack','nutsack','queef','smegma',
+  'ashole','asholes','asswipe','dumbass','jackas','dipshit','bulshit','bitch','bich',
+  'biatch','bastard','prick','wanker','douche','douchebag','scumbag','peckerhed',
+  'dickhed','shithed','fuckface','fuckboy','fuktard','cocksuker','motherfucker',
+  'rape','rapist','molest','pedo','pedofile','childporn',
+  'poop','turd','crap'
+];
+const _BLOCK_SET = Object.fromEntries(BLOCKLIST.map(w => [w, true]));
+function containsBadWord(raw) {
+  const norm = _normalizeForFilter(raw);
+  if (!norm) return false;
+  if (_BLOCK_SET[norm]) return true;
+  for (const w of BLOCKLIST) { if (norm.includes(w)) return true; }
+  return false;
+}
+
 // Kern River Run — high-score board. Same Netlify Blobs pattern as votes.mjs.
 const MAX_STORED  = 200;   // keep at most this many entries in the blob
 const TOP_RETURN  = 25;    // number returned to the client
@@ -59,6 +99,9 @@ export default async (req) => {
     }
 
     if (!name) name = 'ANON';
+    if (name !== 'ANON' && containsBadWord(name)) {
+      return new Response(JSON.stringify({ error: 'name' }), { status: 400, headers: HEADERS });
+    }
     if (!Number.isFinite(score) || score < 0) {
       return new Response(JSON.stringify({ error: 'Invalid score' }), { status: 400, headers: HEADERS });
     }
