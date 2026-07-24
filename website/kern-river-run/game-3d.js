@@ -8069,8 +8069,8 @@ function _closeStoryViewer() {
     gameState3 = 'start';
     setTimeout(function() { sv.classList.remove('sv-visible'); showScreen3('start'); }, 450);
   } else {
-    gameState3 = 'ending1';
-    setTimeout(function() { sv.classList.remove('sv-visible'); showScreen3('ending1'); }, 450);
+    gameState3 = 'ending2';
+    setTimeout(function() { sv.classList.remove('sv-visible'); showScreen3('ending2'); }, 450);
   }
 }
 
@@ -8099,7 +8099,7 @@ function _initStoryViewer() {
 
 // ── ENDING SEQUENCE ────────────────────────────────────────────────
 function startEnding3() {
-  if (gameState3 === 'ending1' || gameState3 === 'ending2' || gameState3 === 'forlorn') return;
+  if (gameState3 === 'ending2' || gameState3 === 'forlorn') return;
   if (score3 > highScore3) { highScore3 = Math.floor(score3); localStorage.setItem('krr3d_hs', highScore3); }
   document.getElementById('hud3').classList.remove('visible');
   // Hard-zero speed so all scroll code that reads curSpd3 stops immediately,
@@ -8294,7 +8294,7 @@ function triggerWipeout(lateralVx, relX) {
 
 // ── END RUN ─────────────────────────────────────────────────────────
 function endRun3(complete) {
-  if (gameState3 === 'gameover' || gameState3 === 'ending1' || gameState3 === 'ending2' || gameState3 === 'beaching' || gameState3 === 'forlorn') return;
+  if (gameState3 === 'gameover' || gameState3 === 'ending2' || gameState3 === 'beaching' || gameState3 === 'forlorn') return;
   player3.dead = true;
   // Tear down any active stage/ending title card so it doesn't sit above the game-over overlay
   if (_titleCancelFn) { _titleCancelFn(); _titleCancelFn = null; }
@@ -8416,9 +8416,6 @@ function showScreen3(which, _complete) {
 
   } else if (which === 'paused') {
     document.getElementById('screen3-paused').classList.add('visible');
-
-  } else if (which === 'ending1') {
-    document.getElementById('screen3-ending1').classList.add('visible');
 
   } else if (which === 'ending2') {
     const scr2 = document.getElementById('screen3-ending2');
@@ -9605,9 +9602,6 @@ document.getElementById('mode-card-daring').addEventListener('click', function(e
 _updateModeToggleLabel();
 document.getElementById('btn3-pause').addEventListener('click', () => {
   if (gameState3 === 'playing') { gameState3 = 'paused'; showScreen3('paused'); }
-});
-document.getElementById('btn3-ending1-continue').addEventListener('click', () => {
-  showScreen3('nameentry');
 });
 
 // ── NAME FILTER ────────────────────────────────────────────────────
