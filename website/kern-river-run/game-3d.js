@@ -9609,9 +9609,43 @@ document.getElementById('btn3-ending1-continue').addEventListener('click', () =>
   showScreen3('nameentry');
 });
 
+// ── NAME FILTER ────────────────────────────────────────────────────
+// STUB: replace the body of containsBadWord with the real word-filter.js logic.
+// The function receives the name already uppercased and trimmed.
+function containsBadWord(name) {
+  return false; // TODO: paste word-filter.js implementation here
+}
+
+var _nameAttempts = 0;
+var _rejectPopupEl = null;
+function _showRejectPopup(n) {
+  if (!_rejectPopupEl) {
+    _rejectPopupEl = document.createElement('div');
+    _rejectPopupEl.style.cssText = 'position:fixed;inset:0;z-index:999999;display:flex;'
+      + 'align-items:center;justify-content:center;background:rgba(0,0,0,.55);cursor:pointer;';
+    _rejectPopupEl.addEventListener('click', function() {
+      _rejectPopupEl.style.display = 'none';
+      var _ni = document.getElementById('sb3-name-input');
+      if (_ni) { _ni.focus(); _ni.select(); }
+    });
+    document.body.appendChild(_rejectPopupEl);
+  }
+  var img = document.createElement('img');
+  img.src = 'popup-' + n + '.png';
+  img.style.cssText = 'max-width:min(90vw,480px);max-height:80vh;border-radius:12px;pointer-events:none;';
+  _rejectPopupEl.innerHTML = '';
+  _rejectPopupEl.appendChild(img);
+  _rejectPopupEl.style.display = 'flex';
+}
+
 document.getElementById('btn3-nameentry-submit').addEventListener('click', function() {
   var name = document.getElementById('sb3-name-input').value.trim().toUpperCase();
   if (!name) { document.getElementById('sb3-name-input').focus(); return; }
+  if (containsBadWord(name)) {
+    _nameAttempts = (_nameAttempts || 0) + 1;
+    _showRejectPopup(Math.min(_nameAttempts, 5));
+    return;
+  }
   var btn = this;
   btn.disabled = true; btn.textContent = '...';
   fetch('/.netlify/functions/scores', {
@@ -9622,6 +9656,7 @@ document.getElementById('btn3-nameentry-submit').addEventListener('click', funct
   .then(function(res) { return res.ok ? res.json() : Promise.reject(res.status); })
   .then(function(data) {
     btn.disabled = false; btn.textContent = 'SUBMIT';
+    _nameAttempts = 0;
     _scoreboardOpener = 'win';
     document.getElementById('sb3-rows').innerHTML = '';
     document.getElementById('sb3-empty').style.display = 'none';
