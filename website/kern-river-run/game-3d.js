@@ -5408,6 +5408,7 @@ function _buildObsMesh(type, fullWidth) {
 }
 
 var _obsTemplates = {};
+var _obsPool      = {};
 
 // Returns true when the underlying GLB is in memory — safe to cache and clone.
 // Sprite-fallback branches store userData Object3D refs that don't survive Three.js
@@ -5429,24 +5430,42 @@ function _obsCanCache(type, fullWidth) {
   return true; // procedural types (river_wash, deadfall_log, etc.) are always safe to cache
 }
 
+function _applyObsSpawnRotation(type, mesh) {
+  if ((type === 'boulder' || type === 'boulder_wide') && mesh.children.length > 0) {
+    mesh.children[0].rotation.y = Math.random() * Math.PI * 2;
+  }
+  if (type === 'shopping_cart' && mesh.children.length > 0) {
+    mesh.children[0].rotation.y = CART5_ROT_Y + Math.random() * Math.PI * 2;
+    mesh.children[0].rotation.z = (Math.random() - 0.5) * 0.4;
+  }
+}
+
 function makeObsMesh(type, fullWidth) {
   var key = type + '|' + (fullWidth ? 'F' : 'L') + '|' + Math.round(rwCur * 4);
-  if (type === 'fallen_log') key += '|' + (fallenLogAlt5 % 2); // gap-left vs gap-right are different templates
-  if (!_obsCanCache(type, fullWidth)) return _buildObsMesh(type, fullWidth); // GLB not ready; sprite fallback is cheap
+  if (type === 'fallen_log') key += '|' + (fallenLogAlt5 % 2); // gap-left vs gap-right need separate pool slots
+
+  // ── Pool: reuse a recycled instance — no cloning, no GPU upload ──
+  var _pool = _obsPool[key];
+  if (_pool && _pool.length) {
+    var m = _pool.pop();
+    m.visible = true;
+    m.rotation.set(0, 0, 0);  // clear accumulated spin (e.g. river_wash)
+    _applyObsSpawnRotation(type, m);
+    return m;
+  }
+
+  // ── Build: sprite fallback if GLB not yet loaded (userData refs can't survive clone) ──
+  if (!_obsCanCache(type, fullWidth)) return _buildObsMesh(type, fullWidth);
+
+  // ── Clone: build template on first use, then share across all instances ──
   if (!_obsTemplates[key]) _obsTemplates[key] = _buildObsMesh(type, fullWidth);
   var inst = _obsTemplates[key].clone(true); // shares geometry + material — no per-spawn GPU upload
+  inst.userData._obsKey = key;
   // Restore Object3D userData refs lost by clone's JSON.parse/stringify of userData
   if (type === 'river_wash' && inst.children.length > 0) {
     inst.userData.spiralDisc = inst.children[0];
   }
-  // Re-randomize per-spawn rotations so clones don't all face the same direction
-  if ((type === 'boulder' || type === 'boulder_wide') && inst.children.length > 0) {
-    inst.children[0].rotation.y = Math.random() * Math.PI * 2;
-  }
-  if (type === 'shopping_cart' && inst.children.length > 0) {
-    inst.children[0].rotation.y = CART5_ROT_Y + Math.random() * Math.PI * 2;
-    inst.children[0].rotation.z = (Math.random() - 0.5) * 0.4;
-  }
+  _applyObsSpawnRotation(type, inst);
   return inst;
 }
 
@@ -5583,7 +5602,14 @@ function applyStage3(idx, msg) {
 }
 
 function clearActive() {
-  obstacles3.forEach(o    => { if (o.mesh)   { scene.remove(o.mesh); } }); // clones share template resources — no dispose
+  obstacles3.forEach(o => {
+    if (o.mesh) {
+      o.mesh.visible = false;
+      scene.remove(o.mesh);
+      var _pk = o.mesh.userData && o.mesh.userData._obsKey;
+      if (_pk) (_obsPool[_pk] || (_obsPool[_pk] = [])).push(o.mesh);
+    }
+  });
   collectibles3.forEach(c => { if (c.mesh)   { scene.remove(c.mesh); } }); // clones: don't dispose shared geometry/material
   obstacles3 = []; collectibles3 = [];
 }
@@ -5699,7 +5725,7 @@ function spawnObs3() {
   else                                    yPos = 0;
 
   mesh.position.set(xPos, yPos, SPAWN_Z);
-  mesh.traverse(c => { if (c.isMesh) c.castShadow = true; });
+  mesh.traverse(c => { if (c.isMesh) c.castShadow = !IS_MOBILE; });
   scene.add(mesh);
   obstacles3.push({ mesh, lane, z: SPAWN_Z, resolved: false, fullWidth: isFw, type: actualType, lane2, gapLane });
 }
@@ -5902,7 +5928,13 @@ function update3() {
     if (o.type === 'river_wash') { o.mesh.rotation.y += RW_SPIN_SPEED * FRAME_SCALE; }
   }
   obstacles3 = obstacles3.filter(o => {
-    if (o.z > DESPAWN_Z) { scene.remove(o.mesh); return false; } // clones share template resources — no dispose
+    if (o.z > DESPAWN_Z) {
+      o.mesh.visible = false;
+      scene.remove(o.mesh);
+      var _pk = o.mesh.userData && o.mesh.userData._obsKey;
+      if (_pk) (_obsPool[_pk] || (_obsPool[_pk] = [])).push(o.mesh);
+      return false;
+    }
     return true;
   });
 
