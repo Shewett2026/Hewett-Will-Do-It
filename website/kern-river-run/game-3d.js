@@ -209,7 +209,7 @@ const STAGES3 = [
   },
   {
     num:5, name:'BAKERSFIELD', endMile:165, lanes:3, speed:2.00, obsFreq:0.012, fwFreq:0,
-    waterColor:0x3E5560, bankColor:0xD97706,
+    waterColor:0x1A5C6E, bankColor:0xD97706,
     obsTypes:['boulder','boulder','boulder','fallen_log','fallen_log','shopping_cart','river_wash'],
     fwType:'tube_float_parade', collA:'fox_theater_ticket', collB:'city_seal_medallion',
     backdrop: {
@@ -1647,7 +1647,7 @@ function buildWorld() {
   // MeshBasicMaterial: fog-immune so the sandy bed stays visible at far distances.
   riverbedTexRef = null;
   if (stg.backdrop) {
-    var rbMat = new THREE.MeshBasicMaterial({ color: 0xC4A46B });
+    var rbMat = new THREE.MeshBasicMaterial({ color: (stg.num === 5) ? 0x3D5A4A : 0xC4A46B });
     if (riverbedStageTex) {
       riverbedStageTex.offset.set(0, 0);
       rbMat.map = riverbedStageTex;
@@ -1710,7 +1710,7 @@ function buildWorld() {
   // the opaque riverbed below it. Opaque obstacles/player (renderOrder 0) write depth
   // and appear above the water (renderOrder 2) without any special ordering needed.
   wMat.transparent = true;
-  wMat.opacity     = WATER_OPACITY;
+  wMat.opacity     = (stg.num === 5) ? 0.82 : WATER_OPACITY;
   wMat.depthWrite  = false;
   var waterPW = (stg.num === 2) ? 200 : rw;
   var waterPX = (stg.num === 2) ? 8   : 12;
@@ -2052,7 +2052,7 @@ var S1_GRASS_POOL      = Math.round(137 * DECO_MULT);  // stage 1 far-ground sca
 var S1_GRASS_BANK_POOL = Math.round(17  * DECO_MULT);  // stage 1 bank-top (also used by stage 3); was 16 (+5%)
 var S5_GRASS_XBAND    = 8.0;   // scatter band width wu from bank apron edge; Alt+9/0 to tune
 var S5_BANK_SEAT_Y    = 0.62;  // Y for sprites on bank-top surface (bank segs at y=0.30 + half-h=0.30)
-var S5_CART_SEAT_Y     = -0.20;  // bottom anchor Y; sinks lower ~third of cart below water surface (y=0.15)
+var S5_CART_SEAT_Y     = -0.10;  // bottom anchor Y; sinks lower ~third of cart below water surface (y=0.15)
 var S5_LOG_SEAT_Y      = -2.70;  // bottom anchor Y; corrects ~47-50% transparent bottom padding in fallen-log art; tune with ; / ' keys
 var OBS_CUTOFF_MILE = 161.5; // no new obstacles spawn at or past this mile
 // Stage 5 cinematic ending constants (tunable)
@@ -2107,7 +2107,7 @@ var RAFTERS2_SCALE = 0.90; var RAFTERS2_ROT_Y = 0;  var RAFTERS2_SEAT_Y = 0.0;
 var BRIDGE3_SCALE  = 1.0;  var BRIDGE3_ROT_Y  = 0;  var BRIDGE3_SEAT_Y  = 0.0;
 var TUBERS4_SCALE  = 1.0;  var TUBERS4_ROT_Y  = 0;  var TUBERS4_SEAT_Y  = 0.0;
 var LOG5_SCALE     = 1.0;  var LOG5_ROT_Y     = 0;  var LOG5_SEAT_Y     = 0.0;
-var CART5_SCALE    = 0.35; var CART5_ROT_Y    = 0;  var CART5_SEAT_Y    = 0.0;
+var CART5_SCALE    = 0.40; var CART5_ROT_Y    = 0;  var CART5_SEAT_Y    = 0.0;
 var _bridge1GlbLogged = false;  var _rafters2GlbLogged = false;
 var _bridge3GlbLogged = false;  var _tubers4GlbLogged  = false;
 var _log5GlbLogged    = false;  var _cart5GlbLogged    = false;
@@ -2835,8 +2835,8 @@ function initWaterFX() {
     }
   }
   _wfxRippleTimer  = 10 + Math.floor(Math.random() * 40);
-  _wfxBubbleTimer  = 20 + Math.floor(Math.random() * 60);
-  _wfxCurrentTimer = 30 + Math.floor(Math.random() * 80);
+  _wfxBubbleTimer  = 40 + Math.floor(Math.random() * 120);
+  _wfxCurrentTimer = 15 + Math.floor(Math.random() * 40);
 }
 
 function _activateWFX(type) {
@@ -2887,12 +2887,12 @@ function updateWaterFX(spd) {
   _wfxBubbleTimer--;
   if (_wfxBubbleTimer <= 0) {
     _activateWFX('bubble');
-    _wfxBubbleTimer = 240 + Math.floor(Math.random() * 240); // 4-8s rare
+    _wfxBubbleTimer = 480 + Math.floor(Math.random() * 480); // 8-16s very rare
   }
   _wfxCurrentTimer--;
   if (_wfxCurrentTimer <= 0) {
     _activateWFX('current');
-    _wfxCurrentTimer = 90 + Math.floor(Math.random() * 90);
+    _wfxCurrentTimer = 45 + Math.floor(Math.random() * 45);  // 1.5-3s dense current
   }
   for (var _ui = 0; _ui < wfxPool.length; _ui++) {
     var _uf = wfxPool[_ui];
@@ -5337,6 +5337,12 @@ function _buildObsMesh(type, fullWidth) {
       // Small random tilt so they look haphazardly dumped rather than neatly placed.
       _ct5c.rotation.z = (Math.random() - 0.5) * 0.4;
       _ct5c.position.y = CART5_SEAT_Y;
+      _ct5c.traverse(function(o) {
+        if (o.isMesh && o.material) {
+          var _m = o.material;
+          if (_m.emissive) { _m.emissive.setHex(0x666055); _m.emissiveIntensity = 0.25; }
+        }
+      });
       _ct5grp.add(_ct5c);
       if (!_cart5GlbLogged) {
         _cart5GlbLogged = true;
@@ -5520,6 +5526,19 @@ var _titleCardEl         = null;  // active title card div (stage card or ending
 var _titleCancelFn       = null;  // abort the active card's rAF loop
 var _titleCardSuppressSpawn = false; // true during enter+hold to give the player a breather
 // (reach / contact vars now live near module declarations, see _poppyPickSt block above)
+
+// Stage transition fade overlay
+var _fadeEl = null;
+function _ensureFade() {
+  if (_fadeEl) return;
+  _fadeEl = document.createElement('div');
+  _fadeEl.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:99990;transition:opacity .45s ease;';
+  document.body.appendChild(_fadeEl);
+}
+function _stageFade(applyFn) {
+  _ensureFade(); _fadeEl.style.opacity = '1';
+  setTimeout(function(){ applyFn(); setTimeout(function(){ _fadeEl.style.opacity = '0'; }, 60); }, 450);
+}
 
 var narrowing        = false;    // true while a sub-narrow squeeze is animating
 var narrowFromRw     = 0;        // rwCur at the moment narrowing began
@@ -5756,7 +5775,8 @@ function update3() {
   // Stage advance
   const stg = STAGES3[stageIdx];
   if (curMile3 >= stg.endMile && stageIdx < STAGES3.length - 1) {
-    applyStage3(stageIdx + 1, 'ENTERING ' + STAGES3[stageIdx + 1].name); return;
+    var _nextIdx = stageIdx + 1, _nextMsg = 'ENTERING ' + STAGES3[_nextIdx].name;
+    _stageFade(function(){ applyStage3(_nextIdx, _nextMsg); }); return;
   }
   // Stage-5 sub-narrows: trigger the animated squeeze (no buildWorld)
   if (stageIdx === 4 && stg.subNarrow && !narrowing) {
