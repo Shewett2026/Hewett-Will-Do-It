@@ -8437,19 +8437,6 @@ function showScreen3(which, _complete) {
   }
 }
 
-// ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) =====
-// Jump the player to any stage's start mile for fast local testing.
-// Stage start miles: 1=0, 2=33, 3=66, 4=99, 5=132.
-// To remove: delete this block, the DEV_STAGE_JUMP const above, the
-// key handler addition below, and the #dev-stage-label in index.html.
-function devJumpToStage(idx) {
-  var startMile = (idx === 0) ? 0 : STAGES3[idx - 1].endMile;
-  distance3  = startMile * MI_PER_PX;
-  subsFired3 = new Set();
-  applyStage3(idx, 'DEV: ' + STAGES3[idx].name);
-}
-// ===== END TEMP DEV STAGE JUMP =====
-
 // ── INPUT ──────────────────────────────────────────────────────────
 function doLeft3()  { if (player3.spinoutFrames > 0) return; if (player3.targetLane > 0) player3.targetLane--; }
 function doRight3() { if (player3.spinoutFrames > 0) return; if (player3.targetLane < curLanes - 1) player3.targetLane++; }
@@ -8518,11 +8505,6 @@ window.addEventListener('keydown', e => {
           break;
       }
     }
-    // ===== TEMP DEV STAGE JUMP (REMOVE BEFORE LAUNCH) =====
-    if (DEV_STAGE_JUMP && e.key >= '1' && e.key <= '5') {
-      devJumpToStage(parseInt(e.key, 10) - 1);
-    }
-    // ===== END TEMP DEV STAGE JUMP =====
     // ===== TEMP DEV ENDING-JUMP (REMOVE BEFORE LAUNCH) =====
     // Backtick: jump to ENDING_TEST_MILE in Stage 5 to test the cinematic decel + beaching.
     // Key audit: all a-z/0-9 are taken. Backtick (e.key='`') is genuinely free.
@@ -9029,29 +9011,6 @@ window.addEventListener('keydown', e => {
       document.getElementById('overlay3').classList.add('hidden');
     }
   }
-
-  // ===== TEMP VICTORY CARD DEV KEYS (REMOVE BEFORE LAUNCH) =====
-  // F4 (no shift) = replay card from zero; F2/F3 (no shift) = font size; Shift+F2/F3 = fade duration
-  if (e.key === 'F4' && !e.shiftKey) {
-    e.preventDefault();
-    if (_victoryCancelFn) { _victoryCancelFn(); _victoryCancelFn = null; }
-    showTitleCard({ title: 'Victory?', subtitle: '', holdMs: 1900, dramatic: true, onComplete: function() { console.log('[KRR VICTORY] dev replay complete'); } });
-  }
-  if ((e.key === 'F2' || e.key === 'F3') && !e.shiftKey) {
-    e.preventDefault();
-    VICTORY_FONT_PX = (e.key === 'F2') ? Math.max(12, VICTORY_FONT_PX - 2) : VICTORY_FONT_PX + 2;
-    var _vc = document.getElementById('krr-victory-card');
-    if (_vc) {
-      var _vcSpans = _vc.querySelectorAll('span');
-      for (var _vsi = 0; _vsi < _vcSpans.length; _vsi++) {
-        _vcSpans[_vsi].style.fontSize = VICTORY_FONT_PX + 'px';
-      }
-    }
-    console.log('[KRR VICTORY] fontPx=' + VICTORY_FONT_PX);
-  }
-  if (e.key === 'F2' && e.shiftKey) { e.preventDefault(); ENDING_MSG_FADE_MS = Math.max(100, ENDING_MSG_FADE_MS - 500); console.log('[KRR ENDING] ENDING_MSG_FADE_MS=' + ENDING_MSG_FADE_MS); }
-  if (e.key === 'F3' && e.shiftKey) { e.preventDefault(); ENDING_MSG_FADE_MS += 500; console.log('[KRR ENDING] ENDING_MSG_FADE_MS=' + ENDING_MSG_FADE_MS); }
-  // ===== END TEMP VICTORY CARD DEV KEYS =====
 
   // ===== TITLE CARD TIMING TUNER =====
   // Shift+T/G = TITLE_ENTER_MS -/+100  Shift+Y/H = TITLE_HOLD_MS -/+250  Shift+U/J = TITLE_FONT_PX -/+2
