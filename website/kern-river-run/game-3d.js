@@ -5808,26 +5808,35 @@ function update3() {
 
   // Player X: classic snap-to-lane or daring free steer
   if (playMode3 === 'daring') {
-    // Apply accel from held keys (suppressed during spinout and during jump — jump uses airYaw).
-    if (player3.spinoutFrames <= 0 && !player3.isJumping) {
-      if (_reversed) {
-        if (_daringSteerL) _daringVx += DARING_ACCEL * FRAME_SCALE;
-        if (_daringSteerR) _daringVx -= DARING_ACCEL * FRAME_SCALE;
-      } else {
-        if (_daringSteerL) _daringVx -= DARING_ACCEL * FRAME_SCALE;
-        if (_daringSteerR) _daringVx += DARING_ACCEL * FRAME_SCALE;
+    if (IS_MOBILE) {
+      // Mobile Daring: thumb position-follow (ground + air); skip during spinout
+      if (_tDown && player3.spinoutFrames <= 0) {
+        player3.x += (_touchTargetX - player3.x) * (1 - Math.pow(1 - STEER_FOLLOW, FRAME_SCALE));
       }
+      var _halfRiv = rwCur / 2 - KAYAK_HALF_W;
+      player3.x = Math.max(-_halfRiv, Math.min(_halfRiv, player3.x));
+      var _lw3 = rwCur / curLanes;
+      player3.targetLane = Math.max(0, Math.min(curLanes - 1, Math.round(player3.x / _lw3 + (curLanes - 1) / 2)));
+    } else {
+      // Desktop Daring: accel/friction model driven by keyboard
+      if (player3.spinoutFrames <= 0 && !player3.isJumping) {
+        if (_reversed) {
+          if (_daringSteerL) _daringVx += DARING_ACCEL * FRAME_SCALE;
+          if (_daringSteerR) _daringVx -= DARING_ACCEL * FRAME_SCALE;
+        } else {
+          if (_daringSteerL) _daringVx -= DARING_ACCEL * FRAME_SCALE;
+          if (_daringSteerR) _daringVx += DARING_ACCEL * FRAME_SCALE;
+        }
+      }
+      if (!player3.isJumping) _daringVx *= Math.pow(DARING_FRICTION, FRAME_SCALE);
+      if (Math.abs(_daringVx) < 0.0005) _daringVx = 0;
+      player3.x += _daringVx * FRAME_SCALE;
+      var _halfRiv = rwCur / 2 - KAYAK_HALF_W;
+      player3.x = Math.max(-_halfRiv, Math.min(_halfRiv, player3.x));
+      var _lw3 = rwCur / curLanes;
+      var _nearL = Math.round(player3.x / _lw3 + (curLanes - 1) / 2);
+      player3.targetLane = Math.max(0, Math.min(curLanes - 1, _nearL));
     }
-    if (!player3.isJumping) _daringVx *= Math.pow(DARING_FRICTION, FRAME_SCALE);  // coast in the air
-    if (Math.abs(_daringVx) < 0.0005) _daringVx = 0;
-    player3.x += _daringVx * FRAME_SCALE;
-    // Clamp to river (tracks rwCur narrowing automatically)
-    var _halfRiv = rwCur / 2 - KAYAK_HALF_W;
-    player3.x = Math.max(-_halfRiv, Math.min(_halfRiv, player3.x));
-    // Bridge: set targetLane = nearest lane so checkCollisions3 keeps working unchanged
-    var _lw3 = rwCur / curLanes;
-    var _nearL = Math.round(player3.x / _lw3 + (curLanes - 1) / 2);
-    player3.targetLane = Math.max(0, Math.min(curLanes - 1, _nearL));
   } else {
     // Classic: smooth slide toward target lane
     const tx = laneXPos(player3.targetLane);
@@ -5835,12 +5844,20 @@ function update3() {
     if (Math.abs(player3.x - tx) < 0.02) player3.x = tx;
   }
 
+  // Mobile Daring auto-jump: thumb held in upper zone triggers jump
+  if (IS_MOBILE && playMode3 === 'daring' && _tDown && _touchUpper && !player3.isJumping && gameState3 === 'playing') doJump3();
+
   // Jump arc
   if (player3.isJumping) {
-    // Air-spin: DARING only — held steer keys spin the boat instead of steering X.
+    // Air-spin: desktop Daring uses held keys; mobile uses swipe targets
     if (gameState3 === 'playing' && playMode3 === 'daring') {
-      if (_daringSteerL) _airYaw -= AIR_YAW_RATE * FRAME_SCALE;
-      if (_daringSteerR) _airYaw += AIR_YAW_RATE * FRAME_SCALE;
+      if (!IS_MOBILE) {
+        if (_daringSteerL) _airYaw -= AIR_YAW_RATE * FRAME_SCALE;
+        if (_daringSteerR) _airYaw += AIR_YAW_RATE * FRAME_SCALE;
+      } else if (_airYaw !== _airSpinTarget) {
+        var _sd = _airSpinTarget - _airYaw;
+        _airYaw += Math.sign(_sd) * Math.min(Math.abs(_sd), SPIN_ANIM_SPEED * FRAME_SCALE);
+      }
     }
     player3.jumpFrame += FRAME_SCALE;
     if (player3.jumpFrame >= JUMP_DURATION) {
@@ -5868,7 +5885,7 @@ function update3() {
           _reversed = true;  _baseFacingY = Math.PI;  // closer to backward
         }
       }
-      _airYaw = 0;
+      _airYaw = 0; _airSpinTarget = 0;
       kayakTurnY3 = 0; kayakTurnVel3 = 0;
       _daringRoll3 = 0; _daringRollVel3 = 0;
     }
@@ -8406,6 +8423,7 @@ function doJump3()  {
   if (player3.spinoutFrames > 0) return;
   if (!player3.isJumping && gameState3 === 'playing') {
     player3.isJumping = true; player3.jumpFrame = 0;
+    _airSpinTarget = 0;
     _sfxPlay('jump');
   }
   // Second space in the air: no-op (trick is now S / ArrowDown via doTrick3)
@@ -9245,6 +9263,26 @@ var TOUCH_FLICK_MS   = 500;  // max ms a gesture can take and still count as a f
 var TOUCH_SWIPE_DIST = 28;   // min px travel for any gesture to register
 var TOUCH_DRAG_DEAD  = IS_MOBILE ? 6 : 15;   // mobile: tighter deadzone so steer engages sooner
 
+// Daring mobile thumb-follow constants
+var JUMP_ZONE_FRAC  = 0.5;    // thumb above this fraction of canvas height (from top) = jump zone
+var STEER_FOLLOW    = 0.30;   // how fast the kayak tracks the thumb (0=slow,1=instant), time-corrected
+var STEER_FLICK_VX  = 1.1;    // px/ms; horizontal thumb speed above this = a spin flick, not steering
+var SPIN_ANIM_SPEED = 0.42;   // rad/frame — snappy spin
+var SPIN_HALF_FRAC  = 0.20;   // horizontal swipe >= this fraction of screen width = 180°
+var SPIN_FULL_FRAC  = 0.55;   // >= this = 360°
+var _touchTargetX   = 0;      // world-X the thumb is pointing at
+var _touchUpper     = false;  // thumb currently in the upper (jump) zone
+var _airSpinTarget  = 0;      // target _airYaw set by a spin swipe
+var _cvRect = null, _tLastX = 0, _tLastMoveT = 0;
+function _updCvRect(){ _cvRect = canvas3d.getBoundingClientRect(); }
+window.addEventListener('resize', _updCvRect); _updCvRect();
+function _touchToWorldX(clientX){
+  if (!_cvRect) _updCvRect();
+  var f = (clientX - _cvRect.left) / _cvRect.width;      // 0..1 across canvas
+  var half = rwCur/2 - KAYAK_HALF_W;
+  return Math.max(-half, Math.min(half, (f - 0.5) * 2 * half));
+}
+
 var _tX0 = 0, _tY0 = 0, _tT0 = 0;  // gesture start coords + timestamp
 var _tDown = false;                  // true while finger is on canvas
 
@@ -9253,17 +9291,24 @@ canvas3d.addEventListener('touchstart', function(e) {
   var t = e.changedTouches[0];
   _tX0 = t.clientX; _tY0 = t.clientY; _tT0 = Date.now();
   _tDown = true;
+  _tLastX = t.clientX; _tLastMoveT = _tT0;
+  if (playMode3 === 'daring') {
+    _touchTargetX = _touchToWorldX(t.clientX);
+    _touchUpper = ((t.clientY - _cvRect.top) / _cvRect.height) < JUMP_ZONE_FRAC;
+  }
 }, { passive: false });
 
-// DARING only: live horizontal drag steers on the ground and air-spins while jumping.
-// Uses total displacement from start (centered-joystick feel), not per-event delta.
+// DARING mobile: thumb position steers; fast horizontal flick reserved for spins.
+// Classic and desktop Daring use this handler for nothing (Daring desktop uses keys).
 canvas3d.addEventListener('touchmove', function(e) {
   e.preventDefault();
-  if (!_tDown || gameState3 !== 'playing' || playMode3 !== 'daring') return;
-  var dx = e.changedTouches[0].clientX - _tX0;
-  if      (dx >  TOUCH_DRAG_DEAD) { _daringSteerL = false; _daringSteerR = true;  }
-  else if (dx < -TOUCH_DRAG_DEAD) { _daringSteerL = true;  _daringSteerR = false; }
-  else                             { _daringSteerL = false; _daringSteerR = false; }
+  if (!_tDown || gameState3 !== 'playing') return;
+  if (playMode3 !== 'daring' || !IS_MOBILE) return;
+  var _mx = e.changedTouches[0].clientX, _my = e.changedTouches[0].clientY, _mnow = Date.now();
+  var _vx = Math.abs(_mx - _tLastX) / Math.max(1, _mnow - _tLastMoveT);  // px/ms
+  _tLastX = _mx; _tLastMoveT = _mnow;
+  _touchUpper = ((_my - _cvRect.top) / _cvRect.height) < JUMP_ZONE_FRAC;  // vertical → jump zone
+  if (_vx < STEER_FLICK_VX) _touchTargetX = _touchToWorldX(_mx);          // slow drag → steer; fast flick → leave for spin
 }, { passive: false });
 
 canvas3d.addEventListener('touchend', function(e) {
@@ -9277,28 +9322,40 @@ canvas3d.addEventListener('touchend', function(e) {
   var mag = Math.hypot(dx, dy);
 
   if (playMode3 === 'daring') {
-    // Always clear live steer when finger lifts
+    // Always clear legacy steer flags when finger lifts
     _daringSteerL = false; _daringSteerR = false;
 
-    var _th  = TOUCH_SWIPE_DIST * 0.55;  // per-axis threshold (55% of total so diagonals count)
+    if (IS_MOBILE) {
+      // Mobile Daring — gesture detection only; steering was continuous via touchmove
+      if (dt < TOUCH_FLICK_MS && mag > TOUCH_SWIPE_DIST) {
+        if (Math.abs(dy) > Math.abs(dx)) {
+          if (dy > 0 && player3.isJumping) doTrick3();   // quick down-swipe = trick
+        } else if (player3.isJumping) {
+          var _frac = Math.abs(dx) / (_cvRect ? _cvRect.width : window.innerWidth);
+          var _dir  = dx > 0 ? 1 : -1;
+          if (_frac >= SPIN_HALF_FRAC) _airSpinTarget += _dir * Math.PI * (_frac >= SPIN_FULL_FRAC ? 2 : 1);
+        }
+      }
+    } else {
+      // Desktop Daring — original swipe-gesture scheme unchanged
+      var _th  = TOUCH_SWIPE_DIST * 0.55;
 
-    // Down-trick: fire on any downward-dominant gesture while airborne, regardless of flick speed
-    if (player3.isJumping && dy > _th && dy > Math.abs(dx)) { doTrick3(); return; }
+      // Down-trick: fire on any downward-dominant gesture while airborne, regardless of flick speed
+      if (player3.isJumping && dy > _th && dy > Math.abs(dx)) { doTrick3(); return; }
 
-    // All other actions require a fast flick
-    if (dt >= TOUCH_FLICK_MS || mag < TOUCH_SWIPE_DIST) return;
+      // All other actions require a fast flick
+      if (dt >= TOUCH_FLICK_MS || mag < TOUCH_SWIPE_DIST) return;
 
-    // Flick: classify by which components are present
-    var hasU = dy < -_th, hasD = dy > _th, hasL = dx < -_th, hasR = dx > _th;
+      var hasU = dy < -_th, hasD = dy > _th, hasL = dx < -_th, hasR = dx > _th;
 
-    if (hasU) {
-      doJump3();
-      if (hasL) _daringVx = -DARING_MAX_SPD;   // up-left flick → leap left while jumping
-      else if (hasR) _daringVx = DARING_MAX_SPD; // up-right flick → leap right
-    } else if (hasD && player3.isJumping) {
-      doTrick3();
+      if (hasU) {
+        doJump3();
+        if (hasL) _daringVx = -DARING_MAX_SPD;
+        else if (hasR) _daringVx = DARING_MAX_SPD;
+      } else if (hasD && player3.isJumping) {
+        doTrick3();
+      }
     }
-    // Pure horizontal quick-flick: touchmove already built _daringVx; no extra impulse needed
 
   } else {
     // CLASSIC — discrete swipes only; no live-drag state, no reversing, no spinning
