@@ -9347,18 +9347,25 @@ function _ensureBtns() {
   var mk = function(label, ring, glow) {
     var b = document.createElement('div');
     b.textContent = label;
-    b.style.cssText = 'width:82px;height:82px;border-radius:14px;display:flex;align-items:center;justify-content:center;'
-      + 'font:bold 13px "Press Start 2P",monospace;color:#FFF7ED;text-align:center;letter-spacing:.5px;'
+    b.style.cssText = 'width:70px;height:70px;border-radius:13px;display:flex;align-items:center;justify-content:center;'
+      + 'font:bold 12px "Press Start 2P",monospace;color:#FFF7ED;text-align:center;letter-spacing:.5px;'
       + 'user-select:none;-webkit-user-select:none;touch-action:none;'
       + 'background:linear-gradient(#1e3a5f,#0f2438);border:3px solid ' + ring + ';'
-      + 'box-shadow:0 4px 0 rgba(0,0,0,.45), 0 0 12px ' + glow + ';'
-      + 'text-shadow:0 2px 0 rgba(0,0,0,.6);transition:box-shadow .06s,transform .06s;';
+      + 'box-shadow:0 4px 0 rgba(0,0,0,.45), 0 0 12px ' + glow + ';text-shadow:0 2px 0 rgba(0,0,0,.6);'
+      + 'transition:opacity .2s, box-shadow .06s, transform .06s;';
     return b;
   };
   var _trick = mk('TRICK', '#38BDF8', 'rgba(56,189,248,.5)');
   var _spin  = mk('SPIN',  '#F59E0B', 'rgba(245,158,11,.55)');
   var _stop = function(e){ e.preventDefault(); e.stopPropagation(); };
-  _trick.addEventListener('touchstart', function(e){ _stop(e); if (player3.isJumping) doTrick3(); this.style.transform='translateY(3px)'; this.style.boxShadow='0 1px 0 rgba(0,0,0,.45), 0 0 18px rgba(56,189,248,.5)'; }, {passive:false});
+  var _trickCdUntil = 0, TRICK_CD_MS = 1500;
+  _trick.addEventListener('touchstart', function(e){ e.preventDefault(); e.stopPropagation();
+    if (Date.now() < _trickCdUntil || !player3.isJumping) return;
+    doTrick3();
+    _trickCdUntil = Date.now() + TRICK_CD_MS;
+    _trick.style.opacity = '0.35';
+    setTimeout(function(){ _trick.style.opacity = '1'; }, TRICK_CD_MS);
+  }, {passive:false});
   _trick.addEventListener('touchend',   function(e){ _stop(e); this.style.transform=''; this.style.boxShadow='0 4px 0 rgba(0,0,0,.45), 0 0 12px rgba(56,189,248,.5)'; }, {passive:false});
   _spin.addEventListener('touchstart',  function(e){ _stop(e); _spinHeld=true;  this.style.transform='translateY(3px)'; this.style.boxShadow='0 1px 0 rgba(0,0,0,.45), 0 0 18px rgba(245,158,11,.55)'; }, {passive:false});
   _spin.addEventListener('touchend',    function(e){ _stop(e); _spinHeld=false; this.style.transform=''; this.style.boxShadow='0 4px 0 rgba(0,0,0,.45), 0 0 12px rgba(245,158,11,.55)'; }, {passive:false});
