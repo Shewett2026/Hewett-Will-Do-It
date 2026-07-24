@@ -269,8 +269,9 @@ scene.fog        = new THREE.Fog(0x87CEEB, 60, 135);
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 160);
 
 function resizeRenderer() {
-  const w = Math.min(window.innerWidth, 430);
-  const h = window.innerHeight;
+  var coarse = window.matchMedia('(pointer: coarse)').matches;
+  var w = Math.min(window.innerWidth,  coarse ? 430 : 900);
+  var h = coarse ? window.innerHeight : Math.min(window.innerHeight, 760);
   renderer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
