@@ -70,8 +70,8 @@ const SPD_SCALE = 0.060;
 var GAME_SPEED = parseFloat((location.search.match(/[?&]spd=([\d.]+)/) || [])[1]);
 if (!GAME_SPEED || GAME_SPEED <= 0 || GAME_SPEED > 20) GAME_SPEED = 3;
 
-// Live speed tuner — enable with ?tune=1. Tap −/+ to change speed live; the label shows the value.
-if (/[?&]tune=1/.test(location.search)) {
+// Live speed tuner — enable with ?dev=1. Tap −/+ to change speed live; the label shows the value.
+if (/[?&]dev=1/.test(location.search)) {
   var _spdLbl = document.createElement('div');
   _spdLbl.style.cssText = 'position:fixed;bottom:118px;left:50%;transform:translateX(-50%);z-index:100000;'
     + 'font:bold 24px monospace;color:#fff;background:rgba(0,0,0,.75);padding:6px 16px;border-radius:10px;';
@@ -5462,6 +5462,8 @@ var playMode3 = null;  // set by card selection each visit; null = no mode chose
 var _daringVx       = 0;      // current horizontal steering velocity (wu/frame)
 var _daringSteerL   = false;  // is left key/touch held right now
 var _daringSteerR   = false;  // is right key/touch held right now
+var _holdLeftKey    = false, _holdRightKey = false, _laneRepeatNext = 0;
+var LANE_REPEAT_MS  = 130;    // ms per lane while key held (Classic only)
 var DARING_ACCEL    = IS_MOBILE ? 0.0165 * 1.6 : 0.0165; // mobile: 1.6× for snappier response
 var DARING_FRICTION = 0.86;   // velocity multiplier per frame (1=no friction, 0=instant stop)
 var DARING_MAX_SPD  = 0.12;   // max steering speed (wu/frame) (0.16 × 0.75)
@@ -5715,6 +5717,15 @@ function spawnColl3() {
 
 // ── UPDATE ────────────────────────────────────────────────────────
 function update3() {
+  // Classic hold-to-glide: fire doLeft/doRight at LANE_REPEAT_MS intervals while key held
+  if (playMode3 !== 'daring' && (_holdLeftKey || _holdRightKey)) {
+    var _lnow = Date.now();
+    if (_lnow >= _laneRepeatNext) {
+      if (_holdLeftKey) doLeft3(); else if (_holdRightKey) doRight3();
+      _laneRepeatNext = _lnow + LANE_REPEAT_MS;
+    }
+  }
+
   frameN += FRAME_SCALE;
 
   // Stage 5 cinematic deceleration: cosine ease from ENDING_DECEL_START down to ~0
@@ -8473,8 +8484,12 @@ window.addEventListener('keydown', e => {
       }
     } else {
       switch (e.key) {
-        case 'ArrowLeft':  case 'a': case 'A': doLeft3();  break;
-        case 'ArrowRight': case 'd': case 'D': doRight3(); break;
+        case 'ArrowLeft':  case 'a': case 'A':
+          if (!e.repeat) doLeft3();
+          _holdLeftKey = true; _holdRightKey = false; _laneRepeatNext = Date.now() + LANE_REPEAT_MS; break;
+        case 'ArrowRight': case 'd': case 'D':
+          if (!e.repeat) doRight3();
+          _holdRightKey = true; _holdLeftKey = false; _laneRepeatNext = Date.now() + LANE_REPEAT_MS; break;
         case 'ArrowUp': case 'w': case 'W': case ' ': e.preventDefault(); doJump3(); break;
         case 'ArrowDown': case 's': case 'S': e.preventDefault(); doTrick3(); break;
         case 'Escape': case 'p': case 'P':
@@ -9251,11 +9266,11 @@ window.addEventListener('keydown', e => {
   // ===== END TEMP DIAG =====
 });
 
-// Keyup: release daring steer flags (harmless in classic since flags are never read there)
+// Keyup: release daring steer flags; also clear Classic hold-to-glide state
 window.addEventListener('keyup', e => {
   switch (e.key) {
-    case 'ArrowLeft':  case 'a': case 'A': _daringSteerL = false; break;
-    case 'ArrowRight': case 'd': case 'D': _daringSteerR = false; break;
+    case 'ArrowLeft':  case 'a': case 'A': _daringSteerL = false; _holdLeftKey = false;  break;
+    case 'ArrowRight': case 'd': case 'D': _daringSteerR = false; _holdRightKey = false; break;
   }
 });
 
@@ -9319,28 +9334,49 @@ function _hideOrb() { if (_orbEl) _orbEl.style.display = 'none'; if (_jlineEl) _
 
 // Daring mobile action buttons (TRICK / SPIN) — second-finger controls
 var _btnWrap = null;
+var _btnSide = (localStorage.getItem('krr_btnside') === 'left') ? 'left' : 'right';
+function _applyBtnSide() {
+  if (!_btnWrap) return;
+  if (_btnSide === 'left') { _btnWrap.style.left = '16px'; _btnWrap.style.right = 'auto'; }
+  else { _btnWrap.style.right = '16px'; _btnWrap.style.left = 'auto'; }
+}
 function _ensureBtns() {
   if (_btnWrap) return;
   _btnWrap = document.createElement('div');
-  _btnWrap.style.cssText = 'position:fixed;right:16px;bottom:28px;z-index:99999;display:none;flex-direction:column;gap:14px;align-items:center;';
-  var mk = function(label, color) {
+  _btnWrap.style.cssText = 'position:fixed;bottom:28px;z-index:99999;display:none;flex-direction:column;gap:14px;align-items:center;';
+  var mk = function(label, ring, glow) {
     var b = document.createElement('div');
     b.textContent = label;
-    b.style.cssText = 'width:80px;height:80px;border-radius:50%;display:flex;align-items:center;justify-content:center;'
-      + 'font:bold 14px "Press Start 2P",monospace;color:#fff;text-align:center;user-select:none;-webkit-user-select:none;'
-      + 'background:rgba(0,0,0,.32);border:3px solid ' + color + ';touch-action:none;';
+    b.style.cssText = 'width:82px;height:82px;border-radius:14px;display:flex;align-items:center;justify-content:center;'
+      + 'font:bold 13px "Press Start 2P",monospace;color:#FFF7ED;text-align:center;letter-spacing:.5px;'
+      + 'user-select:none;-webkit-user-select:none;touch-action:none;'
+      + 'background:linear-gradient(#1e3a5f,#0f2438);border:3px solid ' + ring + ';'
+      + 'box-shadow:0 4px 0 rgba(0,0,0,.45), 0 0 12px ' + glow + ';'
+      + 'text-shadow:0 2px 0 rgba(0,0,0,.6);transition:box-shadow .06s,transform .06s;';
     return b;
   };
-  var _trick = mk('TRICK', 'rgba(96,165,250,.95)');
-  var _spin  = mk('SPIN',  'rgba(249,168,22,.98)');
+  var _trick = mk('TRICK', '#38BDF8', 'rgba(56,189,248,.5)');
+  var _spin  = mk('SPIN',  '#F59E0B', 'rgba(245,158,11,.55)');
   var _stop = function(e){ e.preventDefault(); e.stopPropagation(); };
-  _trick.addEventListener('touchstart', function(e){ _stop(e); if (player3.isJumping) doTrick3(); _trick.style.background='rgba(96,165,250,.55)'; }, {passive:false});
-  _trick.addEventListener('touchend',   function(e){ _stop(e); _trick.style.background='rgba(0,0,0,.32)'; }, {passive:false});
-  _spin.addEventListener('touchstart',  function(e){ _stop(e); _spinHeld=true;  _spin.style.background='rgba(249,168,22,.6)'; }, {passive:false});
-  _spin.addEventListener('touchend',    function(e){ _stop(e); _spinHeld=false; _spin.style.background='rgba(0,0,0,.32)'; }, {passive:false});
-  _spin.addEventListener('touchcancel', function(e){ _stop(e); _spinHeld=false; _spin.style.background='rgba(0,0,0,.32)'; }, {passive:false});
+  _trick.addEventListener('touchstart', function(e){ _stop(e); if (player3.isJumping) doTrick3(); this.style.transform='translateY(3px)'; this.style.boxShadow='0 1px 0 rgba(0,0,0,.45), 0 0 18px rgba(56,189,248,.5)'; }, {passive:false});
+  _trick.addEventListener('touchend',   function(e){ _stop(e); this.style.transform=''; this.style.boxShadow='0 4px 0 rgba(0,0,0,.45), 0 0 12px rgba(56,189,248,.5)'; }, {passive:false});
+  _spin.addEventListener('touchstart',  function(e){ _stop(e); _spinHeld=true;  this.style.transform='translateY(3px)'; this.style.boxShadow='0 1px 0 rgba(0,0,0,.45), 0 0 18px rgba(245,158,11,.55)'; }, {passive:false});
+  _spin.addEventListener('touchend',    function(e){ _stop(e); _spinHeld=false; this.style.transform=''; this.style.boxShadow='0 4px 0 rgba(0,0,0,.45), 0 0 12px rgba(245,158,11,.55)'; }, {passive:false});
+  _spin.addEventListener('touchcancel', function(e){ _stop(e); _spinHeld=false; this.style.transform=''; this.style.boxShadow='0 4px 0 rgba(0,0,0,.45), 0 0 12px rgba(245,158,11,.55)'; }, {passive:false});
+  var _swap = document.createElement('div');
+  _swap.textContent = '⇄';
+  _swap.style.cssText = 'width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;'
+    + 'font:bold 22px monospace;color:#FFF7ED;background:rgba(0,0,0,.4);border:2px solid rgba(255,255,255,.55);'
+    + 'align-self:center;touch-action:none;';
+  _swap.addEventListener('touchstart', function(e){ e.preventDefault(); e.stopPropagation();
+    _btnSide = (_btnSide === 'right') ? 'left' : 'right';
+    try { localStorage.setItem('krr_btnside', _btnSide); } catch(_) {}
+    _applyBtnSide();
+  }, {passive:false});
+  _btnWrap.appendChild(_swap);
   _btnWrap.appendChild(_trick); _btnWrap.appendChild(_spin);
   document.body.appendChild(_btnWrap);
+  _applyBtnSide();
 }
 
 var _tX0 = 0, _tY0 = 0, _tT0 = 0;  // gesture start coords + timestamp
@@ -9629,8 +9665,8 @@ var _loopAcc   = 0;
 const SIM_STEP_MS   = 1000 / 60;  // one sim tick = 1/60 s (matches how the game was tuned)
 const SIM_MAX_STEPS = 5;           // cap catch-up so a slow frame can't spiral
 
-// FPS meter — hidden unless ?fps=1 in URL or 'F' key pressed
-var _fpsShow   = /[?&]fps=1/.test(location.search);
+// FPS meter — hidden unless ?dev=1 in URL
+var _fpsShow   = /[?&]dev=1/.test(location.search);
 var _fpsFrames = 0;
 var _fpsT0     = _loopLastT;
 var _fpsSteps  = 0;
@@ -9644,10 +9680,6 @@ function _ensureFpsEl() {
     + 'padding:8px 14px;border-radius:8px;text-align:center;pointer-events:none;white-space:pre;';
   document.body.appendChild(_fpsEl);
 }
-window.addEventListener('keydown', function(e) {
-  if (e.key === 'f' || e.key === 'F') { _fpsShow = !_fpsShow; if (!_fpsShow && _fpsEl) _fpsEl.style.display = 'none'; }
-});
-
 function loop3() {
   requestAnimationFrame(loop3);
 
