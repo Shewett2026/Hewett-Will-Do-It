@@ -4352,7 +4352,8 @@ if (typeof THREE.GLTFLoader === 'undefined') {
 // Pre-loads all obstacle GLBs at script start. Materials are converted to
 // MeshBasicMaterial so baked emissive textures render at full brightness
 // (no lighting washout from the ambient + sun lights in the scene).
-// makeObsMesh() clones from cache; sprite/geometry fallback used until loaded.
+// makeObsMesh() clones from _obsTemplates; builds fresh only until GLBs are loaded (sprite
+// fallbacks store userData Object3D refs that can't survive Three.js clone's JSON serialization).
 function _preloadObsGlb(path) {
   if (obsGlbCache.hasOwnProperty(path)) return;
   obsGlbCache[path] = null; // null = loading in progress
@@ -4973,7 +4974,7 @@ const OBS_MAT_COL = {
   pontoon_party:0x1D4ED8, old_mining_bridge:0x44403C, tube_float_parade:0xF97316,
 };
 
-function makeObsMesh(type, fullWidth) {
+function _buildObsMesh(type, fullWidth) {
   const col = OBS_MAT_COL[type] || 0x6B7280;
   const lm  = c => new THREE.MeshLambertMaterial({ color: c });
 
@@ -5406,6 +5407,49 @@ function makeObsMesh(type, fullWidth) {
   m.castShadow = true; return m;
 }
 
+var _obsTemplates = {};
+
+// Returns true when the underlying GLB is in memory — safe to cache and clone.
+// Sprite-fallback branches store userData Object3D refs that don't survive Three.js
+// clone's JSON.parse/stringify of userData; those must be built fresh each spawn.
+function _obsCanCache(type, fullWidth) {
+  if (fullWidth) {
+    var _fwGlbs = {
+      'fallen_sequoia':    'stage-1-bridge-lit.glb',
+      'raft_train':        'stage-2-rafters-lit.glb',
+      'pontoon_party':     'stage-3-bridge-lit.glb',
+      'old_mining_bridge': 'stage-4-tubers-lit.glb'
+    };
+    return _fwGlbs[type] ? !!obsGlbCache[_fwGlbs[type]] : true;
+  }
+  if (type === 'boulder' || type === 'boulder_wide')
+    return BOULDER_GLB_FILES.some(function(f) { return !!obsGlbCache[f]; });
+  if (type === 'shopping_cart') return !!obsGlbCache['stage-5-cart-lit.glb'];
+  if (type === 'fallen_log')    return !!obsGlbCache['stage-5-log-lit.glb'];
+  return true; // procedural types (river_wash, deadfall_log, etc.) are always safe to cache
+}
+
+function makeObsMesh(type, fullWidth) {
+  var key = type + '|' + (fullWidth ? 'F' : 'L') + '|' + Math.round(rwCur * 4);
+  if (type === 'fallen_log') key += '|' + (fallenLogAlt5 % 2); // gap-left vs gap-right are different templates
+  if (!_obsCanCache(type, fullWidth)) return _buildObsMesh(type, fullWidth); // GLB not ready; sprite fallback is cheap
+  if (!_obsTemplates[key]) _obsTemplates[key] = _buildObsMesh(type, fullWidth);
+  var inst = _obsTemplates[key].clone(true); // shares geometry + material — no per-spawn GPU upload
+  // Restore Object3D userData refs lost by clone's JSON.parse/stringify of userData
+  if (type === 'river_wash' && inst.children.length > 0) {
+    inst.userData.spiralDisc = inst.children[0];
+  }
+  // Re-randomize per-spawn rotations so clones don't all face the same direction
+  if ((type === 'boulder' || type === 'boulder_wide') && inst.children.length > 0) {
+    inst.children[0].rotation.y = Math.random() * Math.PI * 2;
+  }
+  if (type === 'shopping_cart' && inst.children.length > 0) {
+    inst.children[0].rotation.y = CART5_ROT_Y + Math.random() * Math.PI * 2;
+    inst.children[0].rotation.z = (Math.random() - 0.5) * 0.4;
+  }
+  return inst;
+}
+
 // ── GAME STATE ───────────────────────────────────────────────────
 let gameState3  = 'start';
 let score3      = 0;
@@ -5539,7 +5583,7 @@ function applyStage3(idx, msg) {
 }
 
 function clearActive() {
-  obstacles3.forEach(o    => { if (o.mesh)   { disposeMesh(o.mesh);   scene.remove(o.mesh);   } });
+  obstacles3.forEach(o    => { if (o.mesh)   { scene.remove(o.mesh); } }); // clones share template resources — no dispose
   collectibles3.forEach(c => { if (c.mesh)   { scene.remove(c.mesh); } }); // clones: don't dispose shared geometry/material
   obstacles3 = []; collectibles3 = [];
 }
@@ -5858,7 +5902,7 @@ function update3() {
     if (o.type === 'river_wash') { o.mesh.rotation.y += RW_SPIN_SPEED * FRAME_SCALE; }
   }
   obstacles3 = obstacles3.filter(o => {
-    if (o.z > DESPAWN_Z) { disposeMesh(o.mesh); scene.remove(o.mesh); return false; }
+    if (o.z > DESPAWN_Z) { scene.remove(o.mesh); return false; } // clones share template resources — no dispose
     return true;
   });
 
