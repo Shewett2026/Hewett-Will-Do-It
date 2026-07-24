@@ -5853,14 +5853,13 @@ function update3() {
 
   // Jump arc
   if (player3.isJumping) {
-    // Air-spin: desktop Daring uses held keys; mobile uses swipe targets
+    // Air-spin: desktop Daring uses held keys; mobile uses SPIN button
     if (gameState3 === 'playing' && playMode3 === 'daring') {
       if (!IS_MOBILE) {
         if (_daringSteerL) _airYaw -= AIR_YAW_RATE * FRAME_SCALE;
         if (_daringSteerR) _airYaw += AIR_YAW_RATE * FRAME_SCALE;
-      } else if (_airYaw !== _airSpinTarget) {
-        var _sd = _airSpinTarget - _airYaw;
-        _airYaw += Math.sign(_sd) * Math.min(Math.abs(_sd), SPIN_ANIM_SPEED * FRAME_SCALE);
+      } else if (_spinHeld && player3.isJumping) {
+        _airYaw += SPIN_RATE * FRAME_SCALE;
       }
     }
     player3.jumpFrame += FRAME_SCALE;
@@ -5889,7 +5888,7 @@ function update3() {
           _reversed = true;  _baseFacingY = Math.PI;  // closer to backward
         }
       }
-      _airYaw = 0; _airSpinTarget = 0;
+      _airYaw = 0;
       kayakTurnY3 = 0; kayakTurnVel3 = 0;
       _daringRoll3 = 0; _daringRollVel3 = 0;
     }
@@ -8427,7 +8426,6 @@ function doJump3()  {
   if (player3.spinoutFrames > 0) return;
   if (!player3.isJumping && gameState3 === 'playing') {
     player3.isJumping = true; player3.jumpFrame = 0;
-    _airSpinTarget = 0;
     _sfxPlay('jump');
   }
   // Second space in the air: no-op (trick is now S / ArrowDown via doTrick3)
@@ -9271,12 +9269,10 @@ var TOUCH_DRAG_DEAD  = IS_MOBILE ? 6 : 15;   // mobile: tighter deadzone so stee
 var JUMP_ZONE_FRAC  = 0.68;   // thumb above this fraction of canvas height (from top) = jump zone; bottom ~third = grounded
 var STEER_FOLLOW    = 0.30;   // how fast the kayak tracks the thumb (0=slow,1=instant), time-corrected
 var STEER_FLICK_VX  = 1.1;    // px/ms; horizontal thumb speed above this = a spin flick, not steering
-var SPIN_ANIM_SPEED = 0.42;   // rad/frame — snappy spin
-var SPIN_HALF_FRAC  = 0.20;   // horizontal swipe >= this fraction of screen width = 180°
-var SPIN_FULL_FRAC  = 0.55;   // >= this = 360°
 var _touchTargetX   = 0;      // world-X the thumb is pointing at
 var _touchUpper     = false;  // thumb currently in the upper (jump) zone
-var _airSpinTarget  = 0;      // target _airYaw set by a spin swipe
+var _spinHeld       = false;  // SPIN button held (mobile Daring)
+var SPIN_RATE       = 0.09;   // rad/frame while SPIN held (time-corrected)
 var _cvRect = null, _tLastX = 0, _tLastMoveT = 0;
 function _updCvRect(){ _cvRect = canvas3d.getBoundingClientRect(); }
 window.addEventListener('resize', _updCvRect); _updCvRect();
@@ -9320,6 +9316,32 @@ function _moveOrb(x, y) {
   else             { _orbEl.style.background = 'radial-gradient(circle,rgba(255,255,255,.45),rgba(255,255,255,.10))'; _orbEl.style.borderColor = 'rgba(255,255,255,.85)'; }
 }
 function _hideOrb() { if (_orbEl) _orbEl.style.display = 'none'; if (_jlineEl) _jlineEl.style.display = 'none'; }
+
+// Daring mobile action buttons (TRICK / SPIN) — second-finger controls
+var _btnWrap = null;
+function _ensureBtns() {
+  if (_btnWrap) return;
+  _btnWrap = document.createElement('div');
+  _btnWrap.style.cssText = 'position:fixed;right:16px;bottom:28px;z-index:99999;display:none;flex-direction:column;gap:14px;align-items:center;';
+  var mk = function(label, color) {
+    var b = document.createElement('div');
+    b.textContent = label;
+    b.style.cssText = 'width:80px;height:80px;border-radius:50%;display:flex;align-items:center;justify-content:center;'
+      + 'font:bold 14px "Press Start 2P",monospace;color:#fff;text-align:center;user-select:none;-webkit-user-select:none;'
+      + 'background:rgba(0,0,0,.32);border:3px solid ' + color + ';touch-action:none;';
+    return b;
+  };
+  var _trick = mk('TRICK', 'rgba(96,165,250,.95)');
+  var _spin  = mk('SPIN',  'rgba(249,168,22,.98)');
+  var _stop = function(e){ e.preventDefault(); e.stopPropagation(); };
+  _trick.addEventListener('touchstart', function(e){ _stop(e); if (player3.isJumping) doTrick3(); _trick.style.background='rgba(96,165,250,.55)'; }, {passive:false});
+  _trick.addEventListener('touchend',   function(e){ _stop(e); _trick.style.background='rgba(0,0,0,.32)'; }, {passive:false});
+  _spin.addEventListener('touchstart',  function(e){ _stop(e); _spinHeld=true;  _spin.style.background='rgba(249,168,22,.6)'; }, {passive:false});
+  _spin.addEventListener('touchend',    function(e){ _stop(e); _spinHeld=false; _spin.style.background='rgba(0,0,0,.32)'; }, {passive:false});
+  _spin.addEventListener('touchcancel', function(e){ _stop(e); _spinHeld=false; _spin.style.background='rgba(0,0,0,.32)'; }, {passive:false});
+  _btnWrap.appendChild(_trick); _btnWrap.appendChild(_spin);
+  document.body.appendChild(_btnWrap);
+}
 
 var _tX0 = 0, _tY0 = 0, _tT0 = 0;  // gesture start coords + timestamp
 var _tDown = false;                  // true while finger is on canvas
@@ -9368,16 +9390,7 @@ canvas3d.addEventListener('touchend', function(e) {
     _daringSteerL = false; _daringSteerR = false;
 
     if (IS_MOBILE) {
-      // Mobile Daring — gesture detection only; steering was continuous via touchmove
-      if (dt < TOUCH_FLICK_MS && mag > TOUCH_SWIPE_DIST) {
-        if (Math.abs(dy) > Math.abs(dx)) {
-          if (dy > 0 && player3.isJumping) doTrick3();   // quick down-swipe = trick
-        } else if (player3.isJumping) {
-          var _frac = Math.abs(dx) / (_cvRect ? _cvRect.width : window.innerWidth);
-          var _dir  = dx > 0 ? 1 : -1;
-          if (_frac >= SPIN_HALF_FRAC) _airSpinTarget += _dir * Math.PI * (_frac >= SPIN_FULL_FRAC ? 2 : 1);
-        }
-      }
+      // Mobile Daring — steering was continuous; tricks/spins handled by on-screen buttons
     } else {
       // Desktop Daring — original swipe-gesture scheme unchanged
       var _th  = TOUCH_SWIPE_DIST * 0.55;
@@ -9647,6 +9660,10 @@ function loop3() {
   FRAME_SCALE = timeScale * GAME_SPEED;    // GAME_SPEED now speeds up the ENTIRE game
   var stepsThisFrame = 1;                    // keep meter happy (1 update/frame now)
   if (gameState3 === 'playing') update3();
+
+  // Show TRICK/SPIN buttons only during mobile Daring play
+  if (IS_MOBILE && playMode3 === 'daring') { _ensureBtns(); _btnWrap.style.display = (gameState3 === 'playing') ? 'flex' : 'none'; }
+  else if (_btnWrap) { _btnWrap.style.display = 'none'; }
 
   updateVisuals3();
   renderer.render(scene, camera);
