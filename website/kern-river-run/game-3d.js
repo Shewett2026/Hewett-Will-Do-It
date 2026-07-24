@@ -9616,9 +9616,22 @@ var _LEET = {
   '3':'e','&':'e','6':'g','9':'g','1':'i','!':'i','|':'i','0':'o',
   '5':'s','$':'s','7':'t','+':'t','2':'z'
 };
+var _HOMO = {
+  'а':'a','α':'a','ь':'b','β':'b','с':'c','ϲ':'c','е':'e','ε':'e','і':'i','ι':'i',
+  'о':'o','ο':'o','σ':'o','р':'p','ρ':'p','ѕ':'s','т':'t','τ':'t','υ':'u','х':'x',
+  'χ':'x','у':'y','к':'k','κ':'k','н':'h','г':'r','ш':'w','м':'m'
+};
 function _normalizeForFilter(raw) {
-  var s = String(raw || '').toLowerCase(), out = '';
-  for (var i = 0; i < s.length; i++) { var ch = s[i]; out += (_LEET[ch] !== undefined) ? _LEET[ch] : ch; }
+  var s = String(raw || '').toLowerCase();
+  try { s = s.normalize('NFKD').replace(/[̀-ͯ]/g, ''); } catch (_) {}
+  var out = '';
+  for (var i = 0; i < s.length; i++) {
+    var ch = s[i];
+    if (_HOMO[ch] !== undefined) ch = _HOMO[ch];
+    else if (_LEET[ch] !== undefined) ch = _LEET[ch];
+    out += ch;
+  }
+  out = out.replace(/ph/g, 'f');
   out = out.replace(/[^a-z]/g, '');
   out = out.replace(/(.)\1+/g, '$1');
   return out;
