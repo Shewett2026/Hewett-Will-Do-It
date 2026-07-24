@@ -5811,7 +5811,11 @@ function update3() {
     if (IS_MOBILE) {
       // Mobile Daring: thumb position-follow (ground + air); skip during spinout
       if (_tDown && player3.spinoutFrames <= 0) {
+        var _preX = player3.x;
         player3.x += (_touchTargetX - player3.x) * (1 - Math.pow(1 - STEER_FOLLOW, FRAME_SCALE));
+        _daringVx = player3.x - _preX;  // real lateral velocity → drives nose yaw + collision lean
+      } else {
+        _daringVx = 0;
       }
       var _halfRiv = rwCur / 2 - KAYAK_HALF_W;
       player3.x = Math.max(-_halfRiv, Math.min(_halfRiv, player3.x));
@@ -9264,7 +9268,7 @@ var TOUCH_SWIPE_DIST = 28;   // min px travel for any gesture to register
 var TOUCH_DRAG_DEAD  = IS_MOBILE ? 6 : 15;   // mobile: tighter deadzone so steer engages sooner
 
 // Daring mobile thumb-follow constants
-var JUMP_ZONE_FRAC  = 0.5;    // thumb above this fraction of canvas height (from top) = jump zone
+var JUMP_ZONE_FRAC  = 0.68;   // thumb above this fraction of canvas height (from top) = jump zone; bottom ~third = grounded
 var STEER_FOLLOW    = 0.30;   // how fast the kayak tracks the thumb (0=slow,1=instant), time-corrected
 var STEER_FLICK_VX  = 1.1;    // px/ms; horizontal thumb speed above this = a spin flick, not steering
 var SPIN_ANIM_SPEED = 0.42;   // rad/frame — snappy spin
@@ -9283,11 +9287,46 @@ function _touchToWorldX(clientX){
   return Math.max(-half, Math.min(half, (f - 0.5) * 2 * half));
 }
 
+// Daring mobile visual: control orb + jump-line overlay
+var _orbEl = null, _jlineEl = null;
+function _ensureOrb() {
+  if (_orbEl) return;
+  _orbEl = document.createElement('div');
+  _orbEl.style.cssText = 'position:fixed;width:66px;height:66px;margin:-33px 0 0 -33px;border-radius:50%;'
+    + 'background:radial-gradient(circle,rgba(255,255,255,.45),rgba(255,255,255,.10));'
+    + 'border:2px solid rgba(255,255,255,.85);pointer-events:none;z-index:99998;display:none;';
+  document.body.appendChild(_orbEl);
+  _jlineEl = document.createElement('div');
+  _jlineEl.style.cssText = 'position:fixed;left:0;right:0;border-top:2px dashed rgba(255,255,255,.35);'
+    + 'pointer-events:none;z-index:99997;display:none;';
+  var _lbl = document.createElement('div');
+  _lbl.textContent = '↑ jump above';
+  _lbl.style.cssText = 'position:absolute;right:12px;top:-18px;font:bold 11px monospace;color:rgba(255,255,255,.55);';
+  _jlineEl.appendChild(_lbl);
+  document.body.appendChild(_jlineEl);
+}
+function _showOrb(x, y) {
+  if (!(IS_MOBILE && playMode3 === 'daring')) return;
+  _ensureOrb();
+  _jlineEl.style.top = (_cvRect.top + JUMP_ZONE_FRAC * _cvRect.height) + 'px';
+  _jlineEl.style.display = 'block';
+  _moveOrb(x, y);
+  _orbEl.style.display = 'block';
+}
+function _moveOrb(x, y) {
+  if (!_orbEl) return;
+  _orbEl.style.left = x + 'px'; _orbEl.style.top = y + 'px';
+  if (_touchUpper) { _orbEl.style.background = 'radial-gradient(circle,rgba(249,115,22,.55),rgba(249,115,22,.15))'; _orbEl.style.borderColor = 'rgba(249,168,22,.95)'; }
+  else             { _orbEl.style.background = 'radial-gradient(circle,rgba(255,255,255,.45),rgba(255,255,255,.10))'; _orbEl.style.borderColor = 'rgba(255,255,255,.85)'; }
+}
+function _hideOrb() { if (_orbEl) _orbEl.style.display = 'none'; if (_jlineEl) _jlineEl.style.display = 'none'; }
+
 var _tX0 = 0, _tY0 = 0, _tT0 = 0;  // gesture start coords + timestamp
 var _tDown = false;                  // true while finger is on canvas
 
 canvas3d.addEventListener('touchstart', function(e) {
   e.preventDefault();
+  if (!_cvRect) _updCvRect();
   var t = e.changedTouches[0];
   _tX0 = t.clientX; _tY0 = t.clientY; _tT0 = Date.now();
   _tDown = true;
@@ -9295,6 +9334,7 @@ canvas3d.addEventListener('touchstart', function(e) {
   if (playMode3 === 'daring') {
     _touchTargetX = _touchToWorldX(t.clientX);
     _touchUpper = ((t.clientY - _cvRect.top) / _cvRect.height) < JUMP_ZONE_FRAC;
+    _showOrb(t.clientX, t.clientY);
   }
 }, { passive: false });
 
@@ -9309,11 +9349,13 @@ canvas3d.addEventListener('touchmove', function(e) {
   _tLastX = _mx; _tLastMoveT = _mnow;
   _touchUpper = ((_my - _cvRect.top) / _cvRect.height) < JUMP_ZONE_FRAC;  // vertical → jump zone
   if (_vx < STEER_FLICK_VX) _touchTargetX = _touchToWorldX(_mx);          // slow drag → steer; fast flick → leave for spin
+  _moveOrb(_mx, _my);
 }, { passive: false });
 
 canvas3d.addEventListener('touchend', function(e) {
   e.preventDefault();
   _tDown = false;
+  _hideOrb();
   if (gameState3 !== 'playing') return;
   var t   = e.changedTouches[0];
   var dx  = t.clientX - _tX0;
@@ -9382,6 +9424,7 @@ canvas3d.addEventListener('touchcancel', function(e) {
   // Finger interrupted (notification, call, etc.) — clean up steer state
   _tDown = false;
   _daringSteerL = false; _daringSteerR = false;
+  _hideOrb();
 }, { passive: false });
 
 // ── CONTROLS3 SCREEN HELPERS ──────────────────────────────────────
