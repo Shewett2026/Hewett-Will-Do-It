@@ -9858,14 +9858,23 @@ function _sfxPlay(key) {
 }
 
 // Mute toggle — applies to music + SFX, persisted to localStorage
+var _muteIconOn  = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#F5F0E8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11,5 6,9 2,9 2,15 6,15 11,19" fill="#F5F0E8" stroke="#F5F0E8"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>';
+var _muteIconOff = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#F5F0E8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11,5 6,9 2,9 2,15 6,15 11,19" fill="#F5F0E8" stroke="#F5F0E8"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>';
+
 function _setMuted(val) {
   _audioMuted  = val;
   _muzEl.muted = val;
   localStorage.setItem('krr3d_muted', val ? '1' : '0');
-  document.getElementById('btn-mute').textContent = val ? '🔇' : '🔊';
+  var icon = val ? _muteIconOff : _muteIconOn;
+  document.getElementById('btn-mute').innerHTML = icon;
+  var homeBtn = document.getElementById('btn-mute-home');
+  if (homeBtn) homeBtn.innerHTML = icon;
 }
 _setMuted(_audioMuted);  // apply persisted state immediately
 document.getElementById('btn-mute').addEventListener('click', function() {
+  _setMuted(!_audioMuted);
+});
+document.getElementById('btn-mute-home').addEventListener('click', function() {
   _setMuted(!_audioMuted);
 });
 

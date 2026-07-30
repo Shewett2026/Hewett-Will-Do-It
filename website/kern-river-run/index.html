@@ -266,17 +266,26 @@
     .logo-hover-zone:hover ~ .logo-sheen { filter: brightness(1.9); }
     .logo-hover-zone:hover ~ .logo-sheen::after { opacity: 1; }
 
-    /* Mute button — inline in HUD next to PAUSE, matches pause button style */
+    /* Mute button — circular speaker, shared by HUD and home screen */
     #hud3-center-row { display: flex; gap: 4px; align-items: center; }
-    #btn-mute {
-      font-family: 'Press Start 2P', monospace;
-      font-size: 7px; color: rgba(245,240,232,0.78);
-      background: rgba(30,58,95,0.65);
-      border: 1px solid rgba(245,240,232,0.22);
-      padding: 3px 6px; cursor: pointer;
-      transition: background 150ms;
+    .mute-btn {
+      width: 34px; height: 34px; flex-shrink: 0;
+      border-radius: 50%;
+      background: #0B1F3A;
+      border: 2px solid #C9883A;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      padding: 0;
+      transition: background 150ms, box-shadow 150ms;
+      line-height: 0;
     }
-    #btn-mute:hover { background: rgba(45,106,79,0.80); color: #F5F0E8; }
+    .mute-btn:hover {
+      background: #162f57;
+      box-shadow: 0 0 10px 3px rgba(201,136,58,0.45);
+    }
+    #btn-mute-home {
+      position: absolute; top: 4%; right: 3%;
+    }
 
     /* Volume slider — desktop only; hidden on touch via media query */
     #vol-slider {
@@ -632,7 +641,7 @@
       <span id="hud3-stage">HEADWATERS</span>
       <div id="hud3-center-row">
         <button id="btn3-pause">&#10074;&#10074; PAUSE</button>
-        <button id="btn-mute" aria-label="Toggle mute">🔊</button>
+        <button id="btn-mute" class="mute-btn" aria-label="Toggle mute"></button>
         <input type="range" id="vol-slider" min="0" max="1" step="0.05" aria-label="Volume">
       </div>
     </div>
@@ -673,6 +682,7 @@
         <button class="hit-area" id="btn3-story"
           style="left:27%;top:55%;width:46%;height:5%"></button>
         <button id="btn3-sb-mainmenu"><img src="scoreboard-btn.png?v=2" alt="Scoreboard"></button>
+        <button id="btn-mute-home" class="mute-btn" aria-label="Toggle mute"></button>
         <div class="mode-picker-wrap" id="mode-picker">
           <div class="mode-picker-row">
             <div class="mode-card-col">
@@ -809,6 +819,6 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/loaders/GLTFLoader.js"></script>
-  <script src="game-3d.js?v=61"></script>
+  <script src="game-3d.js?v=62"></script>
 </body>
 </html>
