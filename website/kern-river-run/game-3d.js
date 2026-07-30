@@ -8069,8 +8069,8 @@ function _closeStoryViewer() {
     gameState3 = 'start';
     setTimeout(function() { sv.classList.remove('sv-visible'); showScreen3('start'); }, 450);
   } else {
-    gameState3 = 'ending2';
-    setTimeout(function() { sv.classList.remove('sv-visible'); showScreen3('ending2'); }, 450);
+    gameState3 = 'nameentry';
+    setTimeout(function() { sv.classList.remove('sv-visible'); showScreen3('nameentry'); }, 450);
   }
 }
 
