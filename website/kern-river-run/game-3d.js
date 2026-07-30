@@ -1513,10 +1513,10 @@ function buildWorld() {
   const rw  = riverWidth();
   riverGroup = new THREE.Group();
 
-  var gndW = 200;
+  var gndW = 400;
   var gndZ = (stg.num === 5) ? 600 : 170;
   var _maxAniso = renderer.capabilities.getMaxAnisotropy();
-  // Ground -- widened to 200 units so grass fills past screen edges on all sides
+  // Ground -- widened to 400 units so grass fills past screen edges on desktop wide canvas
   var gndMat;
   gndPlaneTex = null;
   gndPlaneMat = null;
@@ -3097,7 +3097,7 @@ function buildStageBackdrop(stg) {
 
   // Backdrop plane - start with sky-blue fallback so any load failure is invisible
   var bdMat = new THREE.MeshBasicMaterial({ color: 0x87CEEB, fog: false });
-  backdropMesh = new THREE.Mesh(new THREE.PlaneGeometry(160, 52), bdMat);
+  backdropMesh = new THREE.Mesh(new THREE.PlaneGeometry(320, 52), bdMat);
   backdropMesh.position.set(0, 26, -88);
   scene.add(backdropMesh);
 
