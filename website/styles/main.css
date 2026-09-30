@@ -523,10 +523,78 @@ ul {
 
 .placeholder-cards {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 1.5rem;
-  max-width: 700px;
-  margin: 0 auto;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- No-donation lock card (Get Involved) ------------- */
+.donate-lock-title {
+  text-decoration: line-through;
+  text-decoration-color: var(--gold);
+  text-decoration-thickness: 2px;
+  opacity: 0.7;
+}
+
+.donate-lock-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem;
+  color: var(--navy);
+  line-height: 0;
+}
+
+.donate-lock-icon {
+  width: 76px;
+  height: 76px;
+  transition: transform 0.15s ease;
+}
+
+.donate-lock-btn:hover .donate-lock-icon,
+.donate-lock-btn:focus-visible .donate-lock-icon {
+  animation: lock-jiggle 0.5s ease;
+}
+
+.donate-lock-icon.is-jiggling {
+  animation: lock-jiggle 0.5s ease;
+}
+
+@keyframes lock-jiggle {
+  0%, 100% { transform: rotate(0deg) scale(1); }
+  20% { transform: rotate(-14deg) scale(1.05); }
+  40% { transform: rotate(11deg) scale(1.05); }
+  60% { transform: rotate(-8deg) scale(1.02); }
+  80% { transform: rotate(5deg) scale(1.02); }
+}
+
+.donate-lock-msg {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #a46a22;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  max-height: 0;
+  overflow: hidden;
+  transition: opacity 0.25s ease, max-height 0.25s ease, margin-top 0.25s ease;
+}
+
+.donate-lock-msg.is-visible {
+  opacity: 1;
+  max-height: 2.5rem;
+  margin-top: 0.1rem;
 }
 
 .placeholder-card {
@@ -1148,34 +1216,98 @@ ul {
   color: var(--gold);
 }
 
-/* --- No Donations Teaser (homepage) ------------------ */
+/* --- No Donations Highlight (homepage) ---------------- */
 .no-donations-section {
+  position: relative;
   background-color: var(--navy);
-  padding: 4rem 2rem;
+  padding: 5.5rem 2rem;
   text-align: center;
+  overflow: hidden;
+}
+
+/* Directional grain — same recipe as the hero texture */
+.no-donations-section::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='hg'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018 0.6' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23hg)' opacity='1'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 300px 300px;
+  opacity: 0.07;
+  pointer-events: none;
 }
 
 .no-donations-inner {
-  max-width: 680px;
+  position: relative;
+  z-index: 1;
+  max-width: 720px;
   margin: 0 auto;
+}
+
+.no-donations-icon {
+  width: 48px;
+  height: 48px;
+  color: var(--gold);
+  margin: 0 auto 1.1rem;
+}
+
+.no-donations-eyebrow {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 0.9rem;
 }
 
 .no-donations-heading {
   font-family: var(--font-display);
-  font-size: clamp(1.5rem, 2.6vw, 2.1rem);
+  font-size: clamp(2rem, 4.2vw, 3.2rem);
   font-weight: 700;
   color: var(--cream);
-  margin: 0.5rem 0 1.25rem;
+  line-height: 1.15;
+  margin-bottom: 1.5rem;
+}
+
+.no-donations-accent {
+  color: var(--gold);
+  font-style: italic;
+}
+
+.no-donations-rule {
+  width: 64px;
+  height: 3px;
+  background-color: var(--gold);
+  margin: 0 auto 1.85rem;
+  border-radius: 2px;
 }
 
 .no-donations-text {
-  font-size: 1rem;
-  line-height: 1.8;
-  color: rgba(245, 240, 232, 0.8);
+  font-size: 1.08rem;
+  line-height: 1.85;
+  color: rgba(245, 240, 232, 0.85);
+  max-width: 600px;
+  margin: 0 auto 1.1rem;
+}
+
+.no-donations-closing {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--gold);
+  line-height: 1.6;
+  margin: 1.85rem auto 0;
+  max-width: 560px;
 }
 
 .no-donations-cta {
-  margin-top: 1.75rem;
+  margin-top: 2.25rem;
+}
+
+@media (max-width: 600px) {
+  .no-donations-section { padding: 4rem 1.5rem; }
 }
 
 /* =====================================================
@@ -3113,6 +3245,65 @@ ul {
   color: var(--navy) !important;
   margin-top: 1.6rem !important;
   margin-bottom: 0 !important;
+}
+
+/* --- No-Donations Numbered Reasons (Meet Seth) -------- */
+.no-donations-reasons-label {
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin: 1.6rem 0 1.1rem !important;
+}
+
+.no-donations-reasons {
+  list-style: none;
+  margin: 0 0 1.6rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.no-donations-reasons li {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.no-donations-reasons-num {
+  flex: 0 0 auto;
+  width: 2.15rem;
+  height: 2.15rem;
+  border-radius: 50%;
+  border: 2px solid var(--gold);
+  color: var(--gold);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.no-donations-reasons-title {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--white);
+  margin: 0 0 0.4rem;
+}
+
+.no-donations-reasons-body p {
+  margin: 0;
+}
+
+@media (max-width: 600px) {
+  .no-donations-reasons li {
+    gap: 0.75rem;
+  }
 }
 
 /* =====================================================

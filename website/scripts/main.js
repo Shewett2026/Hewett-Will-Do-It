@@ -488,6 +488,34 @@
   }
 
   // =====================================================
+  // Get Involved — No-Donation Lock Button
+  // Jiggles on click and reveals a short message.
+  // (Hover already jiggles it via CSS :hover.)
+  // =====================================================
+
+  (function () {
+    var lockBtn = document.getElementById('donateLockBtn');
+    var lockMsg = document.getElementById('donateLockMsg');
+    if (!lockBtn || !lockMsg) return;
+
+    var icon = lockBtn.querySelector('.donate-lock-icon');
+    var hideTimer;
+
+    lockBtn.addEventListener('click', function () {
+      if (icon) {
+        icon.classList.remove('is-jiggling');
+        void icon.offsetWidth; // force reflow so the animation can restart
+        icon.classList.add('is-jiggling');
+      }
+      lockMsg.classList.add('is-visible');
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(function () {
+        lockMsg.classList.remove('is-visible');
+      }, 3200);
+    });
+  })();
+
+  // =====================================================
   // Meet Seth — Text Scroll Panels
   // Hide the bounce-chevron after 20px of scrolling.
   // =====================================================

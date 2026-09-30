@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon/favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon/favicon-16x16.png">
   <link rel="apple-touch-icon" sizes="180x180" href="assets/favicon/apple-touch-icon.png">
-  <meta name="description" content="Donate, volunteer, or share your feedback for Seth Hewett, Bakersfield City Council Ward 3, 2026.">
+  <meta name="description" content="Volunteer or share your feedback for Seth Hewett, Bakersfield City Council Ward 3, 2026.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -42,7 +42,7 @@
       <div class="hero-content">
         <p class="hero-election">Ward 3 &middot; 2026</p>
         <h1 class="hero-name">Get Involved</h1>
-        <p class="hero-sub">Donate, volunteer, or tell us what matters in your neighborhood.</p>
+        <p class="hero-sub">Volunteer, or tell us what matters in your neighborhood.</p>
       </div>
     </section>
 
@@ -75,12 +75,6 @@
         <div class="placeholder-cards">
 
           <div class="placeholder-card">
-            <h2 class="placeholder-card-title">Donate</h2>
-            <p class="placeholder-card-text">Online donations coming soon. In the meantime, reach out directly to get involved.</p>
-            <span class="coming-soon-badge">Coming Soon</span>
-          </div>
-
-          <div class="placeholder-card">
             <h2 class="placeholder-card-title">Volunteer</h2>
             <p class="placeholder-card-text">Want to knock doors, make calls, or help at events? Volunteer sign-up form coming soon.</p>
             <span class="coming-soon-badge">Coming Soon</span>
@@ -92,6 +86,19 @@
             <img src="assets/qr/resident-feedback-qr.png"
                  alt="QR code — Resident Feedback Portal"
                  class="gi-qr-img">
+          </div>
+
+          <div class="placeholder-card placeholder-card--locked">
+            <h2 class="placeholder-card-title donate-lock-title">Donate</h2>
+            <button class="donate-lock-btn" id="donateLockBtn" type="button" aria-describedby="donateLockMsg">
+              <svg class="donate-lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="4" y="11" width="16" height="10" rx="2.5"/>
+                <path d="M7.5 11V7.5a4.5 4.5 0 0 1 9 0V11"/>
+              </svg>
+              <span class="sr-only">Why can&rsquo;t I donate?</span>
+            </button>
+            <p class="placeholder-card-text">This campaign doesn&rsquo;t accept donations. On purpose.</p>
+            <span class="donate-lock-msg" id="donateLockMsg" role="status" aria-live="polite">This is a no-donation campaign.</span>
           </div>
 
         </div>
