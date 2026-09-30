@@ -523,8 +523,10 @@ ul {
 
 .placeholder-cards {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 1.5rem;
+  max-width: 700px;
+  margin: 0 auto;
 }
 
 .placeholder-card {
@@ -1144,6 +1146,36 @@ ul {
   font-style: italic;
   font-size: 0.95rem;
   color: var(--gold);
+}
+
+/* --- No Donations Teaser (homepage) ------------------ */
+.no-donations-section {
+  background-color: var(--navy);
+  padding: 4rem 2rem;
+  text-align: center;
+}
+
+.no-donations-inner {
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+.no-donations-heading {
+  font-family: var(--font-display);
+  font-size: clamp(1.5rem, 2.6vw, 2.1rem);
+  font-weight: 700;
+  color: var(--cream);
+  margin: 0.5rem 0 1.25rem;
+}
+
+.no-donations-text {
+  font-size: 1rem;
+  line-height: 1.8;
+  color: rgba(245, 240, 232, 0.8);
+}
+
+.no-donations-cta {
+  margin-top: 1.75rem;
 }
 
 /* =====================================================
