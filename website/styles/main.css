@@ -579,22 +579,26 @@ ul {
   80% { transform: rotate(5deg) scale(1.02); }
 }
 
-.donate-lock-msg {
-  display: block;
+.donate-lock-msgs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.15rem;
+}
+
+.donate-lock-msg-line {
   font-size: 0.82rem;
   font-weight: 700;
   color: #a46a22;
   letter-spacing: 0.02em;
+  line-height: 1.4;
   opacity: 0;
-  max-height: 0;
-  overflow: hidden;
-  transition: opacity 0.25s ease, max-height 0.25s ease, margin-top 0.25s ease;
+  transform: translateY(-4px);
+  animation: donate-msg-in 0.35s ease forwards;
 }
 
-.donate-lock-msg.is-visible {
-  opacity: 1;
-  max-height: 2.5rem;
-  margin-top: 0.1rem;
+@keyframes donate-msg-in {
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .placeholder-card {

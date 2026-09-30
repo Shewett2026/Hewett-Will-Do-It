@@ -90,7 +90,7 @@
 
           <div class="placeholder-card placeholder-card--locked">
             <h2 class="placeholder-card-title donate-lock-title">Donate</h2>
-            <button class="donate-lock-btn" id="donateLockBtn" type="button" aria-describedby="donateLockMsg">
+            <button class="donate-lock-btn" id="donateLockBtn" type="button" aria-describedby="donateLockMsgs">
               <svg class="donate-lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <rect x="4" y="11" width="16" height="10" rx="2.5"/>
                 <path d="M7.5 11V7.5a4.5 4.5 0 0 1 9 0V11"/>
@@ -98,7 +98,7 @@
               <span class="sr-only">Why can&rsquo;t I donate?</span>
             </button>
             <p class="placeholder-card-text">This campaign doesn&rsquo;t accept donations. On purpose.</p>
-            <span class="donate-lock-msg" id="donateLockMsg" role="status" aria-live="polite">This is a no-donation campaign.</span>
+            <div class="donate-lock-msgs" id="donateLockMsgs" role="status" aria-live="polite"></div>
           </div>
 
         </div>

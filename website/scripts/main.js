@@ -489,17 +489,23 @@
 
   // =====================================================
   // Get Involved — No-Donation Lock Button
-  // Jiggles on click and reveals a short message.
+  // Jiggles on every click and stacks up a new snarky
+  // message underneath the last one, one per click.
   // (Hover already jiggles it via CSS :hover.)
   // =====================================================
 
   (function () {
     var lockBtn = document.getElementById('donateLockBtn');
-    var lockMsg = document.getElementById('donateLockMsg');
-    if (!lockBtn || !lockMsg) return;
+    var lockMsgs = document.getElementById('donateLockMsgs');
+    if (!lockBtn || !lockMsgs) return;
 
+    var messages = [
+      "This is a no-donation campaign.",
+      "Seriously, put that money into savings.",
+      "With all the taxes you pay, I think you deserve a donation portal."
+    ];
     var icon = lockBtn.querySelector('.donate-lock-icon');
-    var hideTimer;
+    var clickCount = 0;
 
     lockBtn.addEventListener('click', function () {
       if (icon) {
@@ -507,11 +513,13 @@
         void icon.offsetWidth; // force reflow so the animation can restart
         icon.classList.add('is-jiggling');
       }
-      lockMsg.classList.add('is-visible');
-      clearTimeout(hideTimer);
-      hideTimer = setTimeout(function () {
-        lockMsg.classList.remove('is-visible');
-      }, 3200);
+      if (clickCount < messages.length) {
+        var line = document.createElement('p');
+        line.className = 'donate-lock-msg-line';
+        line.textContent = messages[clickCount];
+        lockMsgs.appendChild(line);
+        clickCount++;
+      }
     });
   })();
 
