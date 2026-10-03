@@ -657,6 +657,34 @@ ul {
   transform: translateY(-2px);
 }
 
+/* --- Get Involved: Volunteer email CTA --------------- */
+.gi-volunteer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  background-color: var(--green);
+  color: var(--white);
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-top: 0.25rem;
+  transition: background-color var(--transition), transform var(--transition);
+}
+
+.gi-volunteer-btn:hover {
+  background-color: #3a8a65;
+  transform: translateY(-2px);
+}
+
+.gi-volunteer-btn-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
 /* --- Responsive ------------------------------------- */
 
 /* Tablet */
