@@ -125,8 +125,6 @@
     .screen3 p  { font-size: 7px; color: #93C5FD; line-height: 1.75; }
     .screen3 .sub { font-size: 5px; color: #9CA3AF; line-height: 1.75; }
     .screen3 .body-txt { font-size: 6px; color: #F5F0E8; line-height: 1.90; }
-    .screen3 .quote-txt { font-size: 6px; color: #FDE68A; line-height: 1.90; }
-    .screen3 .attr-txt  { font-size: 5px; color: #93C5FD; line-height: 1.75; }
 
     .btn3 {
       font-family: 'Press Start 2P', monospace;
@@ -524,6 +522,12 @@
       font-size: clamp(8px, 2.2vw, 12px); color: #F5F0E8;
     }
     .sb3-row.sb3-own { color: #F1B24A; background: rgba(201,136,58,.12); }
+    /* Freshly-submitted entry pulses a few times so it's unmistakable */
+    .sb3-row.sb3-flash { animation: sb3-flash-pulse 0.6s ease-in-out 3; }
+    @keyframes sb3-flash-pulse {
+      0%, 100% { background: rgba(201,136,58,.12); box-shadow: none; }
+      50%      { background: rgba(241,178,74,.65); box-shadow: 0 0 10px rgba(241,178,74,.65); }
+    }
     /* Each cell is absolute so columns match baked header */
     .sb3-cell { position: absolute; top: 50%; overflow: hidden; white-space: nowrap; }
     .sb3-rank  { left: 13%; transform: translate(-50%, -50%); }
@@ -742,25 +746,6 @@
         <div id="sb3-rows"></div>
         <div id="sb3-empty" style="display:none">NO SCORES YET</div>
       </div>
-    </div>
-
-    <!-- ENDING DIALOG 2 (campaign CTA) -->
-    <div id="screen3-ending2" class="screen3">
-      <p class="body-txt">
-        In June 1973, Bakersfield leaders negotiated the Kern River into public hands.
-      </p>
-      <p class="quote-txt">
-        "We achieved far more for the citizens of Bakersfield than we had dared dream."
-      </p>
-      <p class="attr-txt">
-        — Walter F. Heisey, after negotiating the Kern River from a private company for $17.9 million
-      </p>
-      <div class="divider-line"></div>
-      <p class="go-score3-final score-line">FINAL SCORE: 0</p>
-      <p class="go-best3-final best-line">BEST: 0</p>
-      <button class="btn3 teal"   id="btn3-learn">LEARN MORE</button>
-      <button class="btn3 muted"  id="btn3-campaign">RETURN TO CAMPAIGN</button>
-      <button class="btn3"        id="btn3-playagain">PLAY AGAIN</button>
     </div>
 
     <!-- NAME ENTRY (post-win scoreboard submit) -->

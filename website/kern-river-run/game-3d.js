@@ -8417,12 +8417,6 @@ function showScreen3(which, _complete) {
   } else if (which === 'paused') {
     document.getElementById('screen3-paused').classList.add('visible');
 
-  } else if (which === 'ending2') {
-    const scr2 = document.getElementById('screen3-ending2');
-    scr2.classList.add('visible');
-    scr2.querySelector('.go-score3-final').textContent = 'FINAL SCORE: ' + Math.floor(score3);
-    scr2.querySelector('.go-best3-final').textContent  = 'BEST: ' + Math.floor(highScore3);
-
   } else if (which === 'nameentry') {
     document.getElementById('screen3-nameentry').classList.add('visible');
     document.getElementById('nameentry-score').textContent = 'SCORE: ' + Math.floor(score3);
@@ -9489,33 +9483,40 @@ var _runOranges       = 0;          // total oranges collected this run (not cur
 function _closeScoreboard3() {
   if (_scoreboardOpener === 'pause') {
     showScreen3('paused');
-  } else if (_scoreboardOpener === 'win') {
-    gameState3 = 'ending2'; showScreen3('ending2');
   } else {
-    showScreen3('start');
+    // 'win' and 'mainmenu' both return to the Kern River Run home screen.
+    gameState3 = 'start'; showScreen3('start');
   }
 }
 
-function _renderScoreboard3(rows, ownRank) {
+function _renderScoreboard3(rows, ownRank, ownEntry) {
   var container = document.getElementById('sb3-rows');
   var empty     = document.getElementById('sb3-empty');
   container.innerHTML = '';
   container.scrollTop = 0;
-  if (!rows || rows.length === 0) {
+  rows = rows || [];
+  if (rows.length === 0 && !(ownRank && ownEntry)) {
     empty.style.display = 'block';
     return;
   }
   empty.style.display = 'none';
-  for (var i = 0; i < rows.length; i++) {
-    var r   = rows[i];
+  function _makeRow(rankNum, r, isOwn) {
     var row = document.createElement('div');
-    row.className = 'sb3-row' + (ownRank && (i + 1) === ownRank ? ' sb3-own' : '');
-    var rank  = document.createElement('span'); rank.className  = 'sb3-cell sb3-rank';  rank.textContent = '#' + (i + 1);
+    row.className = 'sb3-row' + (isOwn ? ' sb3-own sb3-flash' : '');
+    var rank  = document.createElement('span'); rank.className  = 'sb3-cell sb3-rank';  rank.textContent = '#' + rankNum;
     var name  = document.createElement('span'); name.className  = 'sb3-cell sb3-name';  name.textContent = (r.name || '???').toUpperCase();
     var score = document.createElement('span'); score.className = 'sb3-cell sb3-score'; score.textContent = String(r.score || 0);
     var orng  = document.createElement('span'); orng.className  = 'sb3-cell sb3-orng';  orng.textContent = String(r.oranges || 0);
     row.appendChild(rank); row.appendChild(name); row.appendChild(score); row.appendChild(orng);
-    container.appendChild(row);
+    return row;
+  }
+  for (var i = 0; i < rows.length; i++) {
+    container.appendChild(_makeRow(i + 1, rows[i], !!(ownRank && (i + 1) === ownRank)));
+  }
+  // A just-submitted score can rank outside the returned top list (e.g. below
+  // the top 25) — if so, still show it, pinned at the bottom with its real rank.
+  if (ownRank && ownEntry && ownRank > rows.length) {
+    container.appendChild(_makeRow(ownRank, ownEntry, true));
   }
   // Scroll own row into view when returning after a win submit
   if (ownRank) {
@@ -9704,7 +9705,11 @@ document.getElementById('btn3-nameentry-submit').addEventListener('click', funct
     document.getElementById('sb3-rows').innerHTML = '';
     document.getElementById('sb3-empty').style.display = 'none';
     showScreen3('scoreboard');
-    _renderScoreboard3(Array.isArray(data.top) ? data.top : [], data.rank || null);
+    _renderScoreboard3(
+      Array.isArray(data.top) ? data.top : [],
+      data.rank || null,
+      { name: name, score: Math.floor(score3), oranges: _runOranges }
+    );
   })
   .catch(function() {
     btn.disabled = false; btn.textContent = 'SUBMIT';
@@ -9713,15 +9718,8 @@ document.getElementById('btn3-nameentry-submit').addEventListener('click', funct
 });
 
 document.getElementById('btn3-nameentry-skip').addEventListener('click', function() {
-  gameState3 = 'ending2'; showScreen3('ending2');
+  gameState3 = 'start'; showScreen3('start');
 });
-document.getElementById('btn3-learn').addEventListener('click', () => {
-  window.location.href = '../';
-});
-document.getElementById('btn3-campaign').addEventListener('click', () => {
-  window.location.href = '../';
-});
-document.getElementById('btn3-playagain').addEventListener('click', startGame3);
 
 // ── GAME LOOP ──────────────────────────────────────────────────────
 var _loopLastT = (typeof performance !== 'undefined' ? performance.now() : Date.now());
