@@ -3716,10 +3716,110 @@ ul {
   font-weight: 600;
 }
 
-.store-preview-banner-note {
-  margin-top: 0.5rem !important;
-  font-size: 0.85rem !important;
-  color: rgba(11, 31, 58, 0.62) !important;
+/* --- Store "Live" hero badge --------------------------- */
+.store-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background-color: var(--green);
+  color: var(--white);
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.4rem 1rem;
+  border-radius: 100px;
+  margin-bottom: 1.25rem;
+}
+
+.store-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--white);
+  animation: store-live-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes store-live-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.55); }
+  50%      { opacity: 0.55; box-shadow: 0 0 0 5px rgba(255, 255, 255, 0); }
+}
+
+/* --- Kern River Run contest callout -------------------- */
+.store-contest-box {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  background: linear-gradient(135deg, var(--navy) 0%, var(--navy-soft) 100%);
+  border: 2px solid var(--gold);
+  border-radius: var(--radius);
+  padding: 1.5rem 2rem;
+  max-width: 900px;
+  margin: 0 auto 1.5rem;
+  box-shadow: 0 8px 24px rgba(11, 31, 58, 0.18);
+}
+
+.store-contest-icon {
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
+  color: var(--gold);
+}
+
+.store-contest-text {
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.store-contest-eyebrow {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin: 0 0 0.4rem;
+}
+
+.store-contest-headline {
+  font-family: var(--font-display);
+  font-size: clamp(1.1rem, 2vw, 1.4rem);
+  font-weight: 700;
+  color: var(--white);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.store-contest-cta {
+  flex: 0 0 auto;
+  display: inline-block;
+  background-color: var(--gold);
+  color: var(--navy);
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding: 0.75rem 1.6rem;
+  border-radius: var(--radius);
+  text-decoration: none;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+
+.store-contest-cta:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(201, 136, 58, 0.4);
+}
+
+@media (max-width: 640px) {
+  .store-contest-box {
+    flex-direction: column;
+    text-align: center;
+    padding: 1.5rem;
+  }
+  .store-contest-text { text-align: center; }
+  .store-contest-cta   { width: 100%; text-align: center; }
 }
 
 /* Animation 3: "community" — house silhouettes rise */

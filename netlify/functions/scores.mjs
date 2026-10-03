@@ -136,7 +136,26 @@ export default async (req) => {
       return new Response(JSON.stringify({ rank, top: sorted.slice(0, TOP_RETURN) }), { status: 200, headers: HEADERS });
     } catch (e) {
       console.error('[scores-fn] POST error:', e.message || String(e));
-      return new Response(JSON.stringify({ error: 'store' }), { status: 200, headers: HEADERS });
+      // Must be a real error status (not 200) so the frontend's `res.ok` check
+      // fails and it falls back to re-fetching the board instead of treating
+      // this as "zero scores" and rendering a blank scoreboard.
+      return new Response(JSON.stringify({ error: 'store' }), { status: 500, headers: HEADERS });
+    }
+  }
+
+  // Admin reset — clears the board. Not linked from any UI; gated by a
+  // secret stored only as a Netlify environment variable (never in the repo).
+  if (req.method === 'DELETE') {
+    const adminKey = process.env.SCORES_ADMIN_KEY;
+    if (!adminKey || req.headers.get('x-admin-key') !== adminKey) {
+      return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: HEADERS });
+    }
+    try {
+      await store().set('scores', JSON.stringify([]));
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: HEADERS });
+    } catch (e) {
+      console.error('[scores-fn] DELETE error:', e.message || String(e));
+      return new Response(JSON.stringify({ error: 'store' }), { status: 500, headers: HEADERS });
     }
   }
 

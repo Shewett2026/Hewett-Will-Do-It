@@ -285,6 +285,39 @@
       position: absolute; top: 4%; right: 3%;
     }
 
+    /* Contest callout — top-left corner, clear of the title art and mute button */
+    .krr-contest-badge {
+      position: absolute; top: 1.5%; left: 3%; width: 60%;
+      background: rgba(11,31,58,0.82);
+      border: 1.5px solid #C9883A;
+      border-radius: 4px;
+      padding: 3px 6px;
+      text-align: center;
+      pointer-events: none;
+      animation: krr-badge-glow 2.4s ease-in-out infinite;
+    }
+    .krr-contest-badge-line1 {
+      display: block;
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(5px, 1.3vw, 8px);
+      color: #F1B24A;
+      line-height: 1.6;
+    }
+    .krr-contest-badge-line2 {
+      display: block;
+      font-family: 'Press Start 2P', monospace;
+      font-size: clamp(4px, 1.05vw, 6.5px);
+      color: #F5F0E8;
+      line-height: 1.5;
+    }
+    @keyframes krr-badge-glow {
+      0%, 100% { box-shadow: 0 0 0 rgba(241,178,74,0); }
+      50%      { box-shadow: 0 0 8px 1px rgba(241,178,74,0.55); }
+    }
+    @media (max-width: 420px) {
+      .krr-contest-badge { width: 70%; }
+    }
+
     /* Volume slider — desktop only; hidden on touch via media query */
     #vol-slider {
       display: none;
@@ -687,6 +720,10 @@
           style="left:27%;top:55%;width:46%;height:5%"></button>
         <button id="btn3-sb-mainmenu"><img src="scoreboard-btn.png?v=2" alt="Scoreboard"></button>
         <button id="btn-mute-home" class="mute-btn" aria-label="Toggle mute"></button>
+        <div class="krr-contest-badge" aria-hidden="false">
+          <span class="krr-contest-badge-line1">&#127942; WIN A FREE HOODIE</span>
+          <span class="krr-contest-badge-line2">TOP SCORE BY OCT 10</span>
+        </div>
         <div class="mode-picker-wrap" id="mode-picker">
           <div class="mode-picker-row">
             <div class="mode-card-col">

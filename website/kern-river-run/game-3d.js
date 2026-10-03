@@ -5533,12 +5533,25 @@ var _fadeEl = null;
 function _ensureFade() {
   if (_fadeEl) return;
   _fadeEl = document.createElement('div');
-  _fadeEl.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:99990;transition:opacity .45s ease;';
+  _fadeEl.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:99990;transition:opacity .6s ease;';
   document.body.appendChild(_fadeEl);
 }
 function _stageFade(applyFn) {
   _ensureFade(); _fadeEl.style.opacity = '1';
-  setTimeout(function(){ applyFn(); setTimeout(function(){ _fadeEl.style.opacity = '0'; }, 60); }, 450);
+  setTimeout(function(){
+    applyFn(); // heavy synchronous work (clearActive/buildWorld) happens fully hidden behind black
+    // Warm up the GPU for the freshly built world (shader compile + texture upload)
+    // while still fully black, across a couple of real frames, so that cost is paid
+    // now instead of leaking into the first few visible frames as choppiness.
+    try { renderer.render(scene, camera); } catch (e) {}
+    requestAnimationFrame(function () {
+      try { renderer.render(scene, camera); } catch (e) {}
+      requestAnimationFrame(function () {
+        try { renderer.render(scene, camera); } catch (e) {}
+        setTimeout(function(){ _fadeEl.style.opacity = '0'; }, 240);
+      });
+    });
+  }, 600);
 }
 
 var narrowing        = false;    // true while a sub-narrow squeeze is animating
@@ -9528,12 +9541,25 @@ function _renderScoreboard3(rows, ownRank, ownEntry) {
 function openScoreboard3(opener) {
   _scoreboardOpener = opener || 'mainmenu';
   document.getElementById('sb3-rows').innerHTML = '';
-  document.getElementById('sb3-empty').style.display = 'none';
+  // Show a loading state immediately instead of a blank table, so a slow/cold
+  // function call doesn't look like "the scoreboard is empty" while it's still
+  // in flight.
+  var _sbEmptyEl = document.getElementById('sb3-empty');
+  _sbEmptyEl.textContent = 'LOADING…';
+  _sbEmptyEl.style.display = 'block';
   showScreen3('scoreboard');
   fetch('/.netlify/functions/scores')
     .then(function(res) { return res.ok ? res.json() : Promise.reject(res.status); })
-    .then(function(data) { _renderScoreboard3(Array.isArray(data) ? data : [], null); })
-    .catch(function()   { _renderScoreboard3([], null); });
+    .then(function(data) {
+      _sbEmptyEl.textContent = 'NO SCORES YET';
+      _renderScoreboard3(Array.isArray(data) ? data : [], null);
+    })
+    .catch(function() {
+      // A real failure (network/server) is not the same as "no scores yet" --
+      // say so plainly rather than rendering a confusing blank board.
+      _sbEmptyEl.textContent = 'COULDN’T LOAD SCORES — TRY AGAIN';
+      _sbEmptyEl.style.display = 'block';
+    });
 }
 
 // Click anywhere outside the row list to close; scrolling rows should not dismiss it
@@ -9701,13 +9727,21 @@ document.getElementById('btn3-nameentry-submit').addEventListener('click', funct
   .then(function(data) {
     btn.disabled = false; btn.textContent = 'SUBMIT';
     _nameAttempts = 0;
+    // A 200 with a malformed body (no top list / no rank) means the write
+    // likely didn't actually land -- fall back to a fresh GET of the real
+    // board instead of rendering what would look like an empty scoreboard
+    // right after the player just submitted a score.
+    if (!Array.isArray(data.top) || !data.rank) {
+      openScoreboard3('win');
+      return;
+    }
     _scoreboardOpener = 'win';
     document.getElementById('sb3-rows').innerHTML = '';
     document.getElementById('sb3-empty').style.display = 'none';
     showScreen3('scoreboard');
     _renderScoreboard3(
-      Array.isArray(data.top) ? data.top : [],
-      data.rank || null,
+      data.top,
+      data.rank,
       { name: name, score: Math.floor(score3), oranges: _runOranges }
     );
   })
