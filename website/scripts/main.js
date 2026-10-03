@@ -923,26 +923,5 @@
     voteMarkActive('twang-happy');
   }
 
-  var storeNotifyForm    = document.getElementById('storeNotifyForm');
-  var storeNotifyInput   = document.getElementById('storeNotifyEmail');
-  var storeNotifyConfirm = document.getElementById('storeNotifyConfirm');
-
-  if (storeNotifyForm) {
-    storeNotifyForm.addEventListener("submit", function (e) {
-      e.preventDefault();
-      var email = storeNotifyInput ? storeNotifyInput.value.trim() : "";
-      if (!email) return;
-
-      // PLACEHOLDER — replace with real service call
-      console.log("[Store notify] Email submitted:", email);
-
-      if (storeNotifyConfirm) {
-        storeNotifyConfirm.textContent = "You’re on the list! We’ll let you know when the store launches.";
-      }
-      storeNotifyForm.reset();
-    });
-  }
-
-
 
 }());

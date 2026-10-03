@@ -3645,6 +3645,22 @@ ul {
   margin: 0;
 }
 
+.store-product-price {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--green);
+  margin: 0;
+}
+
+.store-product-price-was {
+  font-weight: 400;
+  font-size: 0.85rem;
+  color: rgba(11, 31, 58, 0.4);
+  text-decoration: line-through;
+  margin-right: 0.4rem;
+}
+
 .store-product-img-box img {
   width: 100%;
   height: 100%;
@@ -3700,93 +3716,10 @@ ul {
   font-weight: 600;
 }
 
-.store-notify-section {
-  background-color: var(--navy);
-  background-image: url('../assets/map-texture.svg');
-  background-size: 600px 600px;
-  background-repeat: repeat;
-  padding: 4.5rem 2rem;
-  text-align: center;
-}
-
-.store-notify-inner {
-  max-width: 560px;
-  margin: 0 auto;
-}
-
-.store-notify-heading {
-  font-family: var(--font-display);
-  font-size: clamp(1.5rem, 3vw, 2.25rem);
-  font-weight: 700;
-  color: var(--cream);
-  margin-bottom: 0.75rem;
-}
-
-.store-notify-sub {
-  font-size: 0.95rem;
-  color: rgba(245, 240, 232, 0.72);
-  line-height: 1.75;
-  margin-bottom: 2rem;
-}
-
-.store-notify-form {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-
-.store-notify-input {
-  flex: 1 1 240px;
-  padding: 0.75rem 1.1rem;
-  border: 1.5px solid rgba(245, 240, 232, 0.22);
-  border-radius: var(--radius);
-  background-color: rgba(255, 255, 255, 0.07);
-  color: var(--white);
-  font-size: 0.95rem;
-  font-family: var(--font-body);
-  outline: none;
-  transition: border-color var(--transition), background-color var(--transition);
-}
-
-.store-notify-input::placeholder {
-  color: rgba(245, 240, 232, 0.38);
-}
-
-.store-notify-input:focus {
-  border-color: var(--gold);
-  background-color: rgba(255, 255, 255, 0.11);
-}
-
-.store-notify-btn {
-  padding: 0.75rem 1.85rem;
-  background-color: var(--gold);
-  color: var(--white);
-  border: none;
-  border-radius: var(--radius);
-  font-size: 0.95rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  cursor: pointer;
-  font-family: var(--font-body);
-  transition: background-color var(--transition), transform var(--transition);
-}
-
-.store-notify-btn:hover {
-  background-color: #b87830;
-  transform: translateY(-2px);
-}
-
-.store-notify-confirm {
-  margin-top: 1.1rem;
-  font-size: 0.9rem;
-  color: var(--gold);
-  min-height: 1.4em;
-}
-
-@media (max-width: 520px) {
-  .store-notify-form  { flex-direction: column; align-items: stretch; }
-  .store-notify-input { flex: 1 1 auto; }
+.store-preview-banner-note {
+  margin-top: 0.5rem !important;
+  font-size: 0.85rem !important;
+  color: rgba(11, 31, 58, 0.62) !important;
 }
 
 /* Animation 3: "community" — house silhouettes rise */
