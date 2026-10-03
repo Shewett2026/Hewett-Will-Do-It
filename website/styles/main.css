@@ -3746,6 +3746,43 @@ ul {
   50%      { opacity: 0.55; box-shadow: 0 0 0 5px rgba(255, 255, 255, 0); }
 }
 
+/* --- "Now Live" corner ribbon (big, flashy, screenshot-friendly) --- */
+.store-now-live-ribbon {
+  position: absolute;
+  top: 30px;
+  right: -68px;
+  width: 270px;
+  transform: rotate(45deg);
+  background: linear-gradient(135deg, var(--gold) 0%, #E8B06B 100%);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  z-index: 2;
+  padding: 0.6rem 0;
+  text-align: center;
+  pointer-events: none;
+  animation: store-ribbon-glow 2.2s ease-in-out infinite;
+}
+
+.store-now-live-ribbon span {
+  display: block;
+  font-family: var(--font-body);
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--navy);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+@keyframes store-ribbon-glow {
+  0%, 100% { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35), 0 0 0 0 rgba(241, 178, 74, 0); }
+  50%      { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35), 0 0 26px 5px rgba(241, 178, 74, 0.7); }
+}
+
+@media (max-width: 640px) {
+  .store-now-live-ribbon { top: 20px; right: -72px; width: 230px; }
+  .store-now-live-ribbon span { font-size: 0.82rem; }
+}
+
 /* --- Kern River Run contest callout -------------------- */
 .store-contest-box {
   display: flex;

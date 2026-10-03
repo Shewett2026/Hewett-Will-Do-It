@@ -553,6 +553,10 @@
       position: relative; flex: 0 0 10%; /* fixed 1/10 of container; 11-25 scroll */
       font-family: 'Press Start 2P', monospace;
       font-size: clamp(8px, 2.2vw, 12px); color: #F5F0E8;
+      /* .menu-img-wrap (an ancestor) sets line-height:0 for baked-image sizing;
+         without resetting it here that inherits down and collapses every row's
+         text to an invisible zero-height line. */
+      line-height: normal;
     }
     .sb3-row.sb3-own { color: #F1B24A; background: rgba(201,136,58,.12); }
     /* Freshly-submitted entry pulses a few times so it's unmistakable */
@@ -562,7 +566,7 @@
       50%      { background: rgba(241,178,74,.65); box-shadow: 0 0 10px rgba(241,178,74,.65); }
     }
     /* Each cell is absolute so columns match baked header */
-    .sb3-cell { position: absolute; top: 50%; overflow: hidden; white-space: nowrap; }
+    .sb3-cell { position: absolute; top: 50%; overflow: hidden; white-space: nowrap; line-height: normal; }
     .sb3-rank  { left: 13%; transform: translate(-50%, -50%); }
     .sb3-name  { left: 23%; transform: translateY(-50%); max-width: 36%; text-overflow: ellipsis; }
     .sb3-score { left: 61%; transform: translate(-50%, -50%); }
